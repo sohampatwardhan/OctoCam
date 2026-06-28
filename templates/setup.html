@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Set Up OctoCam</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="setup-shell">
+      {% if wifi_message %}
+        <p class="notice setup-notice">{{ wifi_message }}</p>
+      {% endif %}
+      {% if security_message %}
+        <p class="notice setup-notice">{{ security_message }}</p>
+      {% endif %}
+
+      <form class="panel setup-panel" method="post" action="{{ url_for('complete_setup') }}">
+        <p class="eyebrow">OctoCam setup</p>
+        <h1>Make this camera yours</h1>
+
+        <div class="section-heading">
+          <h2>Identity</h2>
+        </div>
+
+        <label>
+          <span>Device name</span>
+          <input name="device_name" value="{{ settings.device_name }}" maxlength="80">
+        </label>
+
+        <div class="grid-two">
+          <label>
+            <span>Room</span>
+            <input name="room" value="{{ settings.room }}" maxlength="80">
+          </label>
+          <label>
+            <span>Camera label</span>
+            <input name="camera_label" value="{{ settings.camera_label }}" maxlength="80">
+          </label>
+        </div>
+
+        <div class="section-heading">
+          <h2>Network</h2>
+        </div>
+
+        {% if wifi_cache.networks %}
+          <label>
+            <span>Wi-Fi network</span>
+            <select id="wifiNetwork" name="wifi_ssid">
+              {% for network in wifi_cache.networks %}
+                <option
+                  value="{{ network.ssid }}"
+                  data-security="{{ network.security }}"
+                  {% if network.ssid == settings.wifi_ssid or network.ssid == system.wifi.ssid %}selected{% endif %}
+                >
+                  {{ network.ssid }} · {{ network.security | upper }} · {{ network.signal }}%
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+        {% else %}
+          <label>
+            <span>Wi-Fi SSID</span>
+            <input id="wifiNetwork" name="wifi_ssid" value="{{ system.wifi.ssid or settings.wifi_ssid }}" maxlength="80" autocomplete="off">
+          </label>
+        {% endif %}
+
+        <label id="wifiPasswordRow">
+          <span>Wi-Fi password</span>
+          <input name="wifi_password" type="password" autocomplete="current-password">
+        </label>
+
+        <div class="section-heading">
+          <h2>Admin</h2>
+        </div>
+
+        <div class="grid-two">
+          <label>
+            <span>Admin password</span>
+            <input name="admin_password" type="password" minlength="12" autocomplete="new-password" required>
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input name="admin_password_confirm" type="password" minlength="12" autocomplete="new-password" required>
+          </label>
+        </div>
+
+        <div class="section-heading">
+          <h2>Stream</h2>
+        </div>
+
+        <div class="grid-two">
+          <label>
+            <span>Width</span>
+            <input type="number" name="resolution_width" min="320" max="3280" step="16" value="{{ settings.resolution_width }}">
+          </label>
+          <label>
+            <span>Height</span>
+            <input type="number" name="resolution_height" min="240" max="2464" step="16" value="{{ settings.resolution_height }}">
+          </label>
+        </div>
+
+        <div class="grid-two">
+          <label>
+            <span>FPS</span>
+            <input type="number" name="framerate" min="1" max="60" value="{{ settings.framerate }}">
+          </label>
+          <label>
+            <span>RTSP path</span>
+            <input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80">
+          </label>
+        </div>
+
+        <div class="section-heading">
+          <h2>HomeKit</h2>
+        </div>
+
+        <div class="toggle-row">
+          <span>Enable bridge</span>
+          <label class="switch">
+            <input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}>
+            <span></span>
+          </label>
+        </div>
+
+        <input type="hidden" name="camera_enabled" value="on">
+        <button class="primary" type="submit">Finish setup</button>
+      </form>
+
+      <form class="scan-form" method="post" action="{{ url_for('scan_wifi') }}">
+        <button class="secondary" type="submit">Scan Wi-Fi again</button>
+      </form>
+    </main>
+    <script>
+      const networkSelect = document.querySelector("#wifiNetwork");
+      const passwordRow = document.querySelector("#wifiPasswordRow");
+
+      function syncPasswordVisibility() {
+        if (!networkSelect || !passwordRow || !networkSelect.selectedOptions) {
+          return;
+        }
+
+        const selected = networkSelect.selectedOptions[0];
+        const security = selected ? selected.dataset.security : "";
+        passwordRow.hidden = security === "open";
+      }
+
+      if (networkSelect) {
+        networkSelect.addEventListener("change", syncPasswordVisibility);
+        syncPasswordVisibility();
+      }
+    </script>
+  </body>
+</html>

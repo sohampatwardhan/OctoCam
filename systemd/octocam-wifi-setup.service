@@ -1,0 +1,15 @@
+[Unit]
+Description=OctoCam first-boot Wi-Fi setup AP
+Wants=NetworkManager.service
+After=NetworkManager.service
+Before=octocam-web.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=OCTOCAM_PROJECT_DIR=__PROJECT_DIR__
+Environment=OCTOCAM_WIFI_CACHE_PATH=/var/lib/octocam/wifi-networks.json
+ExecStart=__PROJECT_DIR__/scripts/octocam-wifi-setup.sh
+
+[Install]
+WantedBy=multi-user.target

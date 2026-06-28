@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Settings</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OctoCam</p>
+          <h1>{{ settings.camera_label }}</h1>
+          <p class="subhead">{{ settings.room }} · {{ settings.device_name }}</p>
+        </div>
+        <div class="top-actions">
+          <div class="status-pill {{ 'is-on' if system.camera.available else 'is-off' }}">
+            {{ 'Camera online' if system.camera.available else 'Camera unavailable' }}
+          </div>
+          <form method="post" action="{{ url_for('logout') }}">
+            <button class="secondary compact" type="submit">Log out</button>
+          </form>
+        </div>
+      </header>
+
+      {% if saved %}
+        <p class="notice">Settings saved.</p>
+      {% endif %}
+
+      <section class="layout">
+        <form class="panel settings-panel" method="post" action="{{ url_for('update_settings') }}">
+          <div class="section-heading">
+            <h2>Identity</h2>
+          </div>
+
+          <div class="grid-two">
+            <label>
+              <span>Device name</span>
+              <input name="device_name" value="{{ settings.device_name }}" maxlength="80">
+            </label>
+            <label>
+              <span>Room</span>
+              <input name="room" value="{{ settings.room }}" maxlength="80">
+            </label>
+          </div>
+
+          <label>
+            <span>Camera label</span>
+            <input name="camera_label" value="{{ settings.camera_label }}" maxlength="80">
+          </label>
+
+          <div class="section-heading">
+            <h2>Stream</h2>
+          </div>
+
+          <div class="toggle-row">
+            <span>Camera</span>
+            <label class="switch">
+              <input type="checkbox" name="camera_enabled" {% if settings.camera_enabled %}checked{% endif %}>
+              <span></span>
+            </label>
+          </div>
+
+          <div class="grid-two">
+            <label>
+              <span>Width</span>
+              <input type="number" name="resolution_width" min="320" max="3280" step="16" value="{{ settings.resolution_width }}">
+            </label>
+            <label>
+              <span>Height</span>
+              <input type="number" name="resolution_height" min="240" max="2464" step="16" value="{{ settings.resolution_height }}">
+            </label>
+          </div>
+
+          <div class="grid-two">
+            <label>
+              <span>FPS</span>
+              <input type="number" name="framerate" min="1" max="60" value="{{ settings.framerate }}">
+            </label>
+            <label>
+              <span>Bitrate kbps</span>
+              <input type="number" name="bitrate_kbps" min="250" max="25000" step="250" value="{{ settings.bitrate_kbps }}">
+            </label>
+          </div>
+
+          <label>
+            <span>RTSP path</span>
+            <input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80">
+          </label>
+
+          <div class="grid-two">
+            <label>
+              <span>Rotation</span>
+              <select name="rotation">
+                {% for value in [0, 90, 180, 270] %}
+                  <option value="{{ value }}" {% if settings.rotation == value %}selected{% endif %}>{{ value }}&deg;</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Contrast</span>
+              <input type="number" name="contrast" min="0" max="4" step="0.1" value="{{ settings.contrast }}">
+            </label>
+          </div>
+
+          <label>
+            <span>Brightness</span>
+            <input type="range" name="brightness" min="-100" max="100" value="{{ settings.brightness }}">
+          </label>
+
+          <div class="checks">
+            <label>
+              <input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}>
+              <span>Horizontal flip</span>
+            </label>
+            <label>
+              <input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}>
+              <span>Vertical flip</span>
+            </label>
+          </div>
+
+          <div class="section-heading">
+            <h2>HomeKit</h2>
+          </div>
+
+          <div class="toggle-row">
+            <span>Bridge enabled</span>
+            <label class="switch">
+              <input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}>
+              <span></span>
+            </label>
+          </div>
+
+          <div class="toggle-row">
+            <span>Paired</span>
+            <label class="switch">
+              <input type="checkbox" name="homekit_paired" {% if settings.homekit_paired %}checked{% endif %}>
+              <span></span>
+            </label>
+          </div>
+
+          {% if settings.homekit_enabled and not settings.homekit_paired %}
+            <div class="pairing-box">
+              <span>HomeKit pairing will appear here when Homebridge provisioning is wired.</span>
+            </div>
+          {% endif %}
+
+          <div class="section-heading">
+            <h2>Admin</h2>
+          </div>
+
+          <div class="grid-two">
+            <label>
+              <span>New password</span>
+              <input name="admin_password" type="password" minlength="12" autocomplete="new-password">
+            </label>
+            <label>
+              <span>Confirm password</span>
+              <input name="admin_password_confirm" type="password" minlength="12" autocomplete="new-password">
+            </label>
+          </div>
+
+          <button class="primary" type="submit">Save settings</button>
+        </form>
+
+        <aside class="panel monitor-panel">
+          <div class="section-heading">
+            <h2>Status</h2>
+          </div>
+
+          <dl class="status-list">
+            <div>
+              <dt>Wi-Fi</dt>
+              <dd>{{ system.wifi.ssid if system.wifi.ssid else system.wifi.message }}</dd>
+            </div>
+            <div>
+              <dt>Address</dt>
+              <dd>{{ system.ip_addresses | join(', ') if system.ip_addresses else 'Not available' }}</dd>
+            </div>
+            <div>
+              <dt>Uptime</dt>
+              <dd>{{ system.uptime if system.uptime else 'Not available' }}</dd>
+            </div>
+            <div>
+              <dt>CPU temp</dt>
+              <dd>{{ system.cpu_temp_c ~ ' C' if system.cpu_temp_c is not none else 'Not available' }}</dd>
+            </div>
+            <div>
+              <dt>Web UI</dt>
+              <dd>{{ system.services.octocam_web.state }}</dd>
+            </div>
+            <div>
+              <dt>RTSP</dt>
+              <dd>{{ system.services.rtsp.state }}</dd>
+            </div>
+            <div>
+              <dt>HomeKit</dt>
+              <dd>{{ system.services.homebridge.state }}</dd>
+            </div>
+          </dl>
+
+          <div class="preview">
+            <img src="{{ url_for('snapshot') }}" alt="Latest OctoCam snapshot" onerror="this.classList.add('is-hidden');">
+          </div>
+
+          <a class="secondary" href="{{ url_for('snapshot') }}">Open snapshot</a>
+          <a class="secondary" href="{{ url_for('setup') }}">Open setup</a>
+        </aside>
+      </section>
+
+      <section class="panel logs-panel">
+        <div class="section-heading">
+          <h2>Logs</h2>
+        </div>
+        <pre>{{ system.logs | join('\n') if system.logs else 'No recent logs available.' }}</pre>
+      </section>
+    </main>
+  </body>
+</html>

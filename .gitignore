@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local configuration and runtime state
+.env
+.flaskenv
+*.log
+settings.json
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
