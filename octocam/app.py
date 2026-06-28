@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
@@ -10,6 +11,9 @@ from octocam.security import hash_password, valid_password, verify_password
 from octocam.settings import DEFAULT_SETTINGS, load_settings, public_settings, save_settings, validate_settings
 from octocam.system import status as system_status
 from octocam.wifi import connect_to_network, load_network_cache, scan_and_cache_networks
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_secret_key() -> str:
@@ -24,7 +28,11 @@ def load_secret_key() -> str:
     return "octocam-local-dev"
 
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=str(PROJECT_ROOT / "templates"),
+    static_folder=str(PROJECT_ROOT / "static"),
+)
 app.config["SECRET_KEY"] = os.environ.get("OCTOCAM_SECRET_KEY", load_secret_key())
 
 

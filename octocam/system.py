@@ -24,19 +24,31 @@ def status() -> dict[str, Any]:
             "homebridge": cached("svc:homebridge", 5, lambda: service_status("homebridge")),
             "rtsp": cached("svc:octocam-rtsp", 5, lambda: service_status("octocam-rtsp")),
         },
-        "logs": cached("logs:octocam-web", 10, lambda: service_logs("octocam-web")),
+        "logs": cached_list("logs:octocam-web", 10, lambda: service_logs("octocam-web")),
     }
 
 
 def cached(key: str, ttl_seconds: int, loader: Callable[[], Any]) -> Any:
     now = time.monotonic()
-    cached_at, value = _CACHE.get(key, (0.0, None))
-    if now - cached_at < ttl_seconds:
-        return value
+    if key in _CACHE:
+        cached_at, value = _CACHE[key]
+        if now - cached_at < ttl_seconds:
+            return value
 
-    value = loader()
+    try:
+        value = loader()
+    except Exception as error:
+        value = {"state": "error", "message": str(error)}
+
     _CACHE[key] = (now, value)
     return value
+
+
+def cached_list(key: str, ttl_seconds: int, loader: Callable[[], list[str]]) -> list[str]:
+    value = cached(key, ttl_seconds, loader)
+    if isinstance(value, list):
+        return value
+    return []
 
 
 def ip_addresses() -> list[str]:

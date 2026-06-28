@@ -98,7 +98,11 @@ for group in video gpio i2c; do
 done
 
 systemctl daemon-reload
-systemctl enable --now octocam-wifi-setup.service
+systemctl enable octocam-wifi-setup.service
+if ! systemctl start octocam-wifi-setup.service; then
+  echo "OctoCam Wi-Fi setup AP did not start; continuing because it is only needed for headless fallback setup."
+  echo "Run 'journalctl -xeu octocam-wifi-setup.service' on the Pi for details."
+fi
 systemctl enable --now octocam-web.service
 
 echo "OctoCam web UI is installed."
