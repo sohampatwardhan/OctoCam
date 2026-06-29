@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Advanced</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OctoCam</p>
+          <h1>Advanced</h1>
+          <p class="subhead">{{ settings.room }} · {{ settings.device_name }}</p>
+        </div>
+        <div class="top-actions">
+          <div class="status-pill {{ 'is-on' if system.camera.available else 'is-off' }}">
+            {{ 'Camera online' if system.camera.available else 'Camera unavailable' }}
+          </div>
+          <form method="post" action="{{ url_for('logout') }}">
+            <button class="secondary compact" type="submit">Log out</button>
+          </form>
+        </div>
+      </header>
+
+      <div class="app-layout">
+        {% set active_page = 'advanced' %}
+        {% include "_sidebar.html" %}
+
+        <section class="content-stack">
+          <section id="system" class="panel settings-card">
+            <div class="section-heading">
+              <h2>System info</h2>
+            </div>
+
+            <dl class="status-list">
+              <div>
+                <dt>Wi-Fi</dt>
+                <dd>{{ system.wifi.ssid if system.wifi.ssid else system.wifi.message }}</dd>
+              </div>
+              <div>
+                <dt>Address</dt>
+                <dd>{{ system.ip_addresses | join(', ') if system.ip_addresses else 'Not available' }}</dd>
+              </div>
+              <div>
+                <dt>Uptime</dt>
+                <dd>{{ system.uptime if system.uptime else 'Not available' }}</dd>
+              </div>
+              <div>
+                <dt>CPU temp</dt>
+                <dd>{{ system.cpu_temp_c ~ ' C' if system.cpu_temp_c is not none else 'Not available' }}</dd>
+              </div>
+              <div>
+                <dt>CPU usage</dt>
+                <dd>{{ system.resources.cpu_usage_percent ~ '%' if system.resources.cpu_usage_percent is not none else 'Not available' }}</dd>
+              </div>
+              <div>
+                <dt>Load average</dt>
+                <dd>{{ system.resources.load_average if system.resources.load_average else 'Not available' }}</dd>
+              </div>
+              <div>
+                <dt>Memory</dt>
+                <dd>{{ system.resources.memory_summary if system.resources.memory_summary else 'Not available' }}</dd>
+              </div>
+              {% if system.resources.memory.swap_total_mb %}
+                <div>
+                  <dt>Swap</dt>
+                  <dd>
+                    {{ system.resources.memory.swap_used_mb }} / {{ system.resources.memory.swap_total_mb }} MB
+                    {% if system.resources.memory.swap_used_percent is not none %} ({{ system.resources.memory.swap_used_percent }}%){% endif %}
+                  </dd>
+                </div>
+              {% endif %}
+              <div>
+                <dt>Web UI</dt>
+                <dd>{{ system.services.octocam_web.state }}</dd>
+              </div>
+              <div>
+                <dt>RTSP</dt>
+                <dd>{{ system.services.rtsp.state }}</dd>
+              </div>
+              <div>
+                <dt>HomeKit</dt>
+                <dd>{{ system.services.homebridge.state }}</dd>
+              </div>
+              <div>
+                <dt>RTSP limit</dt>
+                <dd>{{ settings.rtsp_max_clients }} clients</dd>
+              </div>
+            </dl>
+
+            {% if system.wifi.ssid %}
+              <div class="subsection-heading">
+                <h3>Wi-Fi details</h3>
+              </div>
+
+              <dl class="status-list wide-list">
+                {% if system.wifi.interface %}
+                  <div>
+                    <dt>Interface</dt>
+                    <dd>{{ system.wifi.interface }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.ip_address %}
+                  <div>
+                    <dt>IP address</dt>
+                    <dd>{{ system.wifi.ip_address }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.mac_address %}
+                  <div>
+                    <dt>MAC address</dt>
+                    <dd>{{ system.wifi.mac_address }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.bssid %}
+                  <div>
+                    <dt>BSSID</dt>
+                    <dd>{{ system.wifi.bssid }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.security %}
+                  <div>
+                    <dt>Security</dt>
+                    <dd>{{ system.wifi.security }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.wifi_generation_label %}
+                  <div>
+                    <dt>PHY mode</dt>
+                    <dd>{{ system.wifi.wifi_generation_label }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.frequency_mhz %}
+                  <div>
+                    <dt>Frequency</dt>
+                    <dd>
+                      {{ system.wifi.frequency_mhz }} MHz
+                      {% if system.wifi.band %} · {{ system.wifi.band }}{% endif %}
+                      {% if system.wifi.channel %} · Channel {{ system.wifi.channel }}{% endif %}
+                    </dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.channel_width %}
+                  <div>
+                    <dt>Channel width</dt>
+                    <dd>{{ system.wifi.channel_width }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.signal_dbm %}
+                  <div>
+                    <dt>RSSI</dt>
+                    <dd>{{ system.wifi.signal_dbm }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.rx_bitrate %}
+                  <div>
+                    <dt>RX rate</dt>
+                    <dd>{{ system.wifi.rx_bitrate }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.tx_bitrate %}
+                  <div>
+                    <dt>TX rate</dt>
+                    <dd>{{ system.wifi.tx_bitrate }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.tx_power %}
+                  <div>
+                    <dt>TX power</dt>
+                    <dd>{{ system.wifi.tx_power }}</dd>
+                  </div>
+                {% endif %}
+                {% if system.wifi.default_interface %}
+                  <div>
+                    <dt>Default route</dt>
+                    <dd>
+                      {{ system.wifi.default_interface }}
+                      {% if system.wifi.default_gateway %} via {{ system.wifi.default_gateway }}{% endif %}
+                    </dd>
+                  </div>
+                {% endif %}
+              </dl>
+            {% endif %}
+          </section>
+
+          <section id="terminal" class="panel settings-card">
+            <div class="section-heading">
+              <h2>Terminal</h2>
+            </div>
+
+            <pre>Web terminal disabled.
+Use SSH from your laptop:
+ssh root@{{ system.ip_addresses[0] if system.ip_addresses else settings.device_name ~ '.local' }}</pre>
+          </section>
+
+          <section id="logs" class="panel logs-panel">
+            <div class="section-heading">
+              <h2>System logs</h2>
+            </div>
+            <pre>{{ system.logs | join('\n') if system.logs else 'No recent logs available.' }}</pre>
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

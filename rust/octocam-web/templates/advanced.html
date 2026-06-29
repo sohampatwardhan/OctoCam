@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Advanced</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OctoCam</p>
+          <h1>Advanced</h1>
+          <p class="subhead">{{ settings.room }} · {{ settings.device_name }}</p>
+        </div>
+        <div class="top-actions">
+          <div class="status-pill {% if system.camera_available %}is-on{% else %}is-off{% endif %}">{{ system.camera_label }}</div>
+          <form method="post" action="/logout"><button class="secondary compact" type="submit">Log out</button></form>
+        </div>
+      </header>
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <section id="system" class="panel settings-card">
+            <div class="section-heading"><h2>System info</h2></div>
+            <dl class="status-list">
+              <div><dt>Wi-Fi</dt><dd>{{ system.wifi_label }}</dd></div>
+              <div><dt>Address</dt><dd>{{ system.ip_addresses }}</dd></div>
+              <div><dt>Uptime</dt><dd>{{ system.uptime }}</dd></div>
+              <div><dt>CPU temp</dt><dd>{{ system.cpu_temp }}</dd></div>
+              <div><dt>CPU usage</dt><dd>{{ system.cpu_usage }}</dd></div>
+              <div><dt>Load average</dt><dd>{{ system.load_average }}</dd></div>
+              <div><dt>Memory</dt><dd>{{ system.memory }}</dd></div>
+              {% if system.has_swap %}
+                <div><dt>Swap</dt><dd>{{ system.swap }}</dd></div>
+              {% endif %}
+              <div><dt>Web UI</dt><dd>{{ system.web_state }}</dd></div>
+              <div><dt>RTSP</dt><dd>{{ system.rtsp_state }}</dd></div>
+              <div><dt>HomeKit</dt><dd>{{ system.homekit_state }}</dd></div>
+              <div><dt>RTSP limit</dt><dd>{{ settings.rtsp_max_clients }} clients</dd></div>
+            </dl>
+
+            {% if system.wifi_details.len() > 0 %}
+              <div class="subsection-heading"><h3>Wi-Fi details</h3></div>
+              <dl class="status-list wide-list">
+                {% for row in system.wifi_details %}
+                  <div><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
+                {% endfor %}
+              </dl>
+            {% endif %}
+          </section>
+
+          <section id="terminal" class="panel settings-card">
+            <div class="section-heading"><h2>Terminal</h2></div>
+            <pre>Web terminal disabled.
+Use SSH from your laptop:
+ssh root@{{ system.ssh_target }}</pre>
+          </section>
+
+          <section id="logs" class="panel logs-panel">
+            <div class="section-heading"><h2>System logs</h2></div>
+            <pre>{% if system.logs.len() > 0 %}{% for line in system.logs %}{{ line }}
+{% endfor %}{% else %}No recent logs available.{% endif %}</pre>
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

@@ -37,8 +37,8 @@ Development preferences:
 
 - Prefer C, C++, or Rust for long-running camera, streaming, pairing, and device
   control daemons.
-- Keep Python as a thin control-plane layer unless measurement shows it is cheap
-  enough for the final device.
+- Use Rust for the long-running web control plane; keep Python only as a
+  development/reference implementation while the Rust service reaches parity.
 - Avoid heavy SPAs, Node build chains, large dependency trees, and background
   polling loops.
 - Bound memory, log size, subprocess use, network retries, and write frequency.
@@ -162,13 +162,13 @@ intercept layer after we test on iOS, macOS, Android, and Windows.
 
 ## What This Installs
 
-- A Flask-based settings UI on port `8080`
+- A Rust-based settings UI on port `8080`
 - A first-run setup flow at `/setup`
 - A systemd service named `octocam-web`
 - A first-boot Wi-Fi setup service named `octocam-wifi-setup`
 - Persistent settings at `/var/lib/octocam/settings.json`
 - Cached Wi-Fi scan results at `/var/lib/octocam/wifi-networks.json`
-- Raspberry Pi camera packages for the current libcamera/Picamera2 stack
+- Raspberry Pi camera CLI packages for the current libcamera/rpicam stack
 - Diagnostics for IP address, uptime, service health, and OctoCam logs
 
 The web UI is intentionally local-network oriented. Put the device behind a
@@ -199,8 +199,40 @@ journalctl -u octocam-web -f
 
 ## Development On A Non-Pi Machine
 
-The app can run without Pi camera hardware. It will show host status and fall
-back cleanly when Picamera2 or rpicam tools are unavailable.
+The Rust app can run without Pi camera hardware. It will show host status and
+fall back cleanly when rpicam/libcamera CLI tools are unavailable.
+
+```bash
+cd rust/octocam-web
+cargo run
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080
+```
+
+## Web UI Design System
+
+The web UI uses server-rendered Rust templates, a local Pico-inspired CSS
+foundation, and a tiny amount of plain JavaScript for copy buttons and stream
+preview controls. The goal is an appliance UI that feels polished without a
+client-side framework, CDN dependency, or Node build chain.
+
+Design rules:
+
+- Keep layout, forms, sidebar navigation, status rows, and stream preview in
+  local CSS.
+- Prefer semantic HTML controls and local CSS tokens before adding component
+  dependencies.
+- If richer components are needed later, evaluate locally vendored Web
+  Components only for specific controls such as dialogs, toasts, tabs, switches,
+  and tooltips.
+- Avoid full Material/React/Vue-style application frameworks unless a future
+  feature clearly needs that cost.
+
+The older Flask reference app is still present during the transition:
 
 ```bash
 python3 -m venv .venv

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} HomeKit</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+      {% include "_settings_toast.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <form class="settings-stack" method="post" action="/settings">
+            <input type="hidden" name="_return_to" value="/homekit">
+            <input type="hidden" name="_checkboxes" value="homekit_enabled,homekit_paired">
+            <section class="panel settings-card">
+              <div class="section-heading"><h2>HomeKit</h2></div>
+              <div class="toggle-row"><span>Bridge enabled</span><label class="switch"><input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}><span></span></label></div>
+              <div class="toggle-row"><span>Paired</span><label class="switch"><input type="checkbox" name="homekit_paired" {% if settings.homekit_paired %}checked{% endif %}><span></span></label></div>
+              {% if settings.homekit_enabled %}
+                {% if settings.homekit_paired %}
+                {% else %}
+                  <div class="pairing-box"><span>HomeKit pairing will appear here when Homebridge provisioning is wired.</span></div>
+                {% endif %}
+              {% endif %}
+            </section>
+            <section class="panel action-card">
+              <button class="primary" type="submit">Save HomeKit settings</button>
+            </section>
+          </form>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Log In To OctoCam</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+  </head>
+  <body>
+    <main class="setup-shell">
+      {% if failed %}
+        <p class="notice setup-notice">Password was not accepted.</p>
+      {% endif %}
+
+      <form class="panel setup-panel" method="post" action="/login?next={{ next_query }}">
+        <p class="eyebrow">OctoCam</p>
+        <h1>Log in</h1>
+
+        <label>
+          <span>Admin password</span>
+          <input name="admin_password" type="password" autocomplete="current-password" required>
+        </label>
+
+        <button class="primary" type="submit">Log in</button>
+      </form>
+    </main>
+  </body>
+</html>

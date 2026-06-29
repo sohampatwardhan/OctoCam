@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Stream</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <section class="panel stream-panel">
+            <div
+              class="stream-preview"
+              data-stream-preview
+              data-main-src="{{ browser_stream_urls.main }}"
+              data-sub-src="{{ browser_stream_urls.sub }}"
+              data-initial-stream="{% if browser_stream_urls.has_sub %}sub{% else %}main{% endif %}"
+            >
+              <div class="stream-toolbar">
+                <div class="segmented-control" role="group" aria-label="Preview stream">
+                  <button type="button" data-stream-choice="main" aria-pressed="{% if browser_stream_urls.has_sub %}false{% else %}true{% endif %}">Main</button>
+                  <button type="button" data-stream-choice="sub" aria-pressed="{% if browser_stream_urls.has_sub %}true{% else %}false{% endif %}" {% if !browser_stream_urls.has_sub %}disabled{% endif %}>Sub</button>
+                </div>
+                <button class="secondary compact stream-toggle" type="button" data-stream-toggle aria-pressed="true">Stop</button>
+              </div>
+              <div class="live-frame">
+                <iframe
+                  class="live-video"
+                  src="{% if browser_stream_urls.has_sub %}{{ browser_stream_urls.sub }}{% else %}{{ browser_stream_urls.main }}{% endif %}"
+                  title="Live OctoCam stream"
+                  allow="autoplay; fullscreen"
+                  data-stream-frame
+                ></iframe>
+                <div class="stream-placeholder" data-stream-placeholder hidden>Preview stopped</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel settings-card">
+            <div class="section-heading"><h2>RTSP</h2></div>
+            <dl class="status-list compact-list">
+              <div><dt>Status</dt><dd>{{ system.rtsp_state }}</dd></div>
+              <div><dt>Main limit</dt><dd>{{ settings.rtsp_max_clients }} clients</dd></div>
+              <div><dt>Sub limit</dt><dd>{% if settings.sub_stream_enabled %}{{ settings.sub_rtsp_max_clients }}{% else %}0{% endif %} clients</dd></div>
+            </dl>
+
+            {% if settings.rtsp_enabled %}
+              <label>
+                <span>Main RTSP URL</span>
+                <span class="copy-row">
+                  <input id="streamRtspUrl" class="url-field" value="{{ rtsp_urls.main }}" readonly>
+                  <button class="icon-button copy-button" type="button" data-copy-target="streamRtspUrl" aria-label="Copy RTSP stream URL" title="Copy RTSP stream URL"></button>
+                </span>
+              </label>
+              {% if rtsp_urls.has_sub %}
+                <label>
+                  <span>Sub RTSP URL</span>
+                  <span class="copy-row">
+                    <input id="streamSubRtspUrl" class="url-field" value="{{ rtsp_urls.sub }}" readonly>
+                    <button class="icon-button copy-button" type="button" data-copy-target="streamSubRtspUrl" aria-label="Copy RTSP sub stream URL" title="Copy RTSP sub stream URL"></button>
+                  </span>
+                </label>
+              {% endif %}
+            {% endif %}
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

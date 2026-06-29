@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} System Info</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <section class="panel settings-card">
+            <div class="section-heading"><h2>System info</h2></div>
+            <dl class="status-list">
+              <div><dt>Wi-Fi</dt><dd>{{ system.wifi_label }}</dd></div>
+              <div><dt>Address</dt><dd>{{ system.ip_addresses }}</dd></div>
+              <div><dt>Uptime</dt><dd>{{ system.uptime }}</dd></div>
+              <div><dt>CPU temp</dt><dd>{{ system.cpu_temp }}</dd></div>
+              <div><dt>CPU usage</dt><dd>{{ system.cpu_usage }}</dd></div>
+              <div><dt>Load average</dt><dd>{{ system.load_average }}</dd></div>
+              <div><dt>Memory</dt><dd>{{ system.memory }}</dd></div>
+              {% if system.has_swap %}
+                <div><dt>Swap</dt><dd>{{ system.swap }}</dd></div>
+              {% endif %}
+              <div><dt>Web UI</dt><dd>{{ system.web_state }}</dd></div>
+              <div><dt>RTSP</dt><dd>{{ system.rtsp_state }}</dd></div>
+              <div><dt>HomeKit</dt><dd>{{ system.homekit_state }}</dd></div>
+              <div><dt>RTSP limit</dt><dd>{{ settings.rtsp_max_clients }} clients</dd></div>
+            </dl>
+
+            {% if system.wifi_details.len() > 0 %}
+              <div class="subsection-heading"><h3>Wi-Fi details</h3></div>
+              <dl class="status-list wide-list">
+                {% for row in system.wifi_details %}
+                  <div><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
+                {% endfor %}
+              </dl>
+            {% endif %}
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

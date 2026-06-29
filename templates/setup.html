@@ -89,16 +89,17 @@
           <h2>Stream</h2>
         </div>
 
-        <div class="grid-two">
-          <label>
-            <span>Width</span>
-            <input type="number" name="resolution_width" min="320" max="3280" step="16" value="{{ settings.resolution_width }}">
-          </label>
-          <label>
-            <span>Height</span>
-            <input type="number" name="resolution_height" min="240" max="2464" step="16" value="{{ settings.resolution_height }}">
-          </label>
-        </div>
+        <label>
+          <span>Resolution</span>
+          <select name="resolution">
+            {% set current_resolution = settings.resolution_width ~ 'x' ~ settings.resolution_height %}
+            {% for preset in resolution_presets %}
+              <option value="{{ preset.value }}" {% if current_resolution == preset.value %}selected{% endif %}>
+                {{ preset.label }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
 
         <div class="grid-two">
           <label>
@@ -124,6 +125,12 @@
         </div>
 
         <input type="hidden" name="camera_enabled" value="on">
+        <input type="hidden" name="sub_stream_enabled" value="on">
+        <input type="hidden" name="sub_resolution" value="640x480">
+        <input type="hidden" name="sub_framerate" value="10">
+        <input type="hidden" name="sub_bitrate_kbps" value="600">
+        <input type="hidden" name="sub_rtsp_path" value="sub">
+        <input type="hidden" name="sub_rtsp_max_clients" value="2">
         <button class="primary" type="submit">Finish setup</button>
       </form>
 

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Stream</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OctoCam</p>
+          <h1>Live stream</h1>
+          <p class="subhead">{{ settings.room }} · {{ settings.device_name }}</p>
+        </div>
+        <div class="top-actions">
+          <div class="status-pill {{ 'is-on' if system.camera.available else 'is-off' }}">
+            {{ 'Camera online' if system.camera.available else 'Camera unavailable' }}
+          </div>
+          <form method="post" action="{{ url_for('logout') }}">
+            <button class="secondary compact" type="submit">Log out</button>
+          </form>
+        </div>
+      </header>
+
+      <div class="app-layout">
+        {% set active_page = 'stream' %}
+        {% include "_sidebar.html" %}
+
+        <section class="content-stack">
+          <section class="panel stream-panel">
+            <div class="live-frame">
+              <iframe
+                class="live-video"
+                src="{{ browser_stream_urls.sub or browser_stream_urls.main }}"
+                title="Live OctoCam stream"
+                allow="autoplay; fullscreen"
+              ></iframe>
+            </div>
+          </section>
+
+          <section class="panel settings-card">
+            <div class="section-heading">
+              <h2>RTSP</h2>
+            </div>
+
+            <dl class="status-list compact-list">
+              <div>
+                <dt>Status</dt>
+                <dd>{{ system.services.rtsp.state }}</dd>
+              </div>
+              <div>
+                <dt>Main limit</dt>
+                <dd>{{ settings.rtsp_max_clients }} clients</dd>
+              </div>
+              <div>
+                <dt>Sub limit</dt>
+                <dd>{{ settings.sub_rtsp_max_clients if settings.sub_stream_enabled else 0 }} clients</dd>
+              </div>
+            </dl>
+
+            {% if settings.rtsp_enabled %}
+              <label>
+                <span>Main RTSP URL</span>
+                <span class="copy-row">
+                  <input id="streamRtspUrl" class="url-field" value="{{ rtsp_urls.main }}" readonly>
+                  <button class="icon-button copy-button" type="button" data-copy-target="streamRtspUrl" aria-label="Copy RTSP stream URL" title="Copy RTSP stream URL"></button>
+                </span>
+              </label>
+
+              {% if settings.sub_stream_enabled %}
+                <label>
+                  <span>Sub RTSP URL</span>
+                  <span class="copy-row">
+                    <input id="streamSubRtspUrl" class="url-field" value="{{ rtsp_urls.sub }}" readonly>
+                    <button class="icon-button copy-button" type="button" data-copy-target="streamSubRtspUrl" aria-label="Copy RTSP sub stream URL" title="Copy RTSP sub stream URL"></button>
+                  </span>
+                </label>
+              {% endif %}
+            {% endif %}
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

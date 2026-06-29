@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUST_WEB_DIR="$PROJECT_DIR/rust/octocam-web"
 SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-web.service"
 SERVICE_FILE="/etc/systemd/system/octocam-web.service"
 WIFI_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-wifi-setup.service"
@@ -12,6 +13,7 @@ SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 STATE_DIR="/var/lib/octocam"
 LOG_DIR="/var/log/octocam"
 SECRET_KEY_FILE="$STATE_DIR/secret-key"
+WEB_BINARY="/usr/local/bin/octocam-web"
 MINIMAL_OS=0
 
 for arg in "$@"; do
@@ -57,26 +59,79 @@ fi
 
 echo "Installing OctoCam dependencies..."
 apt-get update
-apt-get install -y --no-install-recommends network-manager python3-flask python3-picamera2 python3-libcamera
+apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config network-manager
 
 if ! apt-get install -y --no-install-recommends rpicam-apps; then
   echo "rpicam-apps was unavailable; trying the older libcamera-apps package..."
   apt-get install -y --no-install-recommends libcamera-apps
 fi
 
+if [[ ! -f "$RUST_WEB_DIR/Cargo.toml" ]]; then
+  echo "Missing Rust web app: $RUST_WEB_DIR/Cargo.toml"
+  exit 1
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "Installing a minimal Rust toolchain..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+fi
+
+if [[ -f "$HOME/.cargo/env" ]]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.cargo/env"
+fi
+
+echo "Building OctoCam Rust web UI..."
+cargo build --manifest-path "$RUST_WEB_DIR/Cargo.toml" --release --locked
+install -m 0755 "$RUST_WEB_DIR/target/release/octocam-web" "$WEB_BINARY"
+
 echo "Preparing OctoCam state directories..."
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR" "$LOG_DIR"
 
 if [[ ! -f "$SECRET_KEY_FILE" ]]; then
   umask 077
-  /usr/bin/python3 -c "import secrets; print(secrets.token_urlsafe(48))" > "$SECRET_KEY_FILE"
+  SECRET_KEY="$(od -An -tx1 -N32 /dev/urandom)"
+  SECRET_KEY="${SECRET_KEY//[[:space:]]/}"
+  printf '%s\n' "$SECRET_KEY" > "$SECRET_KEY_FILE"
   chown "$SERVICE_USER:$SERVICE_GROUP" "$SECRET_KEY_FILE"
 fi
 
 if [[ ! -f "$STATE_DIR/settings.json" ]]; then
-  cd "$PROJECT_DIR"
-  sudo -u "$SERVICE_USER" PYTHONPATH="$PROJECT_DIR" OCTOCAM_CONFIG_PATH="$STATE_DIR/settings.json" \
-    /usr/bin/python3 -c "from octocam.settings import DEFAULT_SETTINGS, save_settings; save_settings(DEFAULT_SETTINGS)"
+  cat > "$STATE_DIR/settings.json" <<'JSON'
+{
+  "admin_password_hash": "",
+  "bitrate_kbps": 2500,
+  "brightness": 0,
+  "camera_enabled": true,
+  "camera_label": "OctoCam",
+  "contrast": 1.0,
+  "device_name": "OctoCam",
+  "framerate": 15,
+  "hflip": false,
+  "homekit_enabled": false,
+  "homekit_paired": false,
+  "motion_enabled": false,
+  "motion_sensitivity": 50,
+  "resolution_height": 720,
+  "resolution_width": 1280,
+  "room": "Living Room",
+  "rotation": 0,
+  "rtsp_enabled": true,
+  "rtsp_max_clients": 1,
+  "rtsp_path": "main",
+  "setup_complete": false,
+  "sub_bitrate_kbps": 600,
+  "sub_framerate": 10,
+  "sub_resolution_height": 480,
+  "sub_resolution_width": 640,
+  "sub_rtsp_max_clients": 2,
+  "sub_rtsp_path": "sub",
+  "sub_stream_enabled": true,
+  "vflip": false,
+  "wifi_ssid": ""
+}
+JSON
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$STATE_DIR/settings.json"
 fi
 
 echo "Installing systemd service..."

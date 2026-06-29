@@ -10,9 +10,10 @@ WorkingDirectory=__PROJECT_DIR__
 Environment=OCTOCAM_CONFIG_PATH=/var/lib/octocam/settings.json
 Environment=OCTOCAM_WIFI_CACHE_PATH=/var/lib/octocam/wifi-networks.json
 Environment=OCTOCAM_SECRET_KEY_FILE=/var/lib/octocam/secret-key
+Environment=OCTOCAM_PROJECT_DIR=__PROJECT_DIR__
 Environment=OCTOCAM_HOST=0.0.0.0
 Environment=OCTOCAM_PORT=8080
-ExecStart=/usr/bin/python3 -m octocam.app
+ExecStart=/usr/local/bin/octocam-web
 Restart=on-failure
 RestartSec=3
 

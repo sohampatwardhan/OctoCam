@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} Settings</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -25,196 +26,272 @@
       </header>
 
       {% if saved %}
-        <p class="notice">Settings saved.</p>
+        <div class="toast-region" role="status" aria-live="polite" aria-atomic="true">
+          <p class="toast">Settings saved.</p>
+        </div>
       {% endif %}
 
-      <section class="layout">
-        <form class="panel settings-panel" method="post" action="{{ url_for('update_settings') }}">
-          <div class="section-heading">
-            <h2>Identity</h2>
-          </div>
+      <div class="app-layout">
+        {% set active_page = 'settings' %}
+        {% include "_sidebar.html" %}
 
-          <div class="grid-two">
-            <label>
-              <span>Device name</span>
-              <input name="device_name" value="{{ settings.device_name }}" maxlength="80">
-            </label>
-            <label>
-              <span>Room</span>
-              <input name="room" value="{{ settings.room }}" maxlength="80">
-            </label>
-          </div>
+        <section class="content-stack">
+          <form class="settings-stack" method="post" action="{{ url_for('update_settings') }}">
+            <section id="identity" class="panel settings-card">
+              <div class="section-heading">
+                <h2>Identity</h2>
+              </div>
 
-          <label>
-            <span>Camera label</span>
-            <input name="camera_label" value="{{ settings.camera_label }}" maxlength="80">
-          </label>
+              <div class="grid-two">
+                <label>
+                  <span>Device name</span>
+                  <input name="device_name" value="{{ settings.device_name }}" maxlength="80">
+                </label>
+                <label>
+                  <span>Room</span>
+                  <input name="room" value="{{ settings.room }}" maxlength="80">
+                </label>
+              </div>
 
-          <div class="section-heading">
-            <h2>Stream</h2>
-          </div>
+              <label>
+                <span>Camera label</span>
+                <input name="camera_label" value="{{ settings.camera_label }}" maxlength="80">
+              </label>
+            </section>
 
-          <div class="toggle-row">
-            <span>Camera</span>
-            <label class="switch">
-              <input type="checkbox" name="camera_enabled" {% if settings.camera_enabled %}checked{% endif %}>
-              <span></span>
-            </label>
-          </div>
+            <section id="wifi" class="panel settings-card">
+              <div class="section-heading">
+                <h2>Wi-Fi</h2>
+              </div>
 
-          <div class="grid-two">
-            <label>
-              <span>Width</span>
-              <input type="number" name="resolution_width" min="320" max="3280" step="16" value="{{ settings.resolution_width }}">
-            </label>
-            <label>
-              <span>Height</span>
-              <input type="number" name="resolution_height" min="240" max="2464" step="16" value="{{ settings.resolution_height }}">
-            </label>
-          </div>
+              <dl class="status-list compact-list">
+                <div>
+                  <dt>Network</dt>
+                  <dd>{{ system.wifi.ssid if system.wifi.ssid else system.wifi.message }}</dd>
+                </div>
+                <div>
+                  <dt>Address</dt>
+                  <dd>{{ system.ip_addresses | join(', ') if system.ip_addresses else 'Not available' }}</dd>
+                </div>
+              </dl>
 
-          <div class="grid-two">
-            <label>
-              <span>FPS</span>
-              <input type="number" name="framerate" min="1" max="60" value="{{ settings.framerate }}">
-            </label>
-            <label>
-              <span>Bitrate kbps</span>
-              <input type="number" name="bitrate_kbps" min="250" max="25000" step="250" value="{{ settings.bitrate_kbps }}">
-            </label>
-          </div>
+              <a class="secondary" href="{{ url_for('setup') }}">Open setup</a>
+            </section>
 
-          <label>
-            <span>RTSP path</span>
-            <input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80">
-          </label>
+            <section id="stream-settings" class="panel settings-card">
+              <div class="section-heading">
+                <h2>Stream</h2>
+              </div>
 
-          <div class="grid-two">
-            <label>
-              <span>Rotation</span>
-              <select name="rotation">
-                {% for value in [0, 90, 180, 270] %}
-                  <option value="{{ value }}" {% if settings.rotation == value %}selected{% endif %}>{{ value }}&deg;</option>
-                {% endfor %}
-              </select>
-            </label>
-            <label>
-              <span>Contrast</span>
-              <input type="number" name="contrast" min="0" max="4" step="0.1" value="{{ settings.contrast }}">
-            </label>
-          </div>
+              <div class="toggle-row">
+                <span>Camera</span>
+                <label class="switch">
+                  <input type="checkbox" name="camera_enabled" {% if settings.camera_enabled %}checked{% endif %}>
+                  <span></span>
+                </label>
+              </div>
 
-          <label>
-            <span>Brightness</span>
-            <input type="range" name="brightness" min="-100" max="100" value="{{ settings.brightness }}">
-          </label>
+              <div class="subsection-heading">
+                <h3>Main stream</h3>
+              </div>
 
-          <div class="checks">
-            <label>
-              <input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}>
-              <span>Horizontal flip</span>
-            </label>
-            <label>
-              <input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}>
-              <span>Vertical flip</span>
-            </label>
-          </div>
+              <label>
+                <span>Resolution</span>
+                <select name="resolution">
+                  {% set current_resolution = settings.resolution_width ~ 'x' ~ settings.resolution_height %}
+                  {% for preset in resolution_presets %}
+                    <option value="{{ preset.value }}" {% if current_resolution == preset.value %}selected{% endif %}>
+                      {{ preset.label }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
 
-          <div class="section-heading">
-            <h2>HomeKit</h2>
-          </div>
+              <div class="grid-two">
+                <label>
+                  <span>FPS</span>
+                  <input type="number" name="framerate" min="1" max="60" value="{{ settings.framerate }}">
+                </label>
+                <label>
+                  <span>Bitrate kbps</span>
+                  <input type="number" name="bitrate_kbps" min="250" max="25000" step="250" value="{{ settings.bitrate_kbps }}">
+                </label>
+              </div>
 
-          <div class="toggle-row">
-            <span>Bridge enabled</span>
-            <label class="switch">
-              <input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}>
-              <span></span>
-            </label>
-          </div>
+              <div class="subsection-heading">
+                <h3>Sub stream</h3>
+              </div>
 
-          <div class="toggle-row">
-            <span>Paired</span>
-            <label class="switch">
-              <input type="checkbox" name="homekit_paired" {% if settings.homekit_paired %}checked{% endif %}>
-              <span></span>
-            </label>
-          </div>
+              <div class="toggle-row">
+                <span>Enabled</span>
+                <label class="switch">
+                  <input type="checkbox" name="sub_stream_enabled" {% if settings.sub_stream_enabled %}checked{% endif %}>
+                  <span></span>
+                </label>
+              </div>
 
-          {% if settings.homekit_enabled and not settings.homekit_paired %}
-            <div class="pairing-box">
-              <span>HomeKit pairing will appear here when Homebridge provisioning is wired.</span>
-            </div>
-          {% endif %}
+              <label>
+                <span>Resolution</span>
+                <select name="sub_resolution">
+                  {% set current_sub_resolution = settings.sub_resolution_width ~ 'x' ~ settings.sub_resolution_height %}
+                  {% for preset in sub_resolution_presets %}
+                    <option value="{{ preset.value }}" {% if current_sub_resolution == preset.value %}selected{% endif %}>
+                      {{ preset.label }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
 
-          <div class="section-heading">
-            <h2>Admin</h2>
-          </div>
+              <div class="grid-two">
+                <label>
+                  <span>FPS</span>
+                  <input type="number" name="sub_framerate" min="1" max="30" value="{{ settings.sub_framerate }}">
+                </label>
+                <label>
+                  <span>Bitrate kbps</span>
+                  <input type="number" name="sub_bitrate_kbps" min="150" max="5000" step="50" value="{{ settings.sub_bitrate_kbps }}">
+                </label>
+              </div>
 
-          <div class="grid-two">
-            <label>
-              <span>New password</span>
-              <input name="admin_password" type="password" minlength="12" autocomplete="new-password">
-            </label>
-            <label>
-              <span>Confirm password</span>
-              <input name="admin_password_confirm" type="password" minlength="12" autocomplete="new-password">
-            </label>
-          </div>
+              <div class="grid-two">
+                <label>
+                  <span>Rotation</span>
+                  <select name="rotation">
+                    {% for value in [0, 90, 180, 270] %}
+                      <option value="{{ value }}" {% if settings.rotation == value %}selected{% endif %}>{{ value }}&deg;</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  <span>Contrast</span>
+                  <input type="number" name="contrast" min="0" max="4" step="0.1" value="{{ settings.contrast }}">
+                </label>
+              </div>
 
-          <button class="primary" type="submit">Save settings</button>
-        </form>
+              <label>
+                <span>Brightness</span>
+                <input type="range" name="brightness" min="-100" max="100" value="{{ settings.brightness }}">
+              </label>
 
-        <aside class="panel monitor-panel">
-          <div class="section-heading">
-            <h2>Status</h2>
-          </div>
+              <div class="checks">
+                <label>
+                  <input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}>
+                  <span>Horizontal flip</span>
+                </label>
+                <label>
+                  <input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}>
+                  <span>Vertical flip</span>
+                </label>
+              </div>
+            </section>
 
-          <dl class="status-list">
-            <div>
-              <dt>Wi-Fi</dt>
-              <dd>{{ system.wifi.ssid if system.wifi.ssid else system.wifi.message }}</dd>
-            </div>
-            <div>
-              <dt>Address</dt>
-              <dd>{{ system.ip_addresses | join(', ') if system.ip_addresses else 'Not available' }}</dd>
-            </div>
-            <div>
-              <dt>Uptime</dt>
-              <dd>{{ system.uptime if system.uptime else 'Not available' }}</dd>
-            </div>
-            <div>
-              <dt>CPU temp</dt>
-              <dd>{{ system.cpu_temp_c ~ ' C' if system.cpu_temp_c is not none else 'Not available' }}</dd>
-            </div>
-            <div>
-              <dt>Web UI</dt>
-              <dd>{{ system.services.octocam_web.state }}</dd>
-            </div>
-            <div>
-              <dt>RTSP</dt>
-              <dd>{{ system.services.rtsp.state }}</dd>
-            </div>
-            <div>
-              <dt>HomeKit</dt>
-              <dd>{{ system.services.homebridge.state }}</dd>
-            </div>
-          </dl>
+            <section id="rtsp" class="panel settings-card">
+              <div class="section-heading">
+                <h2>RTSP</h2>
+              </div>
 
-          <div class="preview">
-            <img src="{{ url_for('snapshot') }}" alt="Latest OctoCam snapshot" onerror="this.classList.add('is-hidden');">
-          </div>
+              <div class="toggle-row">
+                <span>Service enabled</span>
+                <label class="switch">
+                  <input type="checkbox" name="rtsp_enabled" {% if settings.rtsp_enabled %}checked{% endif %}>
+                  <span></span>
+                </label>
+              </div>
 
-          <a class="secondary" href="{{ url_for('snapshot') }}">Open snapshot</a>
-          <a class="secondary" href="{{ url_for('setup') }}">Open setup</a>
-        </aside>
-      </section>
+              <div class="grid-two">
+                <label>
+                  <span>Main path</span>
+                  <input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80">
+                </label>
+                <label>
+                  <span>Main max clients</span>
+                  <input type="number" name="rtsp_max_clients" min="1" max="4" value="{{ settings.rtsp_max_clients }}">
+                </label>
+              </div>
 
-      <section class="panel logs-panel">
-        <div class="section-heading">
-          <h2>Logs</h2>
-        </div>
-        <pre>{{ system.logs | join('\n') if system.logs else 'No recent logs available.' }}</pre>
-      </section>
+              <div class="grid-two">
+                <label>
+                  <span>Sub path</span>
+                  <input name="sub_rtsp_path" value="{{ settings.sub_rtsp_path }}" maxlength="80">
+                </label>
+                <label>
+                  <span>Sub max clients</span>
+                  <input type="number" name="sub_rtsp_max_clients" min="1" max="4" value="{{ settings.sub_rtsp_max_clients }}">
+                </label>
+              </div>
+
+              {% if settings.rtsp_enabled %}
+                <label>
+                  <span>Main URL</span>
+                  <span class="copy-row">
+                    <input id="rtspUrl" class="url-field" value="{{ rtsp_urls.main }}" readonly>
+                    <button class="icon-button copy-button" type="button" data-copy-target="rtspUrl" aria-label="Copy RTSP stream URL" title="Copy RTSP stream URL"></button>
+                  </span>
+                </label>
+
+                {% if settings.sub_stream_enabled %}
+                  <label>
+                    <span>Sub URL</span>
+                    <span class="copy-row">
+                      <input id="subRtspUrl" class="url-field" value="{{ rtsp_urls.sub }}" readonly>
+                      <button class="icon-button copy-button" type="button" data-copy-target="subRtspUrl" aria-label="Copy RTSP sub stream URL" title="Copy RTSP sub stream URL"></button>
+                    </span>
+                  </label>
+                {% endif %}
+              {% endif %}
+            </section>
+
+            <section id="homekit" class="panel settings-card">
+              <div class="section-heading">
+                <h2>HomeKit</h2>
+              </div>
+
+              <div class="toggle-row">
+                <span>Bridge enabled</span>
+                <label class="switch">
+                  <input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}>
+                  <span></span>
+                </label>
+              </div>
+
+              <div class="toggle-row">
+                <span>Paired</span>
+                <label class="switch">
+                  <input type="checkbox" name="homekit_paired" {% if settings.homekit_paired %}checked{% endif %}>
+                  <span></span>
+                </label>
+              </div>
+
+              {% if settings.homekit_enabled and not settings.homekit_paired %}
+                <div class="pairing-box">
+                  <span>HomeKit pairing will appear here when Homebridge provisioning is wired.</span>
+                </div>
+              {% endif %}
+            </section>
+
+            <section id="admin" class="panel settings-card">
+              <div class="section-heading">
+                <h2>Admin</h2>
+              </div>
+
+              <div class="grid-two">
+                <label>
+                  <span>New password</span>
+                  <input name="admin_password" type="password" minlength="12" autocomplete="new-password">
+                </label>
+                <label>
+                  <span>Confirm password</span>
+                  <input name="admin_password_confirm" type="password" minlength="12" autocomplete="new-password">
+                </label>
+              </div>
+            </section>
+
+            <section class="panel action-card">
+              <button class="primary" type="submit">Save settings</button>
+            </section>
+          </form>
+        </section>
+      </div>
     </main>
   </body>
 </html>

@@ -1,0 +1,11 @@
+<header class="topbar">
+  <div>
+    <p class="eyebrow">OctoCam</p>
+    <h1>{{ page_title }}</h1>
+    <p class="subhead">{{ settings.room }} &middot; {{ settings.device_name }}</p>
+  </div>
+  <div class="top-actions">
+    <div class="status-pill {% if system.camera_available %}is-on{% else %}is-off{% endif %}">{{ system.camera_label }}</div>
+    <form method="post" action="/logout"><button class="secondary compact" type="submit">Log out</button></form>
+  </div>
+</header>

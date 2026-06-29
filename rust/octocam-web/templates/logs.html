@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} System Logs</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <section class="panel logs-panel">
+            <div class="section-heading"><h2>System logs</h2></div>
+            <pre>{% if system.logs.len() > 0 %}{% for line in system.logs %}{{ line }}
+{% endfor %}{% else %}No recent logs available.{% endif %}</pre>
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

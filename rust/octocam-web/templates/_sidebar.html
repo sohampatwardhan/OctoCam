@@ -1,0 +1,19 @@
+<aside class="side-nav" aria-label="OctoCam sections">
+  <nav>
+    <p>Basic</p>
+    <a class="nav-link {% if active_page == "identity" %}is-active{% endif %}" href="/identity">Identity</a>
+    <a class="nav-link {% if active_page == "wifi" %}is-active{% endif %}" href="/wifi">Wi-Fi</a>
+    <a class="nav-link {% if active_page == "stream_settings" %}is-active{% endif %}" href="/stream-settings">Stream</a>
+    <a class="nav-link {% if active_page == "rtsp" %}is-active{% endif %}" href="/rtsp">RTSP</a>
+    <a class="nav-link {% if active_page == "homekit" %}is-active{% endif %}" href="/homekit">HomeKit</a>
+
+    <p>View</p>
+    <a class="nav-link {% if active_page == "stream" %}is-active{% endif %}" href="/stream">Live stream</a>
+
+    <p>Advanced</p>
+    <a class="nav-link {% if active_page == "system" %}is-active{% endif %}" href="/system">System info</a>
+    <a class="nav-link {% if active_page == "logs" %}is-active{% endif %}" href="/logs">System logs</a>
+    <a class="nav-link {% if active_page == "terminal" %}is-active{% endif %}" href="/terminal">Terminal</a>
+    <a class="nav-link {% if active_page == "admin" %}is-active{% endif %}" href="/admin">Admin</a>
+  </nav>
+</aside>

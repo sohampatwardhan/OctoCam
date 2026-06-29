@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Identity</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+      {% include "_settings_toast.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <form class="settings-stack" method="post" action="/settings">
+            <input type="hidden" name="_return_to" value="/identity">
+            <section class="panel settings-card">
+              <div class="section-heading"><h2>Identity</h2></div>
+              <div class="grid-two">
+                <label><span>Device name</span><input name="device_name" value="{{ settings.device_name }}" maxlength="80"></label>
+                <label><span>Room</span><input name="room" value="{{ settings.room }}" maxlength="80"></label>
+              </div>
+              <label><span>Camera label</span><input name="camera_label" value="{{ settings.camera_label }}" maxlength="80"></label>
+            </section>
+            <section class="panel action-card">
+              <button class="primary" type="submit">Save identity</button>
+            </section>
+          </form>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

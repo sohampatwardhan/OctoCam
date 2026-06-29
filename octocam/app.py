@@ -8,8 +8,16 @@ from flask import Flask, Response, jsonify, redirect, render_template, request, 
 
 from octocam.camera import capture_jpeg
 from octocam.security import hash_password, valid_password, verify_password
-from octocam.settings import DEFAULT_SETTINGS, load_settings, public_settings, save_settings, validate_settings
-from octocam.system import status as system_status
+from octocam.settings import (
+    DEFAULT_SETTINGS,
+    RESOLUTION_PRESETS,
+    SUB_RESOLUTION_PRESETS,
+    load_settings,
+    public_settings,
+    save_settings,
+    validate_settings,
+)
+from octocam.system import configure_rtsp_service, status as system_status
 from octocam.wifi import connect_to_network, load_network_cache, scan_and_cache_networks
 
 
@@ -72,8 +80,45 @@ def index() -> str:
         "index.html",
         settings=settings,
         defaults=DEFAULT_SETTINGS,
+        resolution_presets=RESOLUTION_PRESETS,
+        sub_resolution_presets=SUB_RESOLUTION_PRESETS,
+        rtsp_urls=stream_urls_for(settings, "rtsp"),
+        hls_urls=stream_urls_for(settings, "hls"),
         system=system_status(),
         saved=request.args.get("saved") == "1",
+    )
+
+
+@app.get("/advanced")
+def advanced() -> str:
+    settings = load_settings()
+    if not settings["setup_complete"]:
+        return redirect(url_for("setup"))
+
+    return render_template(
+        "advanced.html",
+        settings=settings,
+        rtsp_urls=stream_urls_for(settings, "rtsp"),
+        hls_urls=stream_urls_for(settings, "hls"),
+        system=system_status(),
+    )
+
+
+@app.get("/stream")
+def stream() -> str:
+    settings = load_settings()
+    if not settings["setup_complete"]:
+        return redirect(url_for("setup"))
+
+    return render_template(
+        "stream.html",
+        settings=settings,
+        rtsp_urls=stream_urls_for(settings, "rtsp"),
+        hls_urls=stream_urls_for(settings, "hls"),
+        webrtc_urls=stream_urls_for(settings, "webrtc"),
+        browser_stream_urls=stream_urls_for(settings, "browser"),
+        system=system_status(),
+        refresh_ms=1500,
     )
 
 
@@ -82,6 +127,7 @@ def setup() -> str:
     return render_template(
         "setup.html",
         settings=load_settings(),
+        resolution_presets=RESOLUTION_PRESETS,
         system=system_status(),
         wifi_cache=load_network_cache(),
         wifi_message=request.args.get("wifi_message"),
@@ -141,6 +187,8 @@ def update_settings() -> Response:
 
     for checkbox in (
         "camera_enabled",
+        "rtsp_enabled",
+        "sub_stream_enabled",
         "hflip",
         "vflip",
         "homekit_enabled",
@@ -159,6 +207,7 @@ def update_settings() -> Response:
         current["admin_password_hash"] = hash_password(admin_password)
 
     save_settings(current)
+    configure_rtsp_service(current)
     return redirect(url_for("index", saved="1"))
 
 
@@ -232,6 +281,36 @@ def cached_security_for(ssid: str) -> str:
         if network["ssid"] == ssid:
             return network["security"]
     return "wpa2"
+
+
+def stream_urls_for(settings: dict[str, Any], protocol: str) -> dict[str, str | None]:
+    return {
+        "main": stream_url_for(settings, "main", protocol),
+        "sub": stream_url_for(settings, "sub", protocol) if settings["sub_stream_enabled"] else None,
+    }
+
+
+def stream_url_for(settings: dict[str, Any], stream: str, protocol: str) -> str:
+    path_key = "rtsp_path" if stream == "main" else "sub_rtsp_path"
+    path = str(settings[path_key]).strip("/")
+    host = request_hostname()
+
+    if protocol == "rtsp":
+        return f"rtsp://{host}:8554/{path}"
+    if protocol == "hls":
+        return f"http://{host}:8888/{path}/index.m3u8"
+    if protocol == "webrtc":
+        return f"http://{host}:8889/{path}"
+    if protocol == "browser":
+        return f"http://{host}:8888/{path}/"
+
+    raise ValueError(f"Unsupported stream protocol: {protocol}")
+
+
+def request_hostname() -> str:
+    if request.host.startswith("[") and "]" in request.host:
+        return request.host[1:].split("]", 1)[0]
+    return request.host.rsplit(":", 1)[0]
 
 
 if __name__ == "__main__":

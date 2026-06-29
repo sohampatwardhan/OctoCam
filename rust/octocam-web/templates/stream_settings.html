@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Stream Settings</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+      {% include "_settings_toast.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <form class="settings-stack" method="post" action="/settings">
+            <input type="hidden" name="_return_to" value="/stream-settings">
+            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip">
+            <section class="panel settings-card">
+              <div class="section-heading"><h2>Stream</h2></div>
+              <div class="toggle-row">
+                <span>Camera</span>
+                <label class="switch"><input type="checkbox" name="camera_enabled" {% if settings.camera_enabled %}checked{% endif %}><span></span></label>
+              </div>
+
+              <div class="subsection-heading"><h3>Main stream</h3></div>
+              <label>
+                <span>Resolution</span>
+                <select name="resolution">
+                  {% for preset in resolution_presets %}
+                    <option value="{{ preset.value }}" {% if preset.selected %}selected{% endif %}>{{ preset.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="grid-two">
+                <label><span>FPS</span><input type="number" name="framerate" min="1" max="60" value="{{ settings.framerate }}"></label>
+                <label><span>Bitrate kbps</span><input type="number" name="bitrate_kbps" min="250" max="25000" step="250" value="{{ settings.bitrate_kbps }}"></label>
+              </div>
+
+              <div class="subsection-heading"><h3>Sub stream</h3></div>
+              <div class="toggle-row">
+                <span>Enabled</span>
+                <label class="switch"><input type="checkbox" name="sub_stream_enabled" {% if settings.sub_stream_enabled %}checked{% endif %}><span></span></label>
+              </div>
+              <label>
+                <span>Resolution</span>
+                <select name="sub_resolution">
+                  {% for preset in sub_resolution_presets %}
+                    <option value="{{ preset.value }}" {% if preset.selected %}selected{% endif %}>{{ preset.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="grid-two">
+                <label><span>FPS</span><input type="number" name="sub_framerate" min="1" max="30" value="{{ settings.sub_framerate }}"></label>
+                <label><span>Bitrate kbps</span><input type="number" name="sub_bitrate_kbps" min="150" max="5000" step="50" value="{{ settings.sub_bitrate_kbps }}"></label>
+              </div>
+
+              <div class="subsection-heading"><h3>Image controls</h3></div>
+              <div class="grid-two">
+                <label>
+                  <span>Rotation</span>
+                  <select name="rotation">
+                    {% for rotation in rotations %}
+                      <option value="{{ rotation.value }}" {% if rotation.selected %}selected{% endif %}>{{ rotation.value }}&deg;</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label><span>Contrast</span><input type="number" name="contrast" min="0" max="4" step="0.1" value="{{ settings.contrast }}"></label>
+              </div>
+              <label><span>Brightness</span><input type="range" name="brightness" min="-100" max="100" value="{{ settings.brightness }}"></label>
+              <div class="checks">
+                <label><input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}><span>Horizontal flip</span></label>
+                <label><input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}><span>Vertical flip</span></label>
+              </div>
+            </section>
+            <section class="panel action-card">
+              <button class="primary" type="submit">Save stream settings</button>
+            </section>
+          </form>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Wi-Fi</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <script src="/static/app.js?v=20260629-cache" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+      {% include "_settings_toast.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <section class="panel settings-card">
+            <div class="section-heading"><h2>Wi-Fi</h2></div>
+            <dl class="status-list compact-list">
+              <div><dt>Network</dt><dd>{{ system.wifi_label }}</dd></div>
+              <div><dt>Address</dt><dd>{{ system.ip_addresses }}</dd></div>
+            </dl>
+            {% if system.wifi_details.len() > 0 %}
+              <div class="subsection-heading"><h3>Connection details</h3></div>
+              <dl class="status-list wide-list compact-list">
+                {% for row in system.wifi_details %}
+                  <div><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
+                {% endfor %}
+              </dl>
+            {% endif %}
+            <a class="secondary" href="/setup">Open setup</a>
+          </section>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>
