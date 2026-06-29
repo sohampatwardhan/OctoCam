@@ -720,6 +720,60 @@ input[type="checkbox"] {
   text-align: center;
 }
 
+.compact-pairing {
+  min-height: 72px;
+}
+
+.error-pairing {
+  min-height: 72px;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.homekit-pairing {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--field);
+}
+
+.homekit-qr {
+  width: 176px;
+  height: 176px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+}
+
+.homekit-pairing-details {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.homekit-pairing-details span,
+.homekit-pairing-details small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.homekit-pairing-details strong {
+  font-size: 1.8rem;
+  letter-spacing: 0.04em;
+}
+
+.homekit-pairing-details small {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
 pre {
   max-height: 320px;
   margin: 0;
@@ -742,8 +796,14 @@ pre {
   .topbar,
   .layout,
   .app-layout,
-  .grid-two {
+  .grid-two,
+  .homekit-pairing {
     grid-template-columns: 1fr;
+  }
+
+  .homekit-qr {
+    width: 148px;
+    height: 148px;
   }
 
   .side-nav {

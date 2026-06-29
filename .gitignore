@@ -19,3 +19,4 @@ dist/
 *.egg-info/
 target/
 rust/**/target/
+node_modules/

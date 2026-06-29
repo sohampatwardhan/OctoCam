@@ -77,7 +77,7 @@ pub struct ServiceStatus {
 #[derive(Clone, Debug, Serialize)]
 pub struct Services {
     pub octocam_web: ServiceStatus,
-    pub homebridge: ServiceStatus,
+    pub homekit: ServiceStatus,
     pub rtsp: ServiceStatus,
 }
 
@@ -119,7 +119,7 @@ pub fn status() -> SystemStatus {
         camera: camera_status(),
         services: Services {
             octocam_web: service_status("octocam-web"),
-            homebridge: service_status("homebridge"),
+            homekit: service_status("octocam-homekit"),
             rtsp: service_status("octocam-rtsp"),
         },
         logs: service_logs("octocam-web", 40),
@@ -191,7 +191,7 @@ pub fn view(status: &SystemStatus) -> SystemView {
         swap,
         web_state: status.services.octocam_web.state.clone(),
         rtsp_state: status.services.rtsp.state.clone(),
-        homekit_state: status.services.homebridge.state.clone(),
+        homekit_state: status.services.homekit.state.clone(),
         wifi_details: wifi_details(&status.wifi),
         logs: status.logs.clone(),
         ssh_target,
@@ -217,6 +217,25 @@ pub fn set_service_enabled(unit: &str, enabled: bool) -> Result<(), String> {
             });
             return Err(message.trim().to_string());
         }
+    }
+    Ok(())
+}
+
+pub fn restart_service(unit: &str) -> Result<(), String> {
+    if !command_exists("systemctl") {
+        return Err("systemctl not found".to_string());
+    }
+    let output = Command::new("systemctl")
+        .args(["restart", unit])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        });
+        return Err(message.trim().to_string());
     }
     Ok(())
 }

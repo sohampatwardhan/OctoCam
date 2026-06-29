@@ -32,6 +32,7 @@ struct AppState {
     config_path: PathBuf,
     wifi_cache_path: PathBuf,
     mediamtx_config_path: PathBuf,
+    homekit_status_path: PathBuf,
     secret_key: String,
 }
 
@@ -113,6 +114,7 @@ struct HomeKitTemplate {
     page_title: String,
     settings: Settings,
     system: system::SystemView,
+    homekit: HomeKitView,
     saved: bool,
     active_page: &'static str,
 }
@@ -198,6 +200,33 @@ struct LoginQuery {
     next: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+struct HomeKitStatus {
+    status: Option<String>,
+    paired: Option<bool>,
+    pincode: Option<String>,
+    setup_uri: Option<String>,
+    qr_data_url: Option<String>,
+    stream_source: Option<String>,
+    rtsp_url: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct HomeKitView {
+    status: String,
+    paired: bool,
+    has_pairing: bool,
+    pincode: String,
+    setup_uri: String,
+    has_qr: bool,
+    qr_data_url: String,
+    stream_source: String,
+    rtsp_url: String,
+    error: String,
+    has_error: bool,
+}
+
 #[derive(Deserialize)]
 struct SavedQuery {
     saved: Option<String>,
@@ -262,12 +291,16 @@ impl AppState {
         let config_path = settings::default_config_path();
         let wifi_cache_path = wifi::default_cache_path();
         let mediamtx_config_path = mediamtx::default_config_path();
+        let homekit_status_path = env::var_os("OCTOCAM_HOMEKIT_STATUS_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/homekit-status.json"));
         let secret_key = load_secret_key();
         Self {
             project_dir,
             config_path,
             wifi_cache_path,
             mediamtx_config_path,
+            homekit_status_path,
             secret_key,
         }
     }
@@ -389,6 +422,7 @@ async fn homekit(
     render(HomeKitTemplate {
         page_title: "HomeKit".to_string(),
         saved: query.saved.as_deref() == Some("1"),
+        homekit: homekit_view(&state.homekit_status_path, &settings),
         settings,
         system: system::view(&status),
         active_page: "homekit",
@@ -625,6 +659,7 @@ async fn complete_setup(
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
+    configure_homekit_service(&current);
     Ok(with_login_cookie(
         Redirect::to("/?saved=1").into_response(),
         &state,
@@ -693,6 +728,7 @@ async fn update_settings(
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
     let _ = mediamtx::configure_rtsp_service(&current, &state.mediamtx_config_path);
+    configure_homekit_service(&current);
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
 }
 
@@ -805,6 +841,54 @@ async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
 
 fn render<T: Template>(template: T) -> AppResult {
     Ok(Html(template.render()?).into_response())
+}
+
+fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
+    let status = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<HomeKitStatus>(&raw).ok())
+        .unwrap_or_default();
+    let status_label = status.status.unwrap_or_else(|| {
+        if settings.homekit_enabled {
+            "starting".to_string()
+        } else {
+            "disabled".to_string()
+        }
+    });
+    let pincode = status.pincode.unwrap_or_default();
+    let setup_uri = status.setup_uri.unwrap_or_default();
+    let qr_data_url = status.qr_data_url.unwrap_or_default();
+    let error = status.error.unwrap_or_default();
+    HomeKitView {
+        status: status_label,
+        paired: status.paired.unwrap_or(settings.homekit_paired),
+        has_pairing: !pincode.is_empty() || !setup_uri.is_empty(),
+        pincode,
+        setup_uri,
+        has_qr: !qr_data_url.is_empty(),
+        qr_data_url,
+        stream_source: status.stream_source.unwrap_or_else(|| {
+            if settings.sub_stream_enabled {
+                "sub"
+            } else {
+                "main"
+            }
+            .to_string()
+        }),
+        rtsp_url: status.rtsp_url.unwrap_or_default(),
+        has_error: !error.is_empty(),
+        error,
+    }
+}
+
+fn configure_homekit_service(settings: &Settings) {
+    const UNIT: &str = "octocam-homekit";
+    if settings.homekit_enabled {
+        let _ = system::set_service_enabled(UNIT, true);
+        let _ = system::restart_service(UNIT);
+    } else {
+        let _ = system::set_service_enabled(UNIT, false);
+    }
 }
 
 fn settings_to_map<T: Serialize>(settings: &T) -> Result<Map<String, Value>, AppError> {

@@ -5,14 +5,15 @@ A Raspberry Pi Zero 2 W refresh of the Pimoroni OctoCam kit.
 This repo contains a lightweight local web interface for setting up and managing
 an OctoCam built with a Raspberry Pi Zero 2 W. The original kit shipped for a Pi
 Zero W; the Zero 2 W keeps the same small form factor while adding enough CPU
-headroom for a 64-bit Raspberry Pi OS install, local preview, Homebridge, and a
-separate RTSP camera service.
+headroom for a 64-bit Raspberry Pi OS install, local preview, a minimal HomeKit
+accessory daemon, and a separate RTSP camera service.
 
 The product shape is intentionally appliance-like:
 
 1. First boot opens a setup flow.
 2. The user names the camera, picks a room, and confirms stream defaults.
-3. Optional HomeKit status is exposed without turning the UI into Homebridge.
+3. Optional HomeKit pairing is exposed without turning the UI into a full home
+   automation stack.
 4. After setup, the UI collapses into a compact settings/status page.
 
 Matter 1.5 camera support is a future consideration, but it is intentionally out
@@ -68,7 +69,7 @@ the newer Debian 13 `trixie` images.
 
 Use a minimal image, not a desktop image. The device should boot to
 `multi-user.target`, run only the services needed for Wi-Fi, SSH, camera,
-OctoCam, RTSP, and optional Homebridge, and avoid background desktop or
+OctoCam, RTSP, and optional HomeKit accessory support, and avoid background desktop or
 developer conveniences.
 
 Raspberry Pi OS Legacy Lite is the reference baseline because it is the most
@@ -81,7 +82,7 @@ If it preserves the camera and Wi-Fi setup behavior, it may become the preferred
 OctoCam image.
 
 Trixie remains the forward-looking target once it has more Raspberry Pi field
-time or when a required camera, NetworkManager, Homebridge, or security feature
+time or when a required camera, NetworkManager, HomeKit, or security feature
 depends on it.
 
 DietPi acceptance criteria:
@@ -91,7 +92,7 @@ DietPi acceptance criteria:
 - Verify Raspberry Pi camera support, Picamera2/libcamera packages, and the
   chosen RTSP service.
 - Verify NetworkManager, `nmcli`, setup AP mode, and captive portal behavior.
-- Verify Homebridge install/runtime memory on a 512MB board.
+- Verify HomeKit accessory runtime memory on a 512MB board.
 - Measure idle RAM, boot time, write rate, and thermal behavior against
   Raspberry Pi OS Legacy Lite.
 
@@ -253,7 +254,7 @@ http://127.0.0.1:8080
 - Test captive portal behavior and add a minimal redirect/intercept layer if
   client OSes do not auto-open the setup portal reliably.
 - Add post-setup network switching through NetworkManager.
-- Add Homebridge provisioning and QR display when unpaired.
+- Tune HomeKit camera streaming compatibility and latency after pairing on Apple Home.
 - Add authenticated admin access if the UI will leave a trusted LAN.
 - Add motion detection and recording controls once the desired camera pipeline is
   chosen.

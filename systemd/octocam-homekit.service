@@ -1,0 +1,19 @@
+[Unit]
+Description=OctoCam HomeKit camera accessory
+Wants=network-online.target octocam-rtsp.service
+After=network-online.target octocam-rtsp.service octocam-web.service
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+WorkingDirectory=__PROJECT_DIR__/homekit
+Environment=OCTOCAM_CONFIG_PATH=/var/lib/octocam/settings.json
+Environment=OCTOCAM_STATE_DIR=/var/lib/octocam
+Environment=OCTOCAM_HOMEKIT_STATUS_PATH=/var/lib/octocam/homekit-status.json
+Environment=OCTOCAM_HOMEKIT_STORAGE_DIR=/var/lib/octocam/hap-storage
+ExecStart=/usr/bin/node __PROJECT_DIR__/homekit/octocam-homekit.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

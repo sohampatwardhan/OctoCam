@@ -3,8 +3,11 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUST_WEB_DIR="$PROJECT_DIR/rust/octocam-web"
+HOMEKIT_DIR="$PROJECT_DIR/homekit"
 SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-web.service"
 SERVICE_FILE="/etc/systemd/system/octocam-web.service"
+HOMEKIT_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-homekit.service"
+HOMEKIT_SERVICE_FILE="/etc/systemd/system/octocam-homekit.service"
 WIFI_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-wifi-setup.service"
 WIFI_SERVICE_FILE="/etc/systemd/system/octocam-wifi-setup.service"
 MINIMIZE_SCRIPT="$PROJECT_DIR/scripts/minimize-os.sh"
@@ -59,7 +62,7 @@ fi
 
 echo "Installing OctoCam dependencies..."
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config network-manager
+apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config network-manager nodejs npm ffmpeg
 
 if ! apt-get install -y --no-install-recommends rpicam-apps; then
   echo "rpicam-apps was unavailable; trying the older libcamera-apps package..."
@@ -68,6 +71,11 @@ fi
 
 if [[ ! -f "$RUST_WEB_DIR/Cargo.toml" ]]; then
   echo "Missing Rust web app: $RUST_WEB_DIR/Cargo.toml"
+  exit 1
+fi
+
+if [[ ! -f "$HOMEKIT_DIR/package.json" ]]; then
+  echo "Missing HomeKit app: $HOMEKIT_DIR/package.json"
   exit 1
 fi
 
@@ -84,6 +92,9 @@ fi
 echo "Building OctoCam Rust web UI..."
 cargo build --manifest-path "$RUST_WEB_DIR/Cargo.toml" --release --locked
 install -m 0755 "$RUST_WEB_DIR/target/release/octocam-web" "$WEB_BINARY"
+
+echo "Installing OctoCam HomeKit dependencies..."
+npm ci --omit=dev --prefix "$HOMEKIT_DIR"
 
 echo "Preparing OctoCam state directories..."
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR" "$LOG_DIR"
@@ -143,6 +154,12 @@ chmod 0644 "$SERVICE_FILE"
 
 sed \
   -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
+  -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
+  "$HOMEKIT_SERVICE_TEMPLATE" > "$HOMEKIT_SERVICE_FILE"
+chmod 0644 "$HOMEKIT_SERVICE_FILE"
+
+sed \
+  -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
   "$WIFI_SERVICE_TEMPLATE" > "$WIFI_SERVICE_FILE"
 chmod 0644 "$WIFI_SERVICE_FILE"
 
@@ -159,6 +176,11 @@ if ! systemctl start octocam-wifi-setup.service; then
   echo "Run 'journalctl -xeu octocam-wifi-setup.service' on the Pi for details."
 fi
 systemctl enable --now octocam-web.service
+if grep -q '"homekit_enabled": true' "$STATE_DIR/settings.json"; then
+  systemctl enable --now octocam-homekit.service
+else
+  systemctl disable --now octocam-homekit.service >/dev/null 2>&1 || true
+fi
 
 echo "OctoCam web UI is installed."
 echo "Open http://$(hostname).local:8080 or http://<device-ip>:8080"

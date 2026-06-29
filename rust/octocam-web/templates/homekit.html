@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} HomeKit</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260629-cache">
+    <link rel="stylesheet" href="/static/styles.css?v=20260629-homekit">
     <script src="/static/app.js?v=20260629-cache" defer></script>
   </head>
   <body>
@@ -17,16 +17,43 @@
         <section class="content-stack">
           <form class="settings-stack" method="post" action="/settings">
             <input type="hidden" name="_return_to" value="/homekit">
-            <input type="hidden" name="_checkboxes" value="homekit_enabled,homekit_paired">
+            <input type="hidden" name="_checkboxes" value="homekit_enabled">
             <section class="panel settings-card">
               <div class="section-heading"><h2>HomeKit</h2></div>
               <div class="toggle-row"><span>Bridge enabled</span><label class="switch"><input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}><span></span></label></div>
-              <div class="toggle-row"><span>Paired</span><label class="switch"><input type="checkbox" name="homekit_paired" {% if settings.homekit_paired %}checked{% endif %}><span></span></label></div>
+              <dl class="status-list compact-list">
+                <div><dt>Service</dt><dd>{{ system.homekit_state }}</dd></div>
+                <div><dt>Pairing</dt><dd>{% if homekit.paired %}paired{% else %}not paired{% endif %}</dd></div>
+                <div><dt>Accessory</dt><dd>{{ homekit.status }}</dd></div>
+                <div><dt>Stream source</dt><dd>{{ homekit.stream_source }}</dd></div>
+              </dl>
               {% if settings.homekit_enabled %}
-                {% if settings.homekit_paired %}
+                {% if homekit.paired %}
+                  <div class="pairing-box compact-pairing"><span>This camera is marked paired in OctoCam settings.</span></div>
                 {% else %}
-                  <div class="pairing-box"><span>HomeKit pairing will appear here when Homebridge provisioning is wired.</span></div>
+                  {% if homekit.has_error %}
+                    <div class="pairing-box error-pairing"><span>{{ homekit.error }}</span></div>
+                  {% endif %}
+                  {% if homekit.has_pairing %}
+                    <div class="homekit-pairing">
+                      {% if homekit.has_qr %}
+                        <img class="homekit-qr" src="{{ homekit.qr_data_url }}" alt="HomeKit pairing QR code">
+                      {% endif %}
+                      <div class="homekit-pairing-details">
+                        <span>Manual code</span>
+                        <strong>{{ homekit.pincode }}</strong>
+                        <small>{{ homekit.setup_uri }}</small>
+                        {% if homekit.rtsp_url.len() > 0 %}
+                          <small>Uses {{ homekit.rtsp_url }}</small>
+                        {% endif %}
+                      </div>
+                    </div>
+                  {% else %}
+                    <div class="pairing-box"><span>HomeKit service is starting. Refresh this page in a few seconds.</span></div>
+                  {% endif %}
                 {% endif %}
+              {% else %}
+                <div class="pairing-box compact-pairing"><span>Enable the bridge and save to publish this camera to Apple Home.</span></div>
               {% endif %}
             </section>
             <section class="panel action-card">

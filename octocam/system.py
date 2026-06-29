@@ -24,7 +24,7 @@ def status() -> dict[str, Any]:
         "camera": cached("camera", 10, camera_status),
         "services": {
             "octocam_web": cached("svc:octocam-web", 5, lambda: service_status("octocam-web")),
-            "homebridge": cached("svc:homebridge", 5, lambda: service_status("homebridge")),
+            "homekit": cached("svc:octocam-homekit", 5, lambda: service_status("octocam-homekit")),
             "rtsp": cached("svc:octocam-rtsp", 5, lambda: service_status("octocam-rtsp")),
         },
         "logs": cached_list("logs:octocam-web", 10, lambda: service_logs("octocam-web")),
