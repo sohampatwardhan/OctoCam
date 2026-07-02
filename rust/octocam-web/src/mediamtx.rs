@@ -55,6 +55,9 @@ pub fn configure_rtsp_service(settings: &Settings, path: &PathBuf) -> ConfigureR
 }
 
 pub fn render_mediamtx_config(settings: &Settings) -> String {
+    // HomeKit's daemon reads via a local RTSP session (ffmpeg), so reserve one
+    // reader slot per path — user-facing capacity should not shrink when the
+    // Home app is watching. Soft reservation: see the design doc.
     let reserve = if settings.homekit_enabled { 1 } else { 0 };
     let mut path_sections = vec![mediamtx_camera_path(
         &settings.rtsp_path,
