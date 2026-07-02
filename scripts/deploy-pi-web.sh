@@ -92,7 +92,12 @@ rsync -az --delete \
   --rsync-path='sudo -n rsync' \
   "$PROJECT_DIR/static/" "$SSH_TARGET:$REMOTE_DIR/static/"
 
+HEALTH_PORT="${OCTOCAM_PORT:-8080}"
 ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
+  # Back up the current binary so we can roll back if the new one is unhealthy.
+  if [ -x /usr/local/bin/octocam-web ]; then
+    sudo -n cp -f /usr/local/bin/octocam-web /usr/local/bin/octocam-web.bak
+  fi
   sudo -n install -m 0755 '$REMOTE_TMP/octocam-web' /usr/local/bin/octocam-web
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-web.service' /etc/systemd/system/octocam-web.service
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-wifi-setup.service' /etc/systemd/system/octocam-wifi-setup.service
@@ -100,6 +105,16 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n systemctl enable octocam-wifi-setup.service >/dev/null
   sudo -n systemctl restart octocam-web.service
   rm -rf '$REMOTE_TMP'
-  /usr/local/bin/octocam-web --help
+  # Health gate: the UI must actually serve, not just be \"active\". Roll back on failure.
+  sleep 2
+  if ! curl -fsS -m 8 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\"; then
+    echo \"health check FAILED — rolling back\" >&2
+    if [ -x /usr/local/bin/octocam-web.bak ]; then
+      sudo -n cp -f /usr/local/bin/octocam-web.bak /usr/local/bin/octocam-web
+      sudo -n systemctl restart octocam-web.service
+    fi
+    exit 1
+  fi
   systemctl is-active octocam-web.service
+  echo \"health check OK\"
 '"
