@@ -96,6 +96,15 @@ octocam-web ◄────────────┘ GET /v3/paths/list + /v3/
 **Node:** decision-table cases for the stream chooser (720p/500kbps thresholds, subnet override, fallback) — as a small pure function extracted for testability; manual matrix documented if no Node test runner is added.
 **On-hardware (192.168.2.211):** main plays via ffprobe after deploy; counts match a staged mix (1 browser + 1 RTSP + Home app); second browser viewer lands on sub while main occupied; closing the Home app frees slots within ~5s; captive portal sheet appears on iPhone joining the setup AP (requires a factory-ish reset or temporary `setup_complete=false`).
 
+## Post-hardening amendments (2026-07-02, plan-harden thorough)
+
+- **Dashboard default is SUB-first** (user decision): a forgotten kiosk tab must not pin main's single slot. Main is opt-in via the Main button; the reroute-to-sub-with-note applies to that click when main is full. §4's "initial iframe source = main if available" is superseded.
+- **mediamtx reader type strings** are `webRTCSession` and `hlsSession` (v1.19.2-verified); HLS sessions linger after clients leave, so they count in displayed totals but are **excluded from capacity/reroute math**.
+- **HomeKit must advertise a 1280x720 mode** or the local→main heuristic can never trigger (the Home app only requests advertised modes; today's list caps at 640x480). The ffmpeg *output* stays capped at 640x480 — the main/sub choice changes the decode input only; raising output quality is a separate measured decision (CPU risk on the Zero 2 W).
+- **`/snapshot.jpg` captures through mediamtx** (`ffmpeg` one frame off the sub RTSP path) whenever `rtsp_enabled`, because libcamera permits a single consumer and mediamtx holds the camera; `rpicam-still` remains only for the RTSP-disabled case. §6 amended.
+- **Captive portal requires DNS interception**: NM shared-mode dnsmasq wildcard (`address=/#/10.42.0.1` in `dnsmasq-shared.d/`) plus redirecting to the gateway IP literal (never echoing the probe's Host header). Without this the OS sheet never appears. §7 amended.
+- **Startup reconcile is guarded**: `After=octocam-rtsp.service` ordering plus a once-per-boot `/run` marker so deploys/crash-loops cannot flap the RTSP service.
+
 ## Out of scope
 
 - Kicking sessions / priority eviction (rejected in favor of reject-newcomer)

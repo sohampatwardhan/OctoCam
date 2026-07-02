@@ -115,7 +115,7 @@ fn clamp_to_encoder_limits(settings: &mut Settings) {
 }
 ```
 
-NOTE: first confirm `load_settings` routes stored JSON through `validate_map` (read `settings.rs:211-228`); it does for the existing migrations — if it did not, the clamp must also be called there. `validate_map` builds `settings` as a `let settings = ...` chain; make the binding `let mut settings`.
+NOTE: `load_settings` routes stored JSON through `validate_map` (verified: settings.rs:211-219 parses the file into a `Map` and returns `validate_map(&map)`), so the clamp automatically fixes settings loaded from disk. `validate_map` already binds `let mut settings = Settings::default();` — just append the `clamp_to_encoder_limits(&mut settings);` call before the final return.
 
 - [ ] **Step 4:** `cargo test settings::` — all pass (including the existing `applies_resolution_preset_and_bounds`; if it asserted `1640x1232`, update it to a legal preset).
 - [ ] **Step 5:** Commit: `git add -A rust/octocam-web/src/settings.rs && git commit -m "fix(web): clamp stream resolutions to hardware H.264 encoder limits"`
@@ -245,6 +245,7 @@ pub struct PathViewers {
     pub browser: u32,
     pub rtsp: u32,
     pub homekit: u32,
+    pub hls: u32,
     pub total: u32,
     /// User-facing cap (excludes the HomeKit reserve slot).
     pub capacity: u32,
@@ -257,7 +258,8 @@ pub struct ViewerReport {
 }
 
 impl ViewerReport {
-    /// Main has room for another NON-local viewer (HomeKit's reserve not counted).
+    /// Main has room for another NON-local viewer. HomeKit's reserve and lingering
+    /// HLS sessions are deliberately excluded from capacity math (FIX-9).
     pub fn main_available(&self) -> bool {
         self.main.browser + self.main.rtsp < self.main.capacity
     }
@@ -316,7 +318,12 @@ fn classify(
             let kind = reader.get("type").and_then(Value::as_str).unwrap_or("");
             let id = reader.get("id").and_then(Value::as_str).unwrap_or("");
             match kind {
-                "webrtcSession" | "hlsMuxer" => target.browser += 1,
+                // Exact casing verified against mediamtx v1.19.2 source/OpenAPI:
+                // webRTCSession (capital RTC) and hlsSession — NOT webrtcSession/hlsMuxer.
+                "webRTCSession" => target.browser += 1,
+                // HLS sessions linger after the last client leaves; count them in the
+                // displayed total but NOT in capacity math, to avoid false "main full".
+                "hlsSession" => target.hls += 1,
                 "rtspSession" | "rtspsSession" => {
                     if local_session.get(id).copied().unwrap_or(false) {
                         target.homekit += 1;
@@ -361,8 +368,8 @@ mod tests {
     use super::*;
 
     const PATHS: &str = r#"{"itemCount":2,"pageCount":1,"items":[
-        {"name":"main","readers":[{"type":"webrtcSession","id":"w1"},{"type":"rtspSession","id":"r1"}]},
-        {"name":"sub","readers":[{"type":"rtspSession","id":"r2"},{"type":"hlsMuxer","id":"h1"}]}
+        {"name":"main","readers":[{"type":"webRTCSession","id":"w1"},{"type":"rtspSession","id":"r1"}]},
+        {"name":"sub","readers":[{"type":"rtspSession","id":"r2"},{"type":"hlsSession","id":"h1"}]}
     ]}"#;
     const SESSIONS: &str = r#"{"itemCount":2,"pageCount":1,"items":[
         {"id":"r1","remoteAddr":"192.168.2.50:61044"},
@@ -372,8 +379,16 @@ mod tests {
     #[test]
     fn classifies_readers_by_type_and_locality() {
         let report = classify(PATHS, SESSIONS, "main", "sub", 1, 2).unwrap();
-        assert_eq!(report.main, PathViewers { browser: 1, rtsp: 1, homekit: 0, total: 2, capacity: 1 });
-        assert_eq!(report.sub, PathViewers { browser: 1, rtsp: 0, homekit: 1, total: 2, capacity: 2 });
+        assert_eq!(report.main, PathViewers { browser: 1, rtsp: 1, homekit: 0, hls: 0, total: 2, capacity: 1 });
+        assert_eq!(report.sub, PathViewers { browser: 0, rtsp: 0, homekit: 1, hls: 1, total: 2, capacity: 2 });
+    }
+
+    #[test]
+    fn lingering_hls_does_not_consume_capacity() {
+        let paths = r#"{"items":[{"name":"main","readers":[{"type":"hlsSession","id":"h9"}]},{"name":"sub","readers":[]}]}"#;
+        let report = classify(paths, SESSIONS, "main", "sub", 1, 2).unwrap();
+        assert_eq!(report.main.hls, 1);
+        assert!(report.main_available(), "a lingering HLS session must not mark main full");
     }
 
     #[test]
@@ -408,23 +423,31 @@ The deployed Pi's `/etc/mediamtx.yml` still holds 1640x1232 and only regenerates
 ```rust
     // Reconcile the mediamtx config with (possibly migrated) settings at startup,
     // restarting the RTSP service only when the rendered config actually changed.
+    // The /run marker (tmpfs, cleared each boot) limits the reconcile restart to once
+    // per boot so a crash-looping octocam-web cannot flap the camera service.
     {
         let settings = settings::load_settings(&state.config_path);
         let config_path = state.mediamtx_config_path.clone();
         let _ = run_blocking(move || {
             match mediamtx::write_mediamtx_config(&settings, &config_path) {
                 Ok(true) => {
-                    let _ = system::restart_service("octocam-rtsp");
+                    let marker = std::path::Path::new("/run/octocam-rtsp-reconciled");
+                    if !marker.exists() {
+                        let _ = std::fs::write(marker, b"1");
+                        let _ = system::restart_service("octocam-rtsp");
+                    }
                 }
                 Ok(false) => {}
-                Err(error) => tracing::warn!("mediamtx config reconcile failed: {error}"),
+                // `tracing` is NOT a direct dependency (only tracing-subscriber is);
+                // tracing::warn! would not compile. eprintln! matches neighboring code.
+                Err(error) => eprintln!("mediamtx config reconcile failed: {error}"),
             }
         })
         .await;
     }
 ```
 
-If `tracing` is not already imported in `main.rs`, use `eprintln!` in the same shape as neighboring code instead.
+Also add systemd ordering so the reconcile restart cannot race octocam-rtsp's own first start: in `systemd/octocam-web.service` `[Unit]`, append `octocam-rtsp.service` to the existing `After=` line (add the file to this task's **Files** list).
 
 - [ ] **Step 2:** `cargo build && cargo test` — clean, all pass.
 - [ ] **Step 3:** Commit: `git commit -am "fix(web): reconcile mediamtx config at startup so settings fixes reach deployed devices"`
@@ -471,16 +494,12 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
 
 ```rust
     let viewers = streams::viewer_report(&settings).await;
-    let (initial_stream, main_busy) = match &viewers {
-        Some(report) if !report.main_available() && settings.sub_stream_enabled => {
-            ("sub".to_string(), true)
-        }
-        Some(_) => ("main".to_string(), false),
-        None => (
-            if settings.sub_stream_enabled { "sub" } else { "main" }.to_string(),
-            false,
-        ),
-    };
+    // Sub-first default (product decision, hardening 2026-07-02): the dashboard opens
+    // on sub so a forgotten kiosk tab never pins main's only slot. Main is opt-in via
+    // the Main button; app.js reroutes that click to sub (with a note) when main is
+    // full. `main_busy` therefore starts false — the note is client-toggled.
+    let initial_stream = if settings.sub_stream_enabled { "sub" } else { "main" }.to_string();
+    let main_busy = false;
 ```
 
 and pass `initial_stream`, `main_busy`, `viewers` in the struct literal.
@@ -614,6 +633,42 @@ pub const SNAPSHOT_TTL: Duration = Duration::from_secs(2);
 pub fn snapshot_is_fresh(captured: Instant, now: Instant) -> bool {
     now.duration_since(captured) < SNAPSHOT_TTL
 }
+
+/// Grab one JPEG frame through mediamtx. While RTSP is enabled, mediamtx's
+/// rpiCamera source owns the camera continuously and libcamera allows a single
+/// consumer — `rpicam-still` CANNOT acquire the device then, so direct capture
+/// would always fail. Pull a frame off the sub stream instead (same pattern the
+/// HomeKit daemon already uses for its snapshots).
+pub fn capture_jpeg_via_rtsp(settings: &Settings) -> Result<Vec<u8>, String> {
+    let path = if settings.sub_stream_enabled {
+        &settings.sub_rtsp_path
+    } else {
+        &settings.rtsp_path
+    };
+    let url = format!("rtsp://127.0.0.1:8554/{}", path.trim_start_matches('/'));
+    let output = crate::proc::run(
+        Command::new("ffmpeg").args([
+            "-hide_banner", "-nostdin", "-rtsp_transport", "tcp",
+            "-i", &url, "-frames:v", "1", "-f", "image2", "-c:v", "mjpeg", "-",
+        ]),
+        crate::proc::CAPTURE_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())?;
+    if output.status.success() && !output.stdout.is_empty() {
+        Ok(output.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Route snapshots through mediamtx whenever it owns the camera.
+pub fn capture_snapshot(settings: &Settings) -> Result<Vec<u8>, String> {
+    if settings.rtsp_enabled {
+        capture_jpeg_via_rtsp(settings)
+    } else {
+        capture_jpeg(settings)
+    }
+}
 ```
 
 In `main.rs`: add to `AppState`:
@@ -632,10 +687,12 @@ initialize in `AppState::from_env()` with `Arc::new(tokio::sync::Mutex::new(None
             return Ok(([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response());
         }
     }
-    // Cold path: hold the lock across capture so concurrent requests coalesce
-    // onto one rpicam-still run (capture itself is bounded by CAPTURE_TIMEOUT).
+    // Cold path: hold the lock across capture so concurrent requests coalesce onto
+    // one capture (bounded by CAPTURE_TIMEOUT = 8s). Accepted trade-off: a burst of
+    // concurrent snapshot requests serializes behind the first — worst case one
+    // 8s wait, then everyone is served from cache.
     let settings_for_capture = settings.clone();
-    match run_blocking(move || camera::capture_jpeg(&settings_for_capture)).await? {
+    match run_blocking(move || camera::capture_snapshot(&settings_for_capture)).await? {
         Ok(data) => {
             *cache = Some((std::time::Instant::now(), data.clone()));
             Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response())
@@ -695,6 +752,23 @@ function chooseStream(settings, video, targetAddress) {
 }
 ```
 
+- [ ] **Step 1b: Advertise a main-quality resolution (REQUIRED — without this the chooser is dead code).** `supportedResolutions()` currently caps every advertised mode at 640×480, so the Home app can never *request* ≥720p and `chooseStream` would always return sub. In `supportedResolutions(settings)`, add a high-quality candidate FIRST in the `candidates` array:
+
+```js
+  const candidates = [
+    // Advertised so local Home-app sessions request high quality — that request is
+    // the local/remote signal chooseStream keys on. The actual ffmpeg OUTPUT stays
+    // capped by MAX_HOMEKIT_WIDTH/HEIGHT (640x480) for now: switching the INPUT to
+    // main improves source quality without betting the Zero 2 W CPU on libx264
+    // 720p encode. Raising the output cap is a separate, measured decision.
+    [1280, 720, Math.min(15, settings.framerate || 15)],
+    [primary.width, primary.height, subFps],
+    [640, 480, 15],
+    [480, 360, 15],
+    [320, 240, 15],
+  ];
+```
+
 - [ ] **Step 2: Use it in `handleStreamRequest`.** Replace `const stream = sourceStream(settings);` in the start-stream path with:
 
 ```js
@@ -745,16 +819,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn captive_redirect_builds_from_host_header() {
-        assert_eq!(
-            captive_redirect_target(Some("10.42.0.1")),
-            "http://10.42.0.1:8080/setup"
-        );
-        assert_eq!(
-            captive_redirect_target(Some("10.42.0.1:80")),
-            "http://10.42.0.1:8080/setup"
-        );
-        assert_eq!(captive_redirect_target(None), "http://10.42.0.1:8080/setup");
+    fn captive_redirect_targets_the_ap_gateway() {
+        // Never echo the probe's Host header (captive.apple.com etc.) — the client
+        // cannot resolve it on the uplink-less AP. Always the gateway IP literal.
+        assert_eq!(captive_redirect_target(), "http://10.42.0.1:8080/setup");
     }
 }
 ```
@@ -764,19 +832,18 @@ mod tests {
 - [ ] **Step 3: Implement** in `main.rs`:
 
 ```rust
-/// Where captive-portal probes are redirected. Falls back to the NetworkManager
-/// shared-mode gateway address used by the OctoCam-Setup AP.
-fn captive_redirect_target(host_header: Option<&str>) -> String {
-    let host = host_header
-        .map(|value| value.split(':').next().unwrap_or(value))
-        .filter(|value| !value.is_empty())
-        .unwrap_or("10.42.0.1");
-    format!("http://{host}:8080/setup")
+/// NetworkManager shared-mode gateway address of the OctoCam-Setup AP.
+const SETUP_AP_GATEWAY: &str = "10.42.0.1";
+
+/// Captive probes carry Host headers like captive.apple.com, which the joined
+/// client CANNOT resolve on our uplink-less AP — echoing the Host would produce a
+/// dead redirect. Always send clients to the AP gateway IP literal.
+fn captive_redirect_target() -> String {
+    format!("http://{SETUP_AP_GATEWAY}:8080/setup")
 }
 
-async fn captive_probe(headers: HeaderMap) -> Response {
-    let host = headers.get(http::header::HOST).and_then(|v| v.to_str().ok());
-    Redirect::temporary(&captive_redirect_target(host)).into_response()
+async fn captive_probe() -> Response {
+    Redirect::temporary(&captive_redirect_target()).into_response()
 }
 
 fn spawn_captive_portal_listener() {
@@ -784,7 +851,8 @@ fn spawn_captive_portal_listener() {
         let app = Router::new()
             .route("/hotspot-detect.html", get(captive_probe))
             .route("/generate_204", get(captive_probe))
-            .fallback(get(captive_probe));
+            // axum 0.8: fallback takes a Handler, not a MethodRouter — no get() wrapper.
+            .fallback(captive_probe);
         match tokio::net::TcpListener::bind("0.0.0.0:80").await {
             Ok(listener) => {
                 let _ = axum::serve(listener, app).await;
@@ -796,6 +864,20 @@ fn spawn_captive_portal_listener() {
     });
 }
 ```
+
+**DNS interception (REQUIRED for the sheet to pop at all):** probes never reach port 80 unless the AP's DNS resolves every name to the gateway. NM's shared-mode dnsmasq reads `/etc/NetworkManager/dnsmasq-shared.d/`. In `wifi_setup.rs`, before bringing up the AP, write (best-effort, ignore errors):
+
+```rust
+fn write_captive_dns_config() {
+    let _ = std::fs::create_dir_all("/etc/NetworkManager/dnsmasq-shared.d");
+    let _ = std::fs::write(
+        "/etc/NetworkManager/dnsmasq-shared.d/octocam-captive.conf",
+        "# OctoCam setup AP: resolve everything to the gateway so captive probes reach us.\naddress=/#/10.42.0.1\n",
+    );
+}
+```
+
+Call `write_captive_dns_config();` in `wifi_setup::run()` before the AP is activated, and add `rust/octocam-web/src/wifi_setup.rs` to this task's **Files** list. NOTE: this wildcard only affects the dnsmasq instance NM spawns for *shared* (AP) connections — normal client-mode DNS is untouched.
 
 In `async_main`, after the mediamtx reconcile block:
 
@@ -820,11 +902,25 @@ In `async_main`, after the mediamtx reconcile block:
 - [ ] **Step 1:** `cargo test && cargo clippy -- -D warnings` (full suite; expect 19 pre-existing + ~10 new, all green) and `node --check homekit/octocam-homekit.js`.
 - [ ] **Step 2:** Cross-build + deploy (health-gated): `scripts/build-pi-web.sh && OCTOCAM_PI_SSH=root@192.168.2.211 OCTOCAM_SERVICE_USER=root scripts/deploy-pi-web.sh --skip-build`. Also rsync the homekit daemon: `rsync -az homekit/octocam-homekit.js root@192.168.2.211:/root/OctoCam/homekit/ && ssh root@192.168.2.211 'systemctl restart octocam-homekit'`.
 - [ ] **Step 3: Main stream fixed.** `ssh root@192.168.2.211 'grep -A3 "\"main\"" /etc/mediamtx.yml | grep rpiCameraHeight'` → `972` (startup reconcile rewrote it). `ssh root@192.168.2.211 'timeout 8 ffprobe -v error -rtsp_transport tcp -i rtsp://127.0.0.1:8554/main -show_streams 2>&1 | head -3'` → shows an H264 video stream, no 400.
-- [ ] **Step 4: Counting.** Open the dashboard stream page (preview bridge) + start one RTSP client (`ffplay rtsp://192.168.2.211:8554/main` from the Mac or a second ffprobe on the Pi). `curl -s http://192.168.2.211:8080/api/status -H 'Cookie: <session>' | python3 -m json.tool | grep -A8 viewers` → counts match reality; close the RTSP client → counts drop within one 5s poll (graceful close).
-- [ ] **Step 5: Reroute.** With one WebRTC viewer on main (maxReaders now `1 (+1 reserve)` = 2, capacity 1), open the stream page in a second browser tab → it must land on sub with the busy note visible.
+- [ ] **Step 3b: Obtain a session for the curls.** `/api/status` and `/snapshot.jpg` require the admin session cookie: `curl -s -c /tmp/octocam-cookies.txt -d 'password=<admin password>' http://192.168.2.211:8080/login` (ask the user for the password; do not guess). Use `-b /tmp/octocam-cookies.txt` in every authenticated curl below.
+- [ ] **Step 4: Counting.** Open the dashboard stream page (preview bridge) + start one RTSP client (`ffplay rtsp://192.168.2.211:8554/main` from the Mac or a second ffprobe on the Pi). `curl -s -b /tmp/octocam-cookies.txt http://192.168.2.211:8080/api/status | python3 -m json.tool | grep -A10 viewers` → counts match reality (browser viewer classified as `browser`, not `rtsp` — this validates the webRTCSession casing); close the RTSP client → counts drop within one 5s poll (graceful close).
+- [ ] **Step 5: Reroute (sub-first default).** Open the stream page in tab A → it starts on SUB (default). Click **Main** in tab A → main plays. In a second tab B, click **Main** → tab B must fall back to sub with the busy note visible (main capacity 1 is held by tab A).
 - [ ] **Step 6: HomeKit.** Open the Home app on-LAN: tile snapshots at most every 5s in `journalctl -u octocam-rtsp` (cache working), live view logs `Starting HomeKit main stream` (quality heuristic chose main). If no Apple device is at hand, mark this a deferred manual check in the commit message.
-- [ ] **Step 7: Snapshot throttle.** `for i in 1 2 3 4; do curl -s -o /dev/null -w "%{time_total}s\n" http://192.168.2.211:8080/snapshot.jpg -H 'Cookie: <session>'; done` → first slow (capture), rest ~instant (cache) with only one `rpicam-still` in the process list during the burst.
+- [ ] **Step 7: Snapshot works AND throttles while RTSP is on.** `curl -s -b /tmp/octocam-cookies.txt -o /tmp/snap.jpg -w "%{http_code}\n" http://192.168.2.211:8080/snapshot.jpg` → 200, and `head -c 3 /tmp/snap.jpg | xxd` starts `ffd8 ff` (a real JPEG via the mediamtx path — validates the camera-ownership fix, not just timing). Then `for i in 1 2 3 4; do curl -s -b /tmp/octocam-cookies.txt -o /dev/null -w "%{time_total}s\n" http://192.168.2.211:8080/snapshot.jpg & done; wait` → first ~1-8s, rest fast from cache; only one ffmpeg spawned during the burst (checks concurrent coalescing, not just sequential).
 - [ ] **Step 8:** Commit any fixups; report results.
+
+---
+
+## Hardening Addendum (plan-harden thorough, 2026-07-02)
+
+Findings from 3 reviewers (gap/code/adversarial), already folded into the tasks above:
+mediamtx reader types corrected to `webRTCSession`/`hlsSession` (verified against v1.19.2); HomeKit now advertises a 1280x720 mode so the local→main heuristic can actually trigger (output stays capped at 640x480); `/snapshot.jpg` captures via mediamtx RTSP while `rtsp_enabled` (libcamera is single-consumer); captive portal redirects to the gateway IP and requires the dnsmasq wildcard; `.fallback(captive_probe)` and `eprintln!` compile fixes; startup reconcile gated by systemd ordering + a once-per-boot `/run` marker; HLS excluded from capacity math; **dashboard default flipped to sub-first (product decision)**; Task 10 gained login-cookie, JPEG-magic, and concurrent-burst verification.
+
+Remaining verification items (uncertain, on-hardware):
+- [ ] CHECK-1: CPU/thermals while HomeKit decodes the main input during a live view + a concurrent browser viewer (`top` + `vcgencmd measure_temp` on the Pi).
+- [ ] CHECK-2: Captive-portal sheet pops on a real iPhone joining OctoCam-Setup (needs `setup_complete=false`).
+- [ ] CHECK-3: Read `settings::save_settings` — if it is a plain `fs::write` (not temp+rename), note the torn-read window for the Node daemon and consider write-to-temp-then-rename as a follow-up.
+- [ ] CHECK-4: Main plays via ffprobe after deploy (clamp + reconcile worked end-to-end).
 
 ---
 
