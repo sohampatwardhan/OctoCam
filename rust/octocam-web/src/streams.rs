@@ -57,14 +57,20 @@ fn classify(
     sub_cap: u32,
 ) -> Option<ViewerReport> {
     let paths: Value = serde_json::from_str(paths_json).ok()?;
-    let sessions: Value = serde_json::from_str(sessions_json).ok()?;
+    let sessions: Value = serde_json::from_str(sessions_json).unwrap_or(Value::Null);
 
-    // rtsp session id -> is the reader local (HomeKit's ffmpeg)?
+    // rtsp session id -> is the reader local (HomeKit's ffmpeg)? Lenient by design:
+    // a degraded sessions response must not wipe the whole report — browser/HLS
+    // counts don't depend on it, and unmatched rtsp readers fall back to non-local.
     let mut local_session = std::collections::HashMap::new();
-    for item in sessions.get("items")?.as_array()? {
-        let id = item.get("id")?.as_str()?.to_string();
-        let remote = item.get("remoteAddr").and_then(Value::as_str).unwrap_or("");
-        local_session.insert(id, remote.starts_with("127.0.0.1"));
+    if let Some(items) = sessions.get("items").and_then(Value::as_array) {
+        for item in items {
+            let Some(id) = item.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let remote = item.get("remoteAddr").and_then(Value::as_str).unwrap_or("");
+            local_session.insert(id.to_string(), remote.starts_with("127.0.0.1"));
+        }
     }
 
     let mut report = ViewerReport {
@@ -169,8 +175,18 @@ mod tests {
     }
 
     #[test]
-    fn malformed_json_yields_none() {
+    fn malformed_paths_yields_none_but_sessions_degrade() {
         assert!(classify("not json", SESSIONS, "main", "sub", 1, 2).is_none());
-        assert!(classify(PATHS, "{}", "main", "sub", 1, 2).is_none());
+        assert!(classify(PATHS, "{}", "main", "sub", 1, 2).is_some());
+    }
+
+    #[test]
+    fn sessions_endpoint_down_still_reports_non_rtsp_counts() {
+        let report = classify(PATHS, "{}", "main", "sub", 1, 2).unwrap();
+        assert_eq!(report.main.browser, 1);
+        assert_eq!(report.sub.hls, 1);
+        // Without locality info the sub rtsp reader counts as external, not homekit.
+        assert_eq!(report.sub.rtsp, 1);
+        assert_eq!(report.sub.homekit, 0);
     }
 }
