@@ -282,6 +282,7 @@ async fn main() {
         .route("/setup", get(setup).post(complete_setup))
         .route("/wifi/scan", post(scan_wifi))
         .route("/wifi/connect", post(connect_wifi))
+        .route("/wifi/delete", post(delete_wifi_profile))
         .route("/settings", post(update_settings))
         .route("/power", post(power_action))
         .route("/login", get(login).post(authenticate))
@@ -783,6 +784,38 @@ async fn connect_wifi(
     let (connected, message) = wifi::connect_to_network(&wifi_ssid, &wifi_password, &wifi_security);
     if connected {
         Ok(Redirect::to("/wifi?wifi_message=Network%20saved.").into_response())
+    } else {
+        Ok(Redirect::to(&format!(
+            "/wifi?wifi_message={}",
+            urlencoding::encode(&message)
+        ))
+        .into_response())
+    }
+}
+
+async fn delete_wifi_profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(mut form): Form<HashMap<String, String>>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+
+    let profile_name = form.remove("wifi_profile_name").unwrap_or_default();
+    let profile_source = form.remove("wifi_profile_source").unwrap_or_default();
+    let active_ssid = system::status().wifi.ssid;
+    if active_ssid.as_deref() == Some(profile_name.trim()) {
+        return Ok(Redirect::to(
+            "/wifi?wifi_message=Cannot%20delete%20the%20currently%20connected%20network.",
+        )
+        .into_response());
+    }
+
+    let (deleted, message) = wifi::forget_saved_profile(&profile_name, &profile_source);
+    if deleted {
+        Ok(Redirect::to("/wifi?wifi_message=Wi-Fi%20profile%20deleted.").into_response())
     } else {
         Ok(Redirect::to(&format!(
             "/wifi?wifi_message={}",

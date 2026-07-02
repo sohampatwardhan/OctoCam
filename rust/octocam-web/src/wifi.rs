@@ -179,6 +179,65 @@ pub fn connect_to_network(ssid: &str, password: &str, security: &str) -> (bool, 
     )
 }
 
+pub fn forget_saved_profile(name: &str, source: &str) -> (bool, String) {
+    let name = name.trim();
+    if name.is_empty() {
+        return (false, "Missing Wi-Fi profile name.".to_string());
+    }
+    match source {
+        "network_manager" => forget_network_manager_profile(name),
+        "wpa_supplicant" => forget_wpa_supplicant_profile(name),
+        _ => (
+            false,
+            "This Wi-Fi profile cannot be deleted here.".to_string(),
+        ),
+    }
+}
+
+fn forget_network_manager_profile(name: &str) -> (bool, String) {
+    run_connect_command({
+        let mut command = Command::new("nmcli");
+        command.args(["connection", "delete", "id", name]);
+        command
+    })
+}
+
+fn forget_wpa_supplicant_profile(name: &str) -> (bool, String) {
+    let Some(interface) = wireless_interfaces().into_iter().next() else {
+        return (false, "No wireless interface found.".to_string());
+    };
+    let (listed, networks) = run_wpa_cli(&interface, &["list_networks"]);
+    if !listed {
+        return (false, networks);
+    }
+    let Some(network_id) = wpa_network_id_for_ssid(&networks, name) else {
+        return (
+            false,
+            format!("No saved wpa_supplicant profile named {name}."),
+        );
+    };
+    let (removed, remove_message) = run_wpa_cli(&interface, &["remove_network", &network_id]);
+    if !removed {
+        return (false, remove_message);
+    }
+    let (saved, save_message) = run_wpa_cli(&interface, &["save_config"]);
+    if !saved {
+        return (false, save_message);
+    }
+    (true, format!("Deleted Wi-Fi profile {name}."))
+}
+
+fn wpa_network_id_for_ssid(output: &str, ssid: &str) -> Option<String> {
+    output.lines().skip(1).find_map(|line| {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() >= 2 && fields[1] == ssid {
+            Some(fields[0].to_string())
+        } else {
+            None
+        }
+    })
+}
+
 fn run_connect_command(mut command: Command) -> (bool, String) {
     match command.output() {
         Ok(output) => {

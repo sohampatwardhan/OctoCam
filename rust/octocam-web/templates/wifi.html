@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} Wi-Fi</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-security2">
-    <script src="/static/app.js?v=20260702-wifi-security2" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-setup-lucide">
+    <script src="/static/app.js?v=20260702-wifi-setup-lucide" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -46,12 +46,18 @@
               </div>
               <div><dt>Local IP</dt><dd data-live-status="wifi_ip_addresses">{{ system.wifi_ip_addresses }}</dd></div>
             </dl>
-            <a class="secondary" href="/setup">Open setup</a>
+            <a class="secondary setup-link" href="/setup">
+              <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              <span>Open setup</span>
+            </a>
           </section>
 
           <section class="panel settings-card">
             <div class="section-heading split-heading">
-              <h2>Stored Wi-Fi profiles</h2>
+              <h2>Saved Wi-Fi Networks</h2>
               <a class="icon-text-button" href="#wifi-add-network" role="button" data-wifi-dialog-open>
                 <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M5 12h14"></path>
@@ -70,6 +76,20 @@
                     </div>
                     {% if profile.active %}
                       <span class="profile-status">Connected</span>
+                    {% else if profile.can_delete %}
+                      <form class="profile-delete-form" method="post" action="/wifi/delete" data-confirm-message="Delete saved Wi-Fi profile {{ profile.name }}?">
+                        <input type="hidden" name="wifi_profile_name" value="{{ profile.name }}">
+                        <input type="hidden" name="wifi_profile_source" value="{{ profile.delete_source }}">
+                        <button class="danger-icon-button" type="submit" aria-label="Delete saved Wi-Fi profile {{ profile.name }}" title="Delete saved Wi-Fi profile">
+                          <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                            <line x1="10" x2="10" y1="11" y2="17"></line>
+                            <line x1="14" x2="14" y1="11" y2="17"></line>
+                          </svg>
+                        </button>
+                      </form>
                     {% endif %}
                   </div>
                 {% endfor %}
@@ -101,25 +121,22 @@
 
           <form class="wifi-connect-form" method="post" action="/wifi/connect" data-wifi-connect-form>
             <input type="hidden" name="wifi_ssid" value="" data-wifi-ssid-value>
-            <div class="segmented-control" role="group" aria-label="Network entry mode">
-              <button class="segment is-active" type="button" data-wifi-mode="scan">Scan</button>
-              <button class="segment" type="button" data-wifi-mode="manual">Manual</button>
+            <div class="scan-action-row">
+              <button class="secondary compact" type="button" data-wifi-scan-button>
+                <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h.01"></path>
+                  <path d="M2 8.82a15 15 0 0 1 20 0"></path>
+                  <path d="M5 12.859a10 10 0 0 1 14 0"></path>
+                  <path d="M8.5 16.429a5 5 0 0 1 7 0"></path>
+                </svg>
+                <span>Scan for networks</span>
+              </button>
+              <p class="field-note" data-wifi-scan-status aria-live="polite"></p>
             </div>
 
-            <div data-wifi-scan-panel>
-              <div class="field-row with-action">
-                <label for="wifi-scanned-ssid">Network</label>
-                <button class="secondary compact" type="button" data-wifi-scan-button>
-                  <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 20h.01"></path>
-                    <path d="M2 8.82a15 15 0 0 1 20 0"></path>
-                    <path d="M5 12.859a10 10 0 0 1 14 0"></path>
-                    <path d="M8.5 16.429a5 5 0 0 1 7 0"></path>
-                  </svg>
-                  <span>Scan</span>
-                </button>
-              </div>
-              <select id="wifi-scanned-ssid" name="wifi_ssid_scanned" data-wifi-network-select>
+            <div class="scan-results-panel" hidden data-wifi-scan-panel>
+              <label for="wifi-scanned-ssid">Detected network</label>
+              <select id="wifi-scanned-ssid" name="wifi_ssid_scanned" data-wifi-network-select disabled>
                 {% if has_wifi_networks %}
                   {% for network in wifi_networks %}
                     <option value="{{ network.ssid }}" data-security="{{ network.security }}" {% if network.selected %}selected{% endif %}>{{ network.label }}</option>
@@ -128,22 +145,18 @@
                   <option value="">No scanned networks yet</option>
                 {% endif %}
               </select>
-              <p class="field-note" data-wifi-scan-status aria-live="polite"></p>
             </div>
 
-            <div hidden data-wifi-manual-panel>
-              <label for="wifi-manual-ssid">Network name</label>
-              <input id="wifi-manual-ssid" name="wifi_ssid_manual" type="text" autocomplete="off" data-wifi-manual-ssid>
-            </div>
+            <label for="wifi-manual-ssid">Network name</label>
+            <input id="wifi-manual-ssid" name="wifi_ssid_manual" type="text" autocomplete="off" data-wifi-manual-ssid>
 
             <label for="wifi-security">Security</label>
             <select id="wifi-security" name="wifi_security" data-wifi-security-select>
-              <option value="wpa2" selected>WPA/WPA2 Personal</option>
-              <option value="wpa3">WPA3 Personal</option>
-              <option value="wpa">WPA Personal</option>
-              <option value="wep">WEP</option>
               <option value="open">Open</option>
-              <option value="unknown">Unknown</option>
+              <option value="wep">WEP</option>
+              <option value="wpa2" selected>WPA/WPA2 Personal</option>
+              <option value="wpa2-wpa3">WPA2/WPA3 Personal</option>
+              <option value="wpa3">WPA3 Personal</option>
             </select>
 
             <div data-wifi-password-row>
@@ -151,7 +164,14 @@
               <input id="wifi-password" name="wifi_password" type="password" autocomplete="new-password" data-wifi-password-input>
             </div>
 
-            <button class="primary" type="submit">Save network</button>
+            <button class="primary" type="submit" data-wifi-save-button disabled>
+              <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"></path>
+                <path d="M17 21v-8H7v8"></path>
+                <path d="M7 3v5h8"></path>
+              </svg>
+              <span>Save network</span>
+            </button>
           </form>
         </div>
       </div>

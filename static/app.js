@@ -58,6 +58,14 @@ copyButtons.forEach((button) => {
   button.addEventListener("click", () => copyValue(button));
 });
 
+document.querySelectorAll("[data-confirm-message]").forEach((form) => {
+  form.addEventListener("submit", (event) => {
+    if (!window.confirm(form.dataset.confirmMessage || "Continue?")) {
+      event.preventDefault();
+    }
+  });
+});
+
 const menuButton = document.querySelector("[data-menu-button]");
 const sideNav = document.querySelector("[data-side-nav]");
 const mobileNav = window.matchMedia(MOBILE_NAV_QUERY);
@@ -119,9 +127,7 @@ const wifiDialog = document.querySelector("[data-wifi-dialog]");
 const wifiDialogBackdrop = document.querySelector("[data-wifi-dialog-backdrop]");
 const wifiDialogOpen = document.querySelector("[data-wifi-dialog-open]");
 const wifiDialogCloseButtons = document.querySelectorAll("[data-wifi-dialog-close]");
-const wifiModeButtons = document.querySelectorAll("[data-wifi-mode]");
 const wifiScanPanel = document.querySelector("[data-wifi-scan-panel]");
-const wifiManualPanel = document.querySelector("[data-wifi-manual-panel]");
 const wifiNetworkSelect = document.querySelector("[data-wifi-network-select]");
 const wifiManualSsid = document.querySelector("[data-wifi-manual-ssid]");
 const wifiSsidValue = document.querySelector("[data-wifi-ssid-value]");
@@ -131,9 +137,9 @@ const wifiPasswordInput = document.querySelector("[data-wifi-password-input]");
 const wifiScanButton = document.querySelector("[data-wifi-scan-button]");
 const wifiScanStatus = document.querySelector("[data-wifi-scan-status]");
 const wifiConnectForm = document.querySelector("[data-wifi-connect-form]");
+const wifiSaveButton = document.querySelector("[data-wifi-save-button]");
 let liveRefreshTimer = null;
 let liveRefreshPending = false;
-let wifiMode = "scan";
 
 function present(value, fallback = "Not available") {
   if (value === null || value === undefined || value === "") {
@@ -469,23 +475,56 @@ function syncWifiSsidValue() {
   if (!wifiSsidValue) {
     return;
   }
-  wifiSsidValue.value = wifiMode === "manual"
-    ? (wifiManualSsid?.value || "")
-    : (wifiNetworkSelect?.value || "");
+  wifiSsidValue.value = wifiManualSsid?.value || wifiNetworkSelect?.value || "";
+}
+
+function wifiPasswordMeetsCriteria(security, password) {
+  if (security === "open") {
+    return true;
+  }
+  if (security === "wep") {
+    return [5, 13].includes(password.length) || /^[0-9a-fA-F]{10}$|^[0-9a-fA-F]{26}$/.test(password);
+  }
+  return password.length >= 8 && password.length <= 63;
+}
+
+function syncWifiSaveState() {
+  if (!wifiSaveButton) {
+    return;
+  }
+  syncWifiSsidValue();
+  const ssid = (wifiSsidValue?.value || "").trim();
+  const security = wifiSecuritySelect?.value || "wpa2";
+  const password = wifiPasswordInput?.value || "";
+  const canSave = ssid.length > 0 && wifiPasswordMeetsCriteria(security, password);
+  wifiSaveButton.disabled = !canSave;
+  wifiSaveButton.title = canSave
+    ? "Save network"
+    : "Enter a network name and a password that matches the selected security setting.";
 }
 
 function selectedScanSecurity() {
+  if (!wifiNetworkSelect || wifiNetworkSelect.disabled) {
+    return "";
+  }
   const option = wifiNetworkSelect?.selectedOptions?.[0];
   return option?.dataset.security || "";
 }
 
+function visibleWifiSecurity(security) {
+  if (security === "open" || security === "wep" || security === "wpa2-wpa3" || security === "wpa3") {
+    return security;
+  }
+  return "wpa2";
+}
+
 function syncWifiSecurityFromScan() {
-  if (wifiMode !== "scan" || !wifiSecuritySelect) {
+  if (!wifiSecuritySelect) {
     return;
   }
   const security = selectedScanSecurity();
   if (security) {
-    wifiSecuritySelect.value = security;
+    wifiSecuritySelect.value = visibleWifiSecurity(security);
   }
   syncWifiPasswordRequirement();
 }
@@ -501,28 +540,7 @@ function syncWifiPasswordRequirement() {
       wifiPasswordInput.value = "";
     }
   }
-}
-
-function setWifiMode(mode) {
-  wifiMode = mode === "manual" ? "manual" : "scan";
-  wifiModeButtons.forEach((button) => {
-    const active = button.dataset.wifiMode === wifiMode;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-  });
-  if (wifiScanPanel) {
-    wifiScanPanel.hidden = wifiMode !== "scan";
-  }
-  if (wifiManualPanel) {
-    wifiManualPanel.hidden = wifiMode !== "manual";
-  }
-  syncWifiSsidValue();
-  if (wifiMode === "scan") {
-    syncWifiSecurityFromScan();
-  } else if (wifiSecuritySelect && !wifiSecuritySelect.value) {
-    wifiSecuritySelect.value = "wpa2";
-  }
-  syncWifiPasswordRequirement();
+  syncWifiSaveState();
 }
 
 function openWifiDialog() {
@@ -535,7 +553,8 @@ function openWifiDialog() {
     wifiDialogBackdrop.hidden = false;
   }
   document.body.classList.add("power-dialog-open");
-  setWifiMode(wifiMode);
+  syncWifiSsidValue();
+  syncWifiPasswordRequirement();
   wifiDialog.querySelector("[data-wifi-dialog-close]")?.focus();
 }
 
@@ -558,12 +577,12 @@ function renderNetworkOptions(networks) {
   }
   wifiNetworkSelect.replaceChildren();
   if (!Array.isArray(networks) || networks.length === 0) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "No networks found";
-    wifiNetworkSelect.append(option);
+    wifiNetworkSelect.disabled = true;
+    if (wifiScanPanel) {
+      wifiScanPanel.hidden = true;
+    }
     syncWifiSsidValue();
-    syncWifiSecurityFromScan();
+    syncWifiPasswordRequirement();
     return;
   }
   networks.forEach((network) => {
@@ -573,6 +592,13 @@ function renderNetworkOptions(networks) {
     option.textContent = `${network.ssid || "Hidden network"} · ${(network.security || "unknown").toUpperCase()} · ${network.signal ?? 0}%`;
     wifiNetworkSelect.append(option);
   });
+  wifiNetworkSelect.disabled = false;
+  if (wifiScanPanel) {
+    wifiScanPanel.hidden = false;
+  }
+  if (wifiManualSsid) {
+    wifiManualSsid.value = wifiNetworkSelect.value || wifiManualSsid.value;
+  }
   syncWifiSsidValue();
   syncWifiSecurityFromScan();
 }
@@ -589,7 +615,9 @@ async function scanWifiNetworks() {
     const cache = await fetchJson("/api/wifi/scan", { method: "POST" });
     renderNetworkOptions(cache.networks);
     if (wifiScanStatus) {
-      wifiScanStatus.textContent = "Scan complete.";
+      wifiScanStatus.textContent = Array.isArray(cache.networks) && cache.networks.length > 0
+        ? "Scan complete. Choose a detected network or enter a network name manually."
+        : "Scan complete. No networks found.";
     }
   } catch (error) {
     if (wifiScanStatus) {
@@ -620,22 +648,26 @@ if (wifiDialogBackdrop) {
   wifiDialogBackdrop.addEventListener("click", closeWifiDialog);
 }
 
-wifiModeButtons.forEach((button) => {
-  button.addEventListener("click", () => setWifiMode(button.dataset.wifiMode));
-});
-
 wifiNetworkSelect?.addEventListener("change", () => {
+  if (wifiManualSsid) {
+    wifiManualSsid.value = wifiNetworkSelect.value || "";
+  }
   syncWifiSsidValue();
   syncWifiSecurityFromScan();
 });
-wifiManualSsid?.addEventListener("input", syncWifiSsidValue);
+wifiManualSsid?.addEventListener("input", () => {
+  syncWifiSsidValue();
+  syncWifiSaveState();
+});
 wifiSecuritySelect?.addEventListener("change", syncWifiPasswordRequirement);
+wifiPasswordInput?.addEventListener("input", syncWifiSaveState);
 wifiScanButton?.addEventListener("click", scanWifiNetworks);
 wifiConnectForm?.addEventListener("submit", () => {
   syncWifiSsidValue();
   syncWifiPasswordRequirement();
 });
-setWifiMode(wifiMode);
+syncWifiSsidValue();
+syncWifiPasswordRequirement();
 
 if (liveFields.length || liveMeters.length || liveSignal || liveLogs || wifiDetails.length || powerButton) {
   refreshLiveState();

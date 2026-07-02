@@ -94,6 +94,8 @@ pub struct StoredWifiProfile {
     pub security: String,
     pub source: String,
     pub active: bool,
+    pub can_delete: bool,
+    pub delete_source: String,
 }
 
 #[derive(Clone, Debug)]
@@ -866,6 +868,8 @@ fn network_manager_profiles(active_ssid: Option<&str>) -> Vec<StoredWifiProfile>
                 name,
                 security: "Saved".to_string(),
                 source: "NetworkManager".to_string(),
+                can_delete: true,
+                delete_source: "network_manager".to_string(),
             })
         })
         .collect()
@@ -925,6 +929,8 @@ fn parse_wpa_supplicant_profiles(
                             .or_else(|| has_psk.then(|| "WPA-PSK".to_string()))
                             .unwrap_or_else(|| "Open".to_string()),
                         source: source.to_string(),
+                        can_delete: true,
+                        delete_source: "wpa_supplicant".to_string(),
                     });
                 }
             }
@@ -973,6 +979,8 @@ fn dietpi_autosetup_profiles(active_ssid: Option<&str>) -> Vec<StoredWifiProfile
         name,
         security: "Saved".to_string(),
         source: "DietPi first boot".to_string(),
+        can_delete: false,
+        delete_source: String::new(),
     }]
 }
 
