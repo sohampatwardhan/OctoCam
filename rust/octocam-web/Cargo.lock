@@ -537,6 +537,7 @@ dependencies = [
  "constant_time_eq",
  "hmac",
  "http",
+ "libc",
  "pbkdf2",
  "rand",
  "serde",

@@ -10,6 +10,7 @@ base64 = "0.22"
 constant_time_eq = "0.3"
 hmac = "0.12"
 http = "1"
+libc = "0.2"
 pbkdf2 = "0.12"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }

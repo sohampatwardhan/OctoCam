@@ -1,5 +1,7 @@
 use std::io::{self, Read};
-use std::process::{Command, ExitStatus, Output, Stdio};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,18 +30,20 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Returns the same `io::Result<Output>` shape as `Command::output()`, so a
 /// non-zero exit is `Ok(output)` with `output.status.success() == false`.
 ///
-/// NOTE: `child.kill()` targets only the direct child (matching Tokio's own
-/// examples). Every current call site runs a single binary (`nmcli`, `iw`,
-/// `wpa_cli`, `systemctl`, `sh -c "command -v ..."`, `rpicam-*`) that does not
-/// background a surviving grandchild, so killing the child reliably closes the
-/// pipes and the reader threads see EOF. Do NOT pass a shell string that
-/// backgrounds a process (`&`, `nohup`, `setsid`) without switching to a
-/// process-group kill first, or the reader-thread join below could block.
+/// On timeout the whole process group is killed (FIX-7), not just the direct
+/// child. A wedged command that forked a grandchild (e.g. a shell wrapper that
+/// runs `sleep`) would otherwise keep the stdout/stderr pipe open after the
+/// direct child dies, blocking the reader-thread join. Putting the child in its
+/// own group and killing `-pgid` closes the pipes so the readers see EOF and the
+/// timeout bound actually holds regardless of command shape.
 pub fn run(command: &mut Command, timeout: Duration) -> io::Result<Output> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Own process group so the timeout path can reap grandchildren too.
+    #[cfg(unix)]
+    command.process_group(0);
 
     let mut child = command.spawn()?;
 
@@ -62,9 +66,9 @@ pub fn run(command: &mut Command, timeout: Duration) -> io::Result<Output> {
             break status;
         }
         if start.elapsed() >= timeout {
-            let _ = child.kill();
+            kill_process_group(&mut child);
             let _ = child.wait();
-            // Child is dead; readers hit EOF. Join so no threads/pipes leak.
+            // Group is dead; readers hit EOF. Join so no threads/pipes leak.
             let _ = out_handle.join();
             let _ = err_handle.join();
             return Err(io::Error::new(
@@ -82,6 +86,20 @@ pub fn run(command: &mut Command, timeout: Duration) -> io::Result<Output> {
         stdout,
         stderr,
     })
+}
+
+/// Kill the child and, on Unix, its whole process group (the child is its own
+/// group leader via `process_group(0)`), so forked grandchildren die too.
+fn kill_process_group(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // Negative PID targets the process group led by the child.
+        unsafe {
+            libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+        }
+    }
+    // Always also signal the direct child (covers non-Unix and any race).
+    let _ = child.kill();
 }
 
 #[cfg(test)]
@@ -123,6 +141,26 @@ mod tests {
         .expect("command should run");
         assert!(out.status.success());
         assert!(out.stdout.len() > 100_000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_reaps_forked_grandchildren() {
+        // `sh` forks `sleep` and waits — killing only the direct `sh` would leave
+        // `sleep` holding the pipe open, blocking the reader join for ~30s. With the
+        // process-group kill, this must return promptly.
+        let start = Instant::now();
+        let err = run(
+            Command::new("sh").args(["-c", "sleep 30 & wait"]),
+            Duration::from_millis(300),
+        )
+        .expect_err("command should time out");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "took {:?} — grandchild not reaped",
+            start.elapsed()
+        );
     }
 
     #[test]
