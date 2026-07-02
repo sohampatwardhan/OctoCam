@@ -1,5 +1,6 @@
 mod camera;
 mod mediamtx;
+mod proc;
 mod security;
 mod settings;
 mod system;
