@@ -392,6 +392,7 @@ async function refreshLiveState() {
       fetchJson("/api/status"),
     ]);
     applyLiveState({ settings, status });
+    window.dispatchEvent(new CustomEvent("octocam:status", { detail: status }));
   } catch (error) {
   } finally {
     liveRefreshPending = false;
@@ -698,10 +699,37 @@ if (streamPreview) {
   let activeStream = streamPreview.dataset.initialStream || "main";
   let playing = true;
 
+  const note = streamPreview.querySelector("[data-stream-note]");
+  let latestViewers = null;
+
+  function mainIsFull() {
+    if (!latestViewers || !latestViewers.main) return false;
+    const m = latestViewers.main;
+    return m.browser + m.rtsp >= m.capacity;
+  }
+
+  function showBusyNote(show) {
+    if (note) note.hidden = !show;
+  }
+
+  window.addEventListener("octocam:status", (event) => {
+    latestViewers = (event.detail && event.detail.viewers) || null;
+    const mainCell = document.querySelector("[data-viewers-main]");
+    const subCell = document.querySelector("[data-viewers-sub]");
+    if (latestViewers) {
+      if (mainCell) mainCell.textContent = `${latestViewers.main.total} / ${latestViewers.main.capacity}`;
+      if (subCell) subCell.textContent = `${latestViewers.sub.total} / ${latestViewers.sub.capacity}`;
+    } else if (mainCell) {
+      mainCell.textContent = "unavailable";
+    }
+  });
+
   function loadPreviewCache() {
     try {
       const cached = JSON.parse(localStorage.getItem(STREAM_PREVIEW_CACHE_KEY) || "{}");
       if (cached.activeStream === "main" || (cached.activeStream === "sub" && sources.sub)) {
+        // Cached "main" is kept as-is: switching automatically would interrupt playback;
+        // the click guard handles new choices.
         activeStream = cached.activeStream;
       }
       if (typeof cached.playing === "boolean") {
@@ -762,7 +790,14 @@ if (streamPreview) {
       if (choice.disabled) {
         return;
       }
-      activeStream = choice.dataset.streamChoice || "main";
+      let requested = choice.dataset.streamChoice || "main";
+      if (requested === "main" && mainIsFull() && sources.sub) {
+        requested = "sub";
+        showBusyNote(true);
+      } else {
+        showBusyNote(false);
+      }
+      activeStream = requested;
       playing = true;
       syncPreview();
     });
