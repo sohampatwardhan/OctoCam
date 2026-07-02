@@ -1,5 +1,6 @@
 mod camera;
 mod mediamtx;
+mod proc;
 mod security;
 mod settings;
 mod system;
@@ -58,6 +59,31 @@ impl From<askama::Error> for AppError {
     fn from(error: askama::Error) -> Self {
         Self(error.to_string())
     }
+}
+
+/// Caps how many subprocess-heavy helpers run at once, independent of request volume.
+/// Tokio docs explicitly recommend a semaphore to bound spawn_blocking concurrency,
+/// since the blocking pool defaults to 512 threads with an unbounded queue.
+fn blocking_gate() -> &'static tokio::sync::Semaphore {
+    static GATE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| tokio::sync::Semaphore::new(4))
+}
+
+/// Run a blocking (subprocess-heavy) closure on Tokio's blocking pool so it never
+/// occupies a worker/reactor thread, while bounding total concurrency. Maps a panic
+/// in the closure (JoinError) or a closed gate to a 500.
+async fn run_blocking<T, F>(f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let _permit = blocking_gate()
+        .acquire()
+        .await
+        .map_err(|_| AppError("blocking gate closed".to_string()))?;
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|error| AppError(format!("background task failed: {error}")))
 }
 
 #[derive(Clone, Debug)]
@@ -255,8 +281,17 @@ struct PowerForm {
     return_to: Option<String>,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        // Default is 512; far too many 2 MB-stack threads for a 512 MB Pi Zero 2 W.
+        .max_blocking_threads(12)
+        .build()
+        .expect("build Tokio runtime");
+    runtime.block_on(async_main());
+}
+
+async fn async_main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
@@ -387,7 +422,7 @@ async fn identity(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(IdentityTemplate {
         page_title: settings.camera_label.clone(),
         saved: query.saved.as_deref() == Some("1"),
@@ -410,13 +445,16 @@ async fn wifi_page(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     let cache = wifi::load_network_cache(&state.wifi_cache_path);
     let wifi_networks = wifi::network_views(&cache, status.wifi.ssid.as_deref().unwrap_or(""));
+    let wifi_for_profiles = status.wifi.clone();
+    let stored_profiles =
+        run_blocking(move || system::stored_wifi_profiles(&wifi_for_profiles)).await?;
     render(WifiTemplate {
         page_title: "Wi-Fi".to_string(),
         saved: query.saved.as_deref() == Some("1"),
-        stored_profiles: system::stored_wifi_profiles(&status.wifi),
+        stored_profiles,
         has_wifi_networks: !wifi_networks.is_empty(),
         wifi_networks,
         wifi_mac_address: status
@@ -445,7 +483,7 @@ async fn stream_settings(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(StreamSettingsTemplate {
         page_title: "Stream".to_string(),
         resolution_presets: preset_views(RESOLUTION_PRESETS, &settings.current_resolution()),
@@ -474,7 +512,7 @@ async fn rtsp_page(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(RtspTemplate {
         page_title: "RTSP".to_string(),
         rtsp_urls: stream_urls_for(&settings, request_hostname(&headers), "rtsp"),
@@ -498,7 +536,7 @@ async fn homekit(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(HomeKitTemplate {
         page_title: "HomeKit".to_string(),
         saved: query.saved.as_deref() == Some("1"),
@@ -522,7 +560,7 @@ async fn admin(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(AdminTemplate {
         page_title: "Admin".to_string(),
         saved: query.saved.as_deref() == Some("1"),
@@ -544,7 +582,7 @@ async fn system_page(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(SystemTemplate {
         page_title: "System info".to_string(),
         settings,
@@ -561,7 +599,7 @@ async fn logs(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(LogsTemplate {
         page_title: "System logs".to_string(),
         settings,
@@ -578,7 +616,7 @@ async fn terminal(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(TerminalTemplate {
         page_title: "Terminal".to_string(),
         settings,
@@ -649,7 +687,7 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
         return Ok(Redirect::to("/setup").into_response());
     }
     let host = request_hostname(&headers);
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     render(StreamTemplate {
         page_title: "Live stream".to_string(),
         rtsp_urls: stream_urls_for(&settings, host.clone(), "rtsp"),
@@ -662,7 +700,7 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
 
 async fn setup(State(state): State<Arc<AppState>>, Query(query): Query<SetupQuery>) -> AppResult {
     let settings = settings::load_settings(&state.config_path);
-    let status = system::status();
+    let status = run_blocking(system::status).await?;
     let cache = wifi::load_network_cache(&state.wifi_cache_path);
     let selected = status
         .wifi
@@ -708,8 +746,10 @@ async fn complete_setup(
         );
     }
     if !wifi_ssid.trim().is_empty() {
+        let (ssid, password, security) =
+            (wifi_ssid.clone(), wifi_password.clone(), wifi_security.clone());
         let (connected, message) =
-            wifi::connect_to_network(&wifi_ssid, &wifi_password, &wifi_security);
+            run_blocking(move || wifi::connect_to_network(&ssid, &password, &security)).await?;
         if !connected {
             return Ok(Redirect::to(&format!(
                 "/setup?wifi_message={}",
@@ -733,7 +773,8 @@ async fn complete_setup(
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
-    configure_homekit_service(&current);
+    let homekit_settings = current.clone();
+    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
     Ok(with_login_cookie(
         Redirect::to("/?saved=1").into_response(),
         &state,
@@ -741,9 +782,13 @@ async fn complete_setup(
 }
 
 async fn scan_wifi(State(state): State<Arc<AppState>>) -> Response {
-    let message = match wifi::scan_and_cache_networks(&state.wifi_cache_path) {
-        Ok(_) => "Wi-Fi scan complete.".to_string(),
-        Err(error) => format!("Wi-Fi scan failed: {error}"),
+    let cache_path = state.wifi_cache_path.clone();
+    // scan_wifi returns Response (not AppResult), so handle the result explicitly
+    // rather than with `?` (FIX-2).
+    let message = match run_blocking(move || wifi::scan_and_cache_networks(&cache_path)).await {
+        Ok(Ok(_)) => "Wi-Fi scan complete.".to_string(),
+        Ok(Err(error)) => format!("Wi-Fi scan failed: {error}"),
+        Err(_join) => "Wi-Fi scan failed.".to_string(),
     };
     Redirect::to(&format!(
         "/setup?wifi_message={}",
@@ -781,7 +826,9 @@ async fn connect_wifi(
         .remove("wifi_security")
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| wifi::cached_security_for(&cache, &wifi_ssid));
-    let (connected, message) = wifi::connect_to_network(&wifi_ssid, &wifi_password, &wifi_security);
+    let (ssid, password, security) = (wifi_ssid.clone(), wifi_password.clone(), wifi_security.clone());
+    let (connected, message) =
+        run_blocking(move || wifi::connect_to_network(&ssid, &password, &security)).await?;
     if connected {
         Ok(Redirect::to("/wifi?wifi_message=Network%20saved.").into_response())
     } else {
@@ -805,7 +852,7 @@ async fn delete_wifi_profile(
 
     let profile_name = form.remove("wifi_profile_name").unwrap_or_default();
     let profile_source = form.remove("wifi_profile_source").unwrap_or_default();
-    let active_ssid = system::status().wifi.ssid;
+    let active_ssid = run_blocking(system::status).await?.wifi.ssid;
     if active_ssid.as_deref() == Some(profile_name.trim()) {
         return Ok(Redirect::to(
             "/wifi?wifi_message=Cannot%20delete%20the%20currently%20connected%20network.",
@@ -813,7 +860,9 @@ async fn delete_wifi_profile(
         .into_response());
     }
 
-    let (deleted, message) = wifi::forget_saved_profile(&profile_name, &profile_source);
+    let (name, source) = (profile_name.clone(), profile_source.clone());
+    let (deleted, message) =
+        run_blocking(move || wifi::forget_saved_profile(&name, &source)).await?;
     if deleted {
         Ok(Redirect::to("/wifi?wifi_message=Wi-Fi%20profile%20deleted.").into_response())
     } else {
@@ -875,7 +924,8 @@ async fn update_settings(
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
     let _ = mediamtx::configure_rtsp_service(&current, &state.mediamtx_config_path);
-    configure_homekit_service(&current);
+    let homekit_settings = current.clone();
+    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
 }
 
@@ -924,7 +974,10 @@ fn schedule_systemctl(args: &[&str]) -> Result<(), AppError> {
 
     tokio::spawn(async move {
         sleep(Duration::from_millis(900)).await;
-        let _ = Command::new(command).args(command_args).status();
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = proc::run(Command::new(command).args(command_args), proc::SERVICE_TIMEOUT);
+        })
+        .await;
     });
 
     Ok(())
@@ -983,7 +1036,8 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
     if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
-    Ok(Json(system::status()).into_response())
+    let status = run_blocking(system::status).await?;
+    Ok(Json(status).into_response())
 }
 
 async fn api_wifi_networks(
@@ -1005,7 +1059,8 @@ async fn api_wifi_scan(
     if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
-    match wifi::scan_and_cache_networks(&state.wifi_cache_path) {
+    let cache_path = state.wifi_cache_path.clone();
+    match run_blocking(move || wifi::scan_and_cache_networks(&cache_path)).await? {
         Ok(cache) => Ok(Json(cache).into_response()),
         Err(error) => Ok((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1027,7 +1082,8 @@ async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
         )
             .into_response());
     }
-    match camera::capture_jpeg(&settings) {
+    let settings_for_capture = settings.clone();
+    match run_blocking(move || camera::capture_jpeg(&settings_for_capture)).await? {
         Ok(data) => Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response()),
         Err(error) => Ok((
             StatusCode::SERVICE_UNAVAILABLE,

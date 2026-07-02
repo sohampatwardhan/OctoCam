@@ -5,6 +5,7 @@
 .env
 *.log
 settings.json
+.claude/
 
 # Build and packaging output
 build/

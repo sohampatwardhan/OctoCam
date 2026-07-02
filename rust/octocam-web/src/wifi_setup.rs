@@ -70,10 +70,11 @@ fn try_saved_wifi_profiles(config: &SetupConfig) -> Result<SavedProfileResult, S
             "no",
         ]);
 
-        let output = Command::new("nmcli")
-            .args(["connection", "up", &profile, "ifname", &config.wifi_iface])
-            .output()
-            .map_err(|error| error.to_string())?;
+        let output = crate::proc::run(
+            Command::new("nmcli").args(["connection", "up", &profile, "ifname", &config.wifi_iface]),
+            crate::proc::CONNECT_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
         if output.status.success() {
             println!("Connected using saved Wi-Fi profile: {profile}");
             connected = true;
@@ -186,9 +187,7 @@ fn active_connection_for_iface(output: &str, iface: &str) -> Option<String> {
 }
 
 fn nmcli<const N: usize>(args: [&str; N]) -> Result<Output, String> {
-    let output = Command::new("nmcli")
-        .args(args)
-        .output()
+    let output = crate::proc::run(Command::new("nmcli").args(args), crate::proc::CONNECT_TIMEOUT)
         .map_err(|error| error.to_string())?;
     if output.status.success() {
         Ok(output)
@@ -211,11 +210,12 @@ fn error_text(output: &Output) -> String {
 }
 
 fn command_exists(command: &str) -> bool {
-    Command::new("sh")
-        .args(["-c", &format!("command -v {command} >/dev/null 2>&1")])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    crate::proc::run(
+        Command::new("sh").args(["-c", &format!("command -v {command} >/dev/null 2>&1")]),
+        crate::proc::DEFAULT_TIMEOUT,
+    )
+    .map(|output| output.status.success())
+    .unwrap_or(false)
 }
 
 #[cfg(test)]

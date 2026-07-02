@@ -28,9 +28,7 @@ pub fn capture_jpeg(settings: &Settings) -> Result<Vec<u8>, String> {
         args.push(settings.rotation.to_string());
     }
 
-    let output = Command::new(&command)
-        .args(args)
-        .output()
+    let output = crate::proc::run(Command::new(&command).args(args), crate::proc::CAPTURE_TIMEOUT)
         .map_err(|error| error.to_string())?;
     if output.status.success() && !output.stdout.is_empty() {
         Ok(output.stdout)
