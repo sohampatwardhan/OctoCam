@@ -8,6 +8,11 @@ use std::{env, fs, io, path::PathBuf};
 pub const MAX_ENCODER_WIDTH: i32 = 1920;
 pub const MAX_ENCODER_HEIGHT: i32 = 1080;
 
+/// Fallback when a stored/submitted resolution exceeds the encoder limit:
+/// the largest encoder-safe 4:3 preset (main) and the sub-stream default (sub).
+const ENCODER_FALLBACK_MAIN: (i32, i32) = (1296, 972);
+const ENCODER_FALLBACK_SUB: (i32, i32) = (640, 480);
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub setup_complete: bool,
@@ -338,19 +343,22 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
     settings
 }
 
-/// Snap any resolution the hardware encoder cannot handle to the largest safe 4:3 mode.
+/// Snap any resolution the hardware encoder cannot handle to a safe fallback.
+/// If either dimension exceeds the limit, BOTH are reset to the fallback preset —
+/// we snap to a known-good mode rather than clamp per-axis into an untested
+/// aspect ratio.
 fn clamp_to_encoder_limits(settings: &mut Settings) {
     if settings.resolution_width > MAX_ENCODER_WIDTH
         || settings.resolution_height > MAX_ENCODER_HEIGHT
     {
-        settings.resolution_width = 1296;
-        settings.resolution_height = 972;
+        settings.resolution_width = ENCODER_FALLBACK_MAIN.0;
+        settings.resolution_height = ENCODER_FALLBACK_MAIN.1;
     }
     if settings.sub_resolution_width > MAX_ENCODER_WIDTH
         || settings.sub_resolution_height > MAX_ENCODER_HEIGHT
     {
-        settings.sub_resolution_width = 640;
-        settings.sub_resolution_height = 480;
+        settings.sub_resolution_width = ENCODER_FALLBACK_SUB.0;
+        settings.sub_resolution_height = ENCODER_FALLBACK_SUB.1;
     }
 }
 
@@ -495,6 +503,16 @@ mod tests {
     fn clamps_resolution_to_encoder_limit() {
         let mut map = Map::new();
         map.insert("resolution_width".into(), Value::from(1640));
+        map.insert("resolution_height".into(), Value::from(1232));
+        let settings = validate_map(&map);
+        assert_eq!(settings.resolution_width, 1296);
+        assert_eq!(settings.resolution_height, 972);
+    }
+
+    #[test]
+    fn oversize_height_alone_snaps_to_fallback_preset() {
+        let mut map = Map::new();
+        map.insert("resolution_width".into(), Value::from(1920));
         map.insert("resolution_height".into(), Value::from(1232));
         let settings = validate_map(&map);
         assert_eq!(settings.resolution_width, 1296);
