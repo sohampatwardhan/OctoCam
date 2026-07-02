@@ -925,7 +925,10 @@ fn schedule_systemctl(args: &[&str]) -> Result<(), AppError> {
 
     tokio::spawn(async move {
         sleep(Duration::from_millis(900)).await;
-        let _ = Command::new(command).args(command_args).status();
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = proc::run(Command::new(command).args(command_args), proc::SERVICE_TIMEOUT);
+        })
+        .await;
     });
 
     Ok(())
