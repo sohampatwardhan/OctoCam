@@ -719,8 +719,9 @@ if (streamPreview) {
     if (latestViewers) {
       if (mainCell) mainCell.textContent = `${latestViewers.main.total} / ${latestViewers.main.capacity}`;
       if (subCell) subCell.textContent = `${latestViewers.sub.total} / ${latestViewers.sub.capacity}`;
-    } else if (mainCell) {
-      mainCell.textContent = "unavailable";
+    } else {
+      if (mainCell) mainCell.textContent = "unavailable";
+      if (subCell) subCell.textContent = "unavailable";
     }
   });
 
