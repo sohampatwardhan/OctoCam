@@ -140,6 +140,7 @@ const wifiConnectForm = document.querySelector("[data-wifi-connect-form]");
 const wifiSaveButton = document.querySelector("[data-wifi-save-button]");
 let liveRefreshTimer = null;
 let liveRefreshPending = false;
+let updateViewerCells = null; // set by the stream page block when present
 
 function present(value, fallback = "Not available") {
   if (value === null || value === undefined || value === "") {
@@ -392,7 +393,7 @@ async function refreshLiveState() {
       fetchJson("/api/status"),
     ]);
     applyLiveState({ settings, status });
-    window.dispatchEvent(new CustomEvent("octocam:status", { detail: status }));
+    if (updateViewerCells) updateViewerCells(status);
   } catch (error) {
   } finally {
     liveRefreshPending = false;
@@ -712,8 +713,8 @@ if (streamPreview) {
     if (note) note.hidden = !show;
   }
 
-  window.addEventListener("octocam:status", (event) => {
-    latestViewers = (event.detail && event.detail.viewers) || null;
+  updateViewerCells = (status) => {
+    latestViewers = (status && status.viewers) || null;
     const mainCell = document.querySelector("[data-viewers-main]");
     const subCell = document.querySelector("[data-viewers-sub]");
     if (latestViewers) {
@@ -723,7 +724,7 @@ if (streamPreview) {
       if (mainCell) mainCell.textContent = "unavailable";
       if (subCell) subCell.textContent = "unavailable";
     }
-  });
+  };
 
   function loadPreviewCache() {
     try {
