@@ -1,5 +1,13 @@
 use serde::Serialize;
-use std::{collections::HashMap, fs, path::Path, process::Command, thread, time::Duration};
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    process::Command,
+    sync::{Mutex, OnceLock},
+    thread,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemStatus {
@@ -305,9 +313,7 @@ pub fn set_service_enabled(unit: &str, enabled: bool) -> Result<(), String> {
     let action = if enabled { "enable" } else { "disable" };
     let state_action = if enabled { "start" } else { "stop" };
     for args in [[action, unit], [state_action, unit]] {
-        let output = Command::new("systemctl")
-            .args(args)
-            .output()
+        let output = crate::proc::run(Command::new("systemctl").args(args), crate::proc::SERVICE_TIMEOUT)
             .map_err(|error| error.to_string())?;
         if !output.status.success() {
             let message = String::from_utf8_lossy(if output.stderr.is_empty() {
@@ -325,10 +331,11 @@ pub fn restart_service(unit: &str) -> Result<(), String> {
     if !command_exists("systemctl") {
         return Err("systemctl not found".to_string());
     }
-    let output = Command::new("systemctl")
-        .args(["restart", unit])
-        .output()
-        .map_err(|error| error.to_string())?;
+    let output = crate::proc::run(
+        Command::new("systemctl").args(["restart", unit]),
+        crate::proc::SERVICE_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(if output.stderr.is_empty() {
             &output.stdout
@@ -341,14 +348,25 @@ pub fn restart_service(unit: &str) -> Result<(), String> {
 }
 
 pub fn command_exists(command: &str) -> bool {
-    Command::new("sh")
-        .args([
+    // FIX-3: the set of available tools is static at runtime, so memoize it. This
+    // removes ~8 `sh -c` spawns per status() call and the inline block in the
+    // /power path.
+    static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(&hit) = cache.lock().unwrap().get(command) {
+        return hit;
+    }
+    let exists = crate::proc::run(
+        Command::new("sh").args([
             "-c",
             &format!("command -v {} >/dev/null 2>&1", shell_escape(command)),
-        ])
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        ]),
+        crate::proc::DEFAULT_TIMEOUT,
+    )
+    .map(|output| output.status.success())
+    .unwrap_or(false);
+    cache.lock().unwrap().insert(command.to_string(), exists);
+    exists
 }
 
 pub fn first_available_command(names: &[&str]) -> Option<String> {
@@ -358,17 +376,55 @@ pub fn first_available_command(names: &[&str]) -> Option<String> {
         .map(|name| (*name).to_string())
 }
 
+/// FIX-6: per-command circuit breaker. Once a command times out, skip re-running it
+/// for a cooldown so a persistently wedged tool (the original `iw` incident) is not
+/// spawned+killed on every ~5s status poll.
+const BREAKER_COOLDOWN: Duration = Duration::from_secs(30);
+
+fn timeout_breaker() -> &'static Mutex<HashMap<String, Instant>> {
+    static BREAKER: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    BREAKER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn command_recently_timed_out(command: &str) -> bool {
+    let mut map = timeout_breaker().lock().unwrap();
+    if let Some(&when) = map.get(command) {
+        if when.elapsed() < BREAKER_COOLDOWN {
+            return true;
+        }
+        map.remove(command);
+    }
+    false
+}
+
+fn note_command_timeout(command: &str) {
+    timeout_breaker()
+        .lock()
+        .unwrap()
+        .insert(command.to_string(), Instant::now());
+}
+
 pub fn run_output(command: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(command).args(args).output().ok()?;
-    Some(
-        String::from_utf8_lossy(if output.stdout.is_empty() {
-            &output.stderr
-        } else {
-            &output.stdout
-        })
-        .trim()
-        .to_string(),
-    )
+    if command_recently_timed_out(command) {
+        return None;
+    }
+    match crate::proc::run(Command::new(command).args(args), crate::proc::DEFAULT_TIMEOUT) {
+        Ok(output) => Some(
+            String::from_utf8_lossy(if output.stdout.is_empty() {
+                &output.stderr
+            } else {
+                &output.stdout
+            })
+            .trim()
+            .to_string(),
+        ),
+        Err(error) => {
+            if error.kind() == std::io::ErrorKind::TimedOut {
+                note_command_timeout(command);
+            }
+            None
+        }
+    }
 }
 
 fn hostname() -> String {
@@ -1118,7 +1174,7 @@ fn camera_status() -> CameraStatus {
             message: "No rpicam/libcamera command found.".to_string(),
         };
     };
-    let output = Command::new(&command).arg("--list-cameras").output();
+    let output = crate::proc::run(Command::new(&command).arg("--list-cameras"), crate::proc::SCAN_TIMEOUT);
     match output {
         Ok(output) => {
             let message = format!(
