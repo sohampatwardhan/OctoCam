@@ -207,6 +207,10 @@ struct StreamTemplate {
     rtsp_urls: StreamUrls,
     browser_stream_urls: StreamUrls,
     active_page: &'static str,
+    initial_stream: String, // "main" | "sub"
+    main_busy: bool,        // reserved for the client-side busy note; starts false
+    viewers_main_text: String,
+    viewers_sub_text: String,
 }
 
 #[derive(Template)]
@@ -713,6 +717,20 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
     }
     let host = request_hostname(&headers);
     let status = run_blocking(system::status).await?;
+    let viewers = streams::viewer_report(&settings).await;
+    // Sub-first default (product decision, hardening 2026-07-02): the dashboard opens
+    // on sub so a forgotten kiosk tab never pins main's only slot. Main is opt-in via
+    // the Main button; app.js reroutes that click to sub (with a note) when main is
+    // full. `main_busy` therefore starts false — the note is client-toggled.
+    let initial_stream = if settings.sub_stream_enabled { "sub" } else { "main" }.to_string();
+    let main_busy = false;
+    let (viewers_main_text, viewers_sub_text) = match &viewers {
+        Some(report) => (
+            format!("{} / {}", report.main.total, report.main.capacity),
+            format!("{} / {}", report.sub.total, report.sub.capacity),
+        ),
+        None => ("unavailable".to_string(), "unavailable".to_string()),
+    };
     render(StreamTemplate {
         page_title: "Live stream".to_string(),
         rtsp_urls: stream_urls_for(&settings, host.clone(), "rtsp"),
@@ -720,6 +738,10 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
         system: system::view(&status),
         settings,
         active_page: "stream",
+        initial_stream,
+        main_busy,
+        viewers_main_text,
+        viewers_sub_text,
     })
 }
 
@@ -1061,8 +1083,22 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
     if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
-    let status = run_blocking(system::status).await?;
-    Ok(Json(status).into_response())
+    let settings = settings::load_settings(&state.config_path);
+    let (status, viewers) = tokio::join!(
+        run_blocking(system::status),
+        streams::viewer_report(&settings)
+    );
+    #[derive(Serialize)]
+    struct StatusResponse {
+        #[serde(flatten)]
+        status: system::SystemStatus,
+        viewers: Option<streams::ViewerReport>,
+    }
+    Ok(Json(StatusResponse {
+        status: status?,
+        viewers,
+    })
+    .into_response())
 }
 
 async fn api_wifi_networks(

@@ -27,14 +27,13 @@ pub struct ViewerReport {
 impl ViewerReport {
     /// Main has room for another NON-local viewer. HomeKit's reserve and lingering
     /// HLS sessions are deliberately excluded from capacity math.
-    #[allow(dead_code)] // TODO(task 5): consumed by /api/status wiring
+    #[cfg_attr(not(test), allow(dead_code))] // exercised by unit tests; capacity gating is client-side
     pub fn main_available(&self) -> bool {
         self.main.browser + self.main.rtsp < self.main.capacity
     }
 }
 
 /// Query the local mediamtx API and classify every reader. None on any failure.
-#[allow(dead_code)] // TODO(task 5): consumed by /api/status wiring
 pub async fn viewer_report(settings: &Settings) -> Option<ViewerReport> {
     let paths = http_get_local("/v3/paths/list").await?;
     let sessions = http_get_local("/v3/rtspsessions/list").await?;
