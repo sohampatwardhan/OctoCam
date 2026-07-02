@@ -1,7 +1,7 @@
 [Unit]
 Description=OctoCam web settings interface
 Wants=network-online.target
-After=network-online.target octocam-wifi-setup.service
+After=network-online.target octocam-wifi-setup.service octocam-rtsp.service
 
 [Service]
 Type=simple

@@ -302,6 +302,30 @@ async fn async_main() {
     }
 
     let state = Arc::new(AppState::from_env());
+
+    // Reconcile the mediamtx config with (possibly migrated) settings at startup,
+    // restarting the RTSP service only when the rendered config actually changed.
+    // The /run marker (tmpfs, cleared each boot) limits the reconcile restart to once
+    // per boot so a crash-looping octocam-web cannot flap the camera service.
+    {
+        let settings = settings::load_settings(&state.config_path);
+        let config_path = state.mediamtx_config_path.clone();
+        let _ = run_blocking(move || {
+            match mediamtx::write_mediamtx_config(&settings, &config_path) {
+                Ok(true) => {
+                    let marker = std::path::Path::new("/run/octocam-rtsp-reconciled");
+                    if !marker.exists() {
+                        let _ = std::fs::write(marker, b"1");
+                        let _ = system::restart_service("octocam-rtsp");
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!("mediamtx config reconcile failed: {error}"),
+            }
+        })
+        .await;
+    }
+
     let app = Router::new()
         .route("/", get(identity))
         .route("/identity", get(identity))
