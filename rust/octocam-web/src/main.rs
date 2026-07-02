@@ -3,6 +3,7 @@ mod mediamtx;
 mod proc;
 mod security;
 mod settings;
+mod streams;
 mod system;
 mod wifi;
 mod wifi_setup;
