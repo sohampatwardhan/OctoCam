@@ -101,6 +101,45 @@ function sourceStream(settings) {
   return settings.sub_stream_enabled ? "sub" : "main";
 }
 
+const MAIN_QUALITY_MIN_HEIGHT = 720;
+const MAIN_QUALITY_MIN_BITRATE_KBPS = 500;
+const SNAPSHOT_CACHE_TTL_MS = 5000;
+
+function localIpv4Prefixes() {
+  const os = require("os");
+  const prefixes = [];
+  for (const addrs of Object.values(os.networkInterfaces() || {})) {
+    for (const addr of addrs || []) {
+      if (addr.family === "IPv4" && !addr.internal) {
+        prefixes.push(addr.address.split(".").slice(0, 3).join(".") + ".");
+      }
+    }
+  }
+  return prefixes;
+}
+
+// Local viewers get the main input; remote/cellular (small frame, tight bitrate —
+// HomeKit's remote profile) get sub. Network address alone is unreliable because
+// hub-relayed remote sessions present LAN addresses, so requested quality is the
+// primary signal. This only changes the ffmpeg INPUT — the encoded output stays
+// capped by MAX_HOMEKIT_WIDTH/HEIGHT for CPU safety on the Zero 2 W.
+function chooseStream(settings, video, targetAddress) {
+  if (!settings.sub_stream_enabled) return "main";
+  const height = Number.parseInt((video && video.height) || 0, 10);
+  const bitrate = Number.parseInt((video && video.max_bit_rate) || 0, 10);
+  const wantsMainQuality =
+    height >= MAIN_QUALITY_MIN_HEIGHT || bitrate >= MAIN_QUALITY_MIN_BITRATE_KBPS;
+  if (!wantsMainQuality) return "sub";
+  if (targetAddress && targetAddress.includes(".")) {
+    const onLan = localIpv4Prefixes().some((prefix) => targetAddress.startsWith(prefix));
+    if (!onLan) return "sub";
+  }
+  return "main";
+}
+
+let snapshotCache = { at: 0, buffer: null };
+let snapshotInFlight = null;
+
 function homekitDimensions(width, height) {
   const safeWidth = Math.max(160, Number.parseInt(width || MAX_HOMEKIT_WIDTH, 10));
   const safeHeight = Math.max(120, Number.parseInt(height || MAX_HOMEKIT_HEIGHT, 10));
@@ -119,6 +158,11 @@ function supportedResolutions(settings) {
   const subFps = settings.sub_framerate || 10;
   const primary = homekitDimensions(subWidth, subHeight);
   const candidates = [
+    // Advertised so local Home-app sessions request high quality — that request is
+    // the local/remote signal chooseStream keys on. The actual ffmpeg OUTPUT stays
+    // capped by MAX_HOMEKIT_WIDTH/HEIGHT: switching the INPUT to main improves
+    // source quality without betting the Zero 2 W CPU on 720p software encode.
+    [1280, 720, Math.min(15, settings.framerate || 15)],
     [primary.width, primary.height, subFps],
     [640, 480, 15],
     [480, 360, 15],
@@ -192,6 +236,16 @@ class OctoCamStreamingDelegate {
   }
 
   handleSnapshotRequest(request, callback) {
+    const now = Date.now();
+    if (snapshotCache.buffer && now - snapshotCache.at < SNAPSHOT_CACHE_TTL_MS) {
+      callback(undefined, snapshotCache.buffer);
+      return;
+    }
+    if (snapshotInFlight) {
+      snapshotInFlight.then((buffer) => callback(undefined, buffer)).catch((error) => callback(error));
+      return;
+    }
+
     const settings = loadSettings();
     const stream = sourceStream(settings);
     const dimensions = homekitDimensions(request.width, request.height);
@@ -210,15 +264,19 @@ class OctoCamStreamingDelegate {
       "-",
     ];
 
-    runProcess("ffmpeg", args, 6000)
+    snapshotInFlight = runProcess("ffmpeg", args, 6000)
       .then((buffer) => {
         console.log(`HomeKit snapshot captured: ${buffer.length} bytes`);
-        callback(undefined, buffer);
+        snapshotCache = { at: Date.now(), buffer };
+        snapshotInFlight = null;
+        return buffer;
       })
       .catch((error) => {
         console.log(`HomeKit snapshot failed: ${error.message}`);
-        callback(error);
+        snapshotInFlight = null;
+        throw error;
       });
+    snapshotInFlight.then((buffer) => callback(undefined, buffer)).catch((error) => callback(error));
   }
 
   prepareStream(request, callback) {
@@ -265,16 +323,7 @@ class OctoCamStreamingDelegate {
     }
   }
 
-  startStream(request, callback) {
-    const sessionInfo = this.pendingSessions.get(request.sessionID);
-    if (!sessionInfo) {
-      callback(new Error("HomeKit session was not prepared"));
-      return;
-    }
-
-    const settings = loadSettings();
-    const stream = sourceStream(settings);
-    const video = request.video;
+  buildStreamArgs(settings, sessionInfo, video, stream) {
     const dimensions = homekitDimensions(video.width, video.height);
     const mtu = video.mtu || 1316;
     const profile = FFMPEG_H264_PROFILES[video.profile] || "baseline";
@@ -315,56 +364,98 @@ class OctoCamStreamingDelegate {
       `srtp://${sessionInfo.address}:${sessionInfo.videoPort}?rtcpport=${sessionInfo.videoPort}&localrtcpport=${sessionInfo.localVideoPort}&pkt_size=${mtu}`,
     ];
 
-    console.log(`Starting HomeKit ${stream} stream: requested=${request.video.width}x${request.video.height} actual=${dimensions.width}x${dimensions.height} ${fps}fps ${maxBitrate}kbps`);
-    if (DEBUG_FFMPEG) {
-      console.log(`ffmpeg ${args.join(" ")}`);
+    return { args, dimensions, fps, maxBitrate };
+  }
+
+  startStream(request, callback) {
+    const sessionInfo = this.pendingSessions.get(request.sessionID);
+    if (!sessionInfo) {
+      callback(new Error("HomeKit session was not prepared"));
+      return;
     }
 
-    const child = spawn("ffmpeg", args, { env: process.env, stdio: ["ignore", "ignore", "pipe"] });
+    const settings = loadSettings();
+    const stream = chooseStream(settings, request.video, sessionInfo.address);
+    const video = request.video;
+
     let callbackCalled = false;
-    const stderrLines = [];
     const finishStart = (error) => {
       if (!callbackCalled) {
         callbackCalled = true;
         callback(error);
       }
     };
-    const startedTimer = setTimeout(() => {
-      finishStart();
-    }, 700);
 
-    child.stderr.on("data", (chunk) => {
-      const lines = chunk.toString("utf8").trim().split("\n").filter(Boolean);
-      stderrLines.push(...lines);
-      if (stderrLines.length > 20) {
-        stderrLines.splice(0, stderrLines.length - 20);
-      }
+    const attempt = (streamName, allowSubFallback) => {
+      const { args, dimensions, fps, maxBitrate } = this.buildStreamArgs(settings, sessionInfo, video, streamName);
+
+      console.log(`Starting HomeKit ${streamName} stream: requested=${video.width}x${video.height} actual=${dimensions.width}x${dimensions.height} ${fps}fps ${maxBitrate}kbps`);
       if (DEBUG_FFMPEG) {
-        console.log(lines.join("\n"));
+        console.log(`ffmpeg ${args.join(" ")}`);
       }
-    });
-    child.on("error", (error) => {
-      clearTimeout(startedTimer);
-      console.log(`HomeKit ffmpeg failed to start: ${error.message}`);
-      finishStart(error);
-    });
-    child.on("exit", (code, signal) => {
-      clearTimeout(startedTimer);
-      releasePort(sessionInfo.localVideoPort);
-      this.ongoingSessions.delete(request.sessionID);
-      if (code !== 0 && code !== 255 && signal !== "SIGKILL" && this.controller) {
-        console.log(`HomeKit ffmpeg stream exited with code=${code} signal=${signal}: ${stderrLines.join(" | ")}`);
-        finishStart(new Error(`ffmpeg exited with ${code || signal}`));
-        this.controller.forceStopStreamingSession(request.sessionID);
-      } else {
-        console.log(`HomeKit ffmpeg stream stopped with code=${code} signal=${signal}`);
-      }
-    });
 
-    this.ongoingSessions.set(request.sessionID, {
-      process: child,
-      localVideoPort: sessionInfo.localVideoPort,
-    });
+      const child = spawn("ffmpeg", args, { env: process.env, stdio: ["ignore", "ignore", "pipe"] });
+      const stderrLines = [];
+      let retriedWithSub = false;
+      // Only before the stream is confirmed started (finishStart not yet fired):
+      // fall back from main to sub exactly once, reusing the same session/port.
+      const retryWithSub = (reason) => {
+        if (retriedWithSub || !allowSubFallback || callbackCalled || !settings.sub_stream_enabled) {
+          return false;
+        }
+        retriedWithSub = true;
+        console.log(`HomeKit main stream failed to start (${reason}); retrying with sub`);
+        attempt("sub", false);
+        return true;
+      };
+      const startedTimer = setTimeout(() => {
+        finishStart();
+      }, 700);
+
+      child.stderr.on("data", (chunk) => {
+        const lines = chunk.toString("utf8").trim().split("\n").filter(Boolean);
+        stderrLines.push(...lines);
+        if (stderrLines.length > 20) {
+          stderrLines.splice(0, stderrLines.length - 20);
+        }
+        if (DEBUG_FFMPEG) {
+          console.log(lines.join("\n"));
+        }
+      });
+      child.on("error", (error) => {
+        clearTimeout(startedTimer);
+        console.log(`HomeKit ffmpeg failed to start: ${error.message}`);
+        if (retryWithSub(error.message)) {
+          return;
+        }
+        finishStart(error);
+      });
+      child.on("exit", (code, signal) => {
+        clearTimeout(startedTimer);
+        const failed = code !== 0 && code !== 255 && signal !== "SIGKILL";
+        if (failed && retryWithSub(`exit code=${code} signal=${signal}: ${stderrLines.join(" | ")}`)) {
+          // The retry attempt reuses this session's port and replaced the
+          // ongoingSessions entry — leave bookkeeping to it.
+          return;
+        }
+        releasePort(sessionInfo.localVideoPort);
+        this.ongoingSessions.delete(request.sessionID);
+        if (failed && this.controller) {
+          console.log(`HomeKit ffmpeg stream exited with code=${code} signal=${signal}: ${stderrLines.join(" | ")}`);
+          finishStart(new Error(`ffmpeg exited with ${code || signal}`));
+          this.controller.forceStopStreamingSession(request.sessionID);
+        } else {
+          console.log(`HomeKit ffmpeg stream stopped with code=${code} signal=${signal}`);
+        }
+      });
+
+      this.ongoingSessions.set(request.sessionID, {
+        process: child,
+        localVideoPort: sessionInfo.localVideoPort,
+      });
+    };
+
+    attempt(stream, stream === "main");
     this.pendingSessions.delete(request.sessionID);
   }
 
