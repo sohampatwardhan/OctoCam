@@ -37,6 +37,9 @@ const SERVICE_WORKER_JS: &str = include_str!("../../../static/sw.js");
 
 type AppResult = Result<Response, AppError>;
 
+/// Latest snapshot bytes plus when they were captured; None until first capture.
+type SnapshotCache = Arc<tokio::sync::Mutex<Option<(std::time::Instant, Vec<u8>)>>>;
+
 #[derive(Clone)]
 struct AppState {
     project_dir: PathBuf,
@@ -45,6 +48,7 @@ struct AppState {
     mediamtx_config_path: PathBuf,
     homekit_status_path: PathBuf,
     secret_key: String,
+    snapshot_cache: SnapshotCache,
 }
 
 #[derive(Debug)]
@@ -434,6 +438,7 @@ impl AppState {
             mediamtx_config_path,
             homekit_status_path,
             secret_key,
+            snapshot_cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -1143,9 +1148,23 @@ async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
         )
             .into_response());
     }
+    let mut cache = state.snapshot_cache.lock().await;
+    if let Some((at, bytes)) = cache.as_ref() {
+        if camera::snapshot_is_fresh(*at, std::time::Instant::now()) {
+            let bytes = bytes.clone();
+            return Ok(([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response());
+        }
+    }
+    // Cold path: hold the lock across capture so concurrent requests coalesce onto
+    // one capture (bounded by CAPTURE_TIMEOUT = 8s). Accepted trade-off: a burst of
+    // concurrent snapshot requests serializes behind the first — worst case one
+    // 8s wait, then everyone is served from cache.
     let settings_for_capture = settings.clone();
-    match run_blocking(move || camera::capture_jpeg(&settings_for_capture)).await? {
-        Ok(data) => Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response()),
+    match run_blocking(move || camera::capture_snapshot(&settings_for_capture)).await? {
+        Ok(data) => {
+            *cache = Some((std::time::Instant::now(), data.clone()));
+            Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response())
+        }
         Err(error) => Ok((
             StatusCode::SERVICE_UNAVAILABLE,
             format!("Snapshot unavailable: {error}\n"),
