@@ -4,13 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} Wi-Fi</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260702-system-meters">
-    <script src="/static/app.js?v=20260702-system-meters" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-security2">
+    <script src="/static/app.js?v=20260702-wifi-security2" defer></script>
   </head>
   <body>
     <main class="shell">
       {% include "_topbar.html" %}
       {% include "_settings_toast.html" %}
+      {% if has_wifi_message %}
+        <div class="toast-region" role="status" aria-live="polite" aria-atomic="true">
+          <p class="toast">{{ wifi_message }}</p>
+        </div>
+      {% endif %}
 
       <div class="app-layout">
         {% include "_sidebar.html" %}
@@ -18,21 +23,139 @@
           <section class="panel settings-card">
             <div class="section-heading"><h2>Wi-Fi</h2></div>
             <dl class="status-list compact-list">
-              <div><dt>Network</dt><dd data-live-status="wifi_label">{{ system.wifi_label }}</dd></div>
-              <div><dt>Address</dt><dd data-live-status="ip_addresses">{{ system.ip_addresses }}</dd></div>
+              <div>
+                <dt>Network</dt>
+                <dd class="wifi-signal" data-live-signal data-signal-level="{{ system.wifi_signal_level }}" data-signal-percent="{{ system.wifi_signal_percent }}" title="{{ system.wifi_signal_label }}">
+                  <span data-live-status="wifi_label">{{ system.wifi_label }}</span>
+                  <span class="wifi-signal-indicator" aria-label="{{ system.wifi_signal_label }}">
+                    <svg class="signal-icon signal-high" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20h.01"></path>
+                      <path d="M2 8.82a15 15 0 0 1 20 0"></path>
+                      <path d="M5 12.859a10 10 0 0 1 14 0"></path>
+                      <path d="M8.5 16.429a5 5 0 0 1 7 0"></path>
+                    </svg>
+                    <svg class="signal-icon signal-low" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20h.01"></path>
+                      <path d="M8.5 16.429a5 5 0 0 1 7 0"></path>
+                    </svg>
+                    <svg class="signal-icon signal-zero" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 20h.01"></path>
+                    </svg>
+                  </span>
+                </dd>
+              </div>
+              <div><dt>Local IP</dt><dd data-live-status="wifi_ip_addresses">{{ system.wifi_ip_addresses }}</dd></div>
             </dl>
-            {% if system.wifi_details.len() > 0 %}
-              <div class="subsection-heading"><h3>Connection details</h3></div>
-              <dl class="status-list wide-list compact-list" data-wifi-details>
-                {% for row in system.wifi_details %}
-                  <div><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
-                {% endfor %}
-              </dl>
-            {% endif %}
             <a class="secondary" href="/setup">Open setup</a>
+          </section>
+
+          <section class="panel settings-card">
+            <div class="section-heading split-heading">
+              <h2>Stored Wi-Fi profiles</h2>
+              <a class="icon-text-button" href="#wifi-add-network" role="button" data-wifi-dialog-open>
+                <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12h14"></path>
+                  <path d="M12 5v14"></path>
+                </svg>
+                <span>Add</span>
+              </a>
+            </div>
+            {% if stored_profiles.len() > 0 %}
+              <div class="profile-list">
+                {% for profile in stored_profiles %}
+                  <div class="profile-row">
+                    <div>
+                      <strong>{{ profile.name }}</strong>
+                      <span>{{ profile.security }} · {{ profile.source }}</span>
+                    </div>
+                    {% if profile.active %}
+                      <span class="profile-status">Connected</span>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="empty-note">No stored Wi-Fi profiles found.</p>
+            {% endif %}
           </section>
         </section>
       </div>
+
+      <div id="wifi-add-network" class="wifi-dialog" role="dialog" aria-modal="true" aria-labelledby="wifi-dialog-title" data-wifi-dialog>
+        <div class="wifi-dialog-inner">
+          <div class="power-dialog-head">
+            <div>
+              <h2 id="wifi-dialog-title">Add network</h2>
+            </div>
+            <a class="icon-action" href="#" role="button" aria-label="Close add network" title="Close" data-wifi-dialog-close>
+              <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"></path>
+                <path d="m6 6 12 12"></path>
+              </svg>
+            </a>
+          </div>
+
+          <dl class="status-list compact-list mac-list">
+            <div><dt>MAC Address</dt><dd>{{ wifi_mac_address }}</dd></div>
+          </dl>
+
+          <form class="wifi-connect-form" method="post" action="/wifi/connect" data-wifi-connect-form>
+            <input type="hidden" name="wifi_ssid" value="" data-wifi-ssid-value>
+            <div class="segmented-control" role="group" aria-label="Network entry mode">
+              <button class="segment is-active" type="button" data-wifi-mode="scan">Scan</button>
+              <button class="segment" type="button" data-wifi-mode="manual">Manual</button>
+            </div>
+
+            <div data-wifi-scan-panel>
+              <div class="field-row with-action">
+                <label for="wifi-scanned-ssid">Network</label>
+                <button class="secondary compact" type="button" data-wifi-scan-button>
+                  <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 20h.01"></path>
+                    <path d="M2 8.82a15 15 0 0 1 20 0"></path>
+                    <path d="M5 12.859a10 10 0 0 1 14 0"></path>
+                    <path d="M8.5 16.429a5 5 0 0 1 7 0"></path>
+                  </svg>
+                  <span>Scan</span>
+                </button>
+              </div>
+              <select id="wifi-scanned-ssid" name="wifi_ssid_scanned" data-wifi-network-select>
+                {% if has_wifi_networks %}
+                  {% for network in wifi_networks %}
+                    <option value="{{ network.ssid }}" data-security="{{ network.security }}" {% if network.selected %}selected{% endif %}>{{ network.label }}</option>
+                  {% endfor %}
+                {% else %}
+                  <option value="">No scanned networks yet</option>
+                {% endif %}
+              </select>
+              <p class="field-note" data-wifi-scan-status aria-live="polite"></p>
+            </div>
+
+            <div hidden data-wifi-manual-panel>
+              <label for="wifi-manual-ssid">Network name</label>
+              <input id="wifi-manual-ssid" name="wifi_ssid_manual" type="text" autocomplete="off" data-wifi-manual-ssid>
+            </div>
+
+            <label for="wifi-security">Security</label>
+            <select id="wifi-security" name="wifi_security" data-wifi-security-select>
+              <option value="wpa2" selected>WPA/WPA2 Personal</option>
+              <option value="wpa3">WPA3 Personal</option>
+              <option value="wpa">WPA Personal</option>
+              <option value="wep">WEP</option>
+              <option value="open">Open</option>
+              <option value="unknown">Unknown</option>
+            </select>
+
+            <div data-wifi-password-row>
+              <label for="wifi-password">Password</label>
+              <input id="wifi-password" name="wifi_password" type="password" autocomplete="new-password" data-wifi-password-input>
+            </div>
+
+            <button class="primary" type="submit">Save network</button>
+          </form>
+        </div>
+      </div>
+      <a class="wifi-dialog-backdrop" href="#" aria-label="Close add network" data-wifi-dialog-backdrop></a>
     </main>
   </body>
 </html>

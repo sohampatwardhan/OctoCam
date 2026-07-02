@@ -207,7 +207,8 @@ h3 {
   color: var(--accent-strong);
 }
 
-.power-dialog {
+.power-dialog,
+.wifi-dialog {
   position: fixed;
   inset: 50% auto auto 50%;
   z-index: 50;
@@ -225,24 +226,33 @@ h3 {
 }
 
 .power-dialog:not(:target):not(.is-open),
-.power-dialog-backdrop {
+.wifi-dialog:not(:target):not(.is-open),
+.power-dialog-backdrop,
+.wifi-dialog-backdrop {
   display: none;
 }
 
 .power-dialog:target,
-.power-dialog.is-open {
+.power-dialog.is-open,
+.wifi-dialog:target,
+.wifi-dialog.is-open {
   display: block;
 }
 
-.power-dialog-backdrop {
+.power-dialog-backdrop,
+.wifi-dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 40;
+  padding: 0;
+  border: 0;
   background: rgb(22 33 43 / 34%);
 }
 
 .power-dialog:target + .power-dialog-backdrop,
-.power-dialog.is-open + .power-dialog-backdrop {
+.power-dialog.is-open + .power-dialog-backdrop,
+.wifi-dialog:target + .wifi-dialog-backdrop,
+.wifi-dialog.is-open + .wifi-dialog-backdrop {
   display: block;
 }
 
@@ -251,6 +261,16 @@ h3 {
 }
 
 .power-dialog-inner {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.wifi-dialog {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.wifi-dialog-inner {
   display: grid;
   gap: 16px;
   padding: 18px;
@@ -542,6 +562,13 @@ h3 {
   border-top: 0;
 }
 
+.split-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .subsection-heading {
   padding: 24px 0 10px;
   border-top: 1px solid var(--line);
@@ -791,6 +818,27 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+.icon-text-button {
+  display: inline-flex;
+  width: auto;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.icon-text-button:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-muted);
+}
+
 .scan-form {
   width: min(720px, 100%);
 }
@@ -877,6 +925,118 @@ input[type="checkbox"] {
 .wifi-signal[data-signal-level="low"] .signal-low,
 .wifi-signal[data-signal-level="zero"] .signal-zero {
   display: block;
+}
+
+.profile-list {
+  display: grid;
+  gap: 0;
+}
+
+.profile-row {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-row:first-child {
+  padding-top: 0;
+}
+
+.profile-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.profile-row strong,
+.profile-row span {
+  display: block;
+}
+
+.profile-row strong {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.profile-row span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.profile-status {
+  flex: 0 0 auto;
+  color: var(--ok) !important;
+}
+
+.empty-note {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.mac-list {
+  margin-bottom: 0;
+}
+
+.wifi-connect-form {
+  display: grid;
+  gap: 14px;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-muted);
+}
+
+.segment {
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.segment.is-active {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgb(22 33 43 / 10%);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.field-row label {
+  margin-bottom: 0;
+}
+
+.field-row.with-action .secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.field-note {
+  min-height: 20px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 700;
 }
 
 .wifi-signal[data-signal-level="high"] .wifi-signal-indicator {
@@ -1156,6 +1316,15 @@ pre {
   .content-stack {
     gap: 14px;
     padding: 28px 20px 36px;
+  }
+
+  .split-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .split-heading .icon-text-button {
+    width: 100%;
   }
 
   .status-pill {

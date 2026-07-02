@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::{collections::HashMap, fs, process::Command, thread, time::Duration};
+use std::{collections::HashMap, fs, path::Path, process::Command, thread, time::Duration};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SystemStatus {
@@ -55,6 +55,7 @@ pub struct WifiStatus {
     pub pairwise_cipher: Option<String>,
     pub group_cipher: Option<String>,
     pub ip_address: Option<String>,
+    pub ip_addresses: Vec<String>,
     pub mac_address: Option<String>,
     pub default_gateway: Option<String>,
     pub default_interface: Option<String>,
@@ -88,6 +89,14 @@ pub struct LabelValue {
 }
 
 #[derive(Clone, Debug)]
+pub struct StoredWifiProfile {
+    pub name: String,
+    pub security: String,
+    pub source: String,
+    pub active: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct SystemView {
     pub camera_available: bool,
     pub camera_label: String,
@@ -95,6 +104,7 @@ pub struct SystemView {
     pub wifi_signal_percent: f64,
     pub wifi_signal_level: String,
     pub wifi_signal_label: String,
+    pub wifi_ip_addresses: String,
     pub ip_addresses: String,
     pub uptime: String,
     pub cpu_temp: String,
@@ -167,6 +177,7 @@ pub fn view(status: &SystemStatus) -> SystemView {
         .as_ref()
         .map(|value| format!("Signal {value} ({wifi_signal_percent:.0}%)"))
         .unwrap_or_else(|| "Signal unavailable".to_string());
+    let wifi_ip_addresses = wifi_ip_addresses_text(&status.wifi);
 
     SystemView {
         camera_available: status.camera.available,
@@ -184,6 +195,7 @@ pub fn view(status: &SystemStatus) -> SystemView {
         wifi_signal_percent,
         wifi_signal_level,
         wifi_signal_label,
+        wifi_ip_addresses,
         ip_addresses,
         uptime: status
             .uptime
@@ -224,6 +236,26 @@ pub fn view(status: &SystemStatus) -> SystemView {
     }
 }
 
+pub fn stored_wifi_profiles(active_wifi: &WifiStatus) -> Vec<StoredWifiProfile> {
+    let active_ssid = active_wifi.ssid.as_deref();
+    let mut profiles = Vec::new();
+    profiles.extend(network_manager_profiles(active_ssid));
+    profiles.extend(wpa_supplicant_profiles(active_ssid));
+    profiles.extend(dietpi_autosetup_profiles(active_ssid));
+
+    let mut seen = Vec::new();
+    profiles.retain(|profile| {
+        let key = format!("{}:{}", profile.source, profile.name);
+        if seen.iter().any(|existing| existing == &key) {
+            false
+        } else {
+            seen.push(key);
+            true
+        }
+    });
+    profiles
+}
+
 fn clamp_percent(value: f64) -> f64 {
     value.clamp(0.0, 100.0)
 }
@@ -252,6 +284,16 @@ fn wifi_signal_dbm(wifi: &WifiStatus) -> Option<f64> {
         .next()?
         .parse()
         .ok()
+}
+
+fn wifi_ip_addresses_text(wifi: &WifiStatus) -> String {
+    if !wifi.ip_addresses.is_empty() {
+        wifi.ip_addresses.join(", ")
+    } else if let Some(address) = &wifi.ip_address {
+        address.clone()
+    } else {
+        "Not available".to_string()
+    }
 }
 
 pub fn set_service_enabled(unit: &str, enabled: bool) -> Result<(), String> {
@@ -607,6 +649,21 @@ fn enrich_wifi_status(mut status: WifiStatus) -> WifiStatus {
         merge_wifi(&mut status, iw_interface_details(&interface));
     }
     merge_wifi(&mut status, route_details());
+    let address_interface = status
+        .interface
+        .clone()
+        .or_else(|| status.default_interface.clone());
+    if let Some(interface) = address_interface {
+        let addresses = interface_ip_addresses(&interface);
+        if !addresses.is_empty() {
+            status.ip_addresses = addresses;
+        }
+    }
+    if status.ip_addresses.is_empty() {
+        if let Some(address) = &status.ip_address {
+            status.ip_addresses.push(address.clone());
+        }
+    }
     if let Some(frequency) = status.frequency_mhz {
         status.channel = frequency_to_channel(frequency);
         status.band = Some(frequency_band(frequency));
@@ -645,6 +702,9 @@ fn merge_wifi(status: &mut WifiStatus, next: WifiStatus) {
     merge!(mac_address);
     merge!(default_gateway);
     merge!(default_interface);
+    if !next.ip_addresses.is_empty() {
+        status.ip_addresses = next.ip_addresses;
+    }
 }
 
 fn wireless_interfaces() -> Vec<String> {
@@ -761,6 +821,180 @@ fn route_details() -> WifiStatus {
         };
     }
     WifiStatus::default()
+}
+
+fn interface_ip_addresses(interface: &str) -> Vec<String> {
+    let Some(output) = run_output(
+        "ip",
+        &["-o", "addr", "show", "dev", interface, "scope", "global"],
+    ) else {
+        return Vec::new();
+    };
+
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            match fields.get(2).copied() {
+                Some("inet") | Some("inet6") => fields
+                    .get(3)
+                    .map(|address| address.split('/').next().unwrap_or(address).to_string()),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn network_manager_profiles(active_ssid: Option<&str>) -> Vec<StoredWifiProfile> {
+    let Some(output) = run_output("nmcli", &["-t", "-f", "NAME,TYPE", "connection", "show"]) else {
+        return Vec::new();
+    };
+
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields = split_nmcli_fields(line);
+            if fields.len() < 2 || fields.get(1).map(String::as_str) != Some("802-11-wireless") {
+                return None;
+            }
+            let name = fields[0].trim().to_string();
+            if name.is_empty() || name == "OctoCam-Setup" {
+                return None;
+            }
+            Some(StoredWifiProfile {
+                active: active_ssid == Some(name.as_str()),
+                name,
+                security: "Saved".to_string(),
+                source: "NetworkManager".to_string(),
+            })
+        })
+        .collect()
+}
+
+fn wpa_supplicant_profiles(active_ssid: Option<&str>) -> Vec<StoredWifiProfile> {
+    [
+        "/etc/wpa_supplicant/wpa_supplicant.conf",
+        "/boot/wpa_supplicant.conf",
+    ]
+    .into_iter()
+    .flat_map(|path| wpa_supplicant_profiles_from(Path::new(path), active_ssid))
+    .collect()
+}
+
+fn wpa_supplicant_profiles_from(path: &Path, active_ssid: Option<&str>) -> Vec<StoredWifiProfile> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    parse_wpa_supplicant_profiles(&contents, active_ssid, "wpa_supplicant")
+}
+
+fn parse_wpa_supplicant_profiles(
+    contents: &str,
+    active_ssid: Option<&str>,
+    source: &str,
+) -> Vec<StoredWifiProfile> {
+    let mut profiles = Vec::new();
+    let mut in_network = false;
+    let mut ssid: Option<String> = None;
+    let mut key_mgmt: Option<String> = None;
+    let mut has_psk = false;
+    let mut disabled = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "network={" {
+            in_network = true;
+            ssid = None;
+            key_mgmt = None;
+            has_psk = false;
+            disabled = false;
+            continue;
+        }
+        if in_network && trimmed == "}" {
+            if let Some(name) = ssid.take() {
+                if !disabled {
+                    profiles.push(StoredWifiProfile {
+                        active: active_ssid == Some(name.as_str()),
+                        name,
+                        security: key_mgmt
+                            .take()
+                            .or_else(|| has_psk.then(|| "WPA-PSK".to_string()))
+                            .unwrap_or_else(|| "Open".to_string()),
+                        source: source.to_string(),
+                    });
+                }
+            }
+            in_network = false;
+            continue;
+        }
+        if !in_network {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("ssid=") {
+            ssid = Some(unquote_wifi_value(value.trim()));
+        } else if let Some(value) = trimmed.strip_prefix("key_mgmt=") {
+            key_mgmt = Some(value.trim().to_string());
+        } else if trimmed.starts_with("psk=") {
+            has_psk = true;
+        } else if let Some(value) = trimmed.strip_prefix("disabled=") {
+            disabled = value.trim() == "1";
+        }
+    }
+
+    profiles
+}
+
+fn dietpi_autosetup_profiles(active_ssid: Option<&str>) -> Vec<StoredWifiProfile> {
+    let Ok(contents) = fs::read_to_string("/boot/dietpi.txt") else {
+        return Vec::new();
+    };
+    let fields = key_value_lines(&contents);
+    if fields
+        .get("AUTO_SETUP_NET_WIFI_ENABLED")
+        .map(String::as_str)
+        != Some("1")
+    {
+        return Vec::new();
+    }
+    let Some(name) = fields
+        .get("AUTO_SETUP_NET_WIFI_SSID")
+        .map(|value| unquote_wifi_value(value))
+        .filter(|value| !value.is_empty())
+    else {
+        return Vec::new();
+    };
+
+    vec![StoredWifiProfile {
+        active: active_ssid == Some(name.as_str()),
+        name,
+        security: "Saved".to_string(),
+        source: "DietPi first boot".to_string(),
+    }]
+}
+
+fn unquote_wifi_value(value: &str) -> String {
+    let trimmed = value.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    let mut decoded = String::new();
+    let mut escaped = false;
+    for char in unquoted.chars() {
+        if escaped {
+            decoded.push(char);
+            escaped = false;
+        } else if char == '\\' {
+            escaped = true;
+        } else {
+            decoded.push(char);
+        }
+    }
+    decoded
 }
 
 fn value_after(fields: &[&str], key: &str) -> Option<String> {

@@ -78,6 +78,13 @@ pub fn scan_and_cache_networks(path: &PathBuf) -> Result<WifiCache, String> {
 }
 
 pub fn scan_networks() -> Result<Vec<WifiNetwork>, String> {
+    match scan_networks_with_nmcli() {
+        Ok(networks) if !networks.is_empty() => Ok(networks),
+        Ok(_) | Err(_) => scan_networks_with_iw(),
+    }
+}
+
+fn scan_networks_with_nmcli() -> Result<Vec<WifiNetwork>, String> {
     let output = Command::new("nmcli")
         .args([
             "-t",
@@ -105,6 +112,33 @@ pub fn scan_networks() -> Result<Vec<WifiNetwork>, String> {
     )))
 }
 
+fn scan_networks_with_iw() -> Result<Vec<WifiNetwork>, String> {
+    let interfaces = wireless_interfaces();
+    let mut last_error = "No wireless interface found.".to_string();
+    for interface in interfaces {
+        let output = Command::new("iw")
+            .args(["dev", &interface, "scan"])
+            .output()
+            .map_err(|error| error.to_string())?;
+        if output.status.success() {
+            return Ok(dedupe_networks(parse_iw_scan(&String::from_utf8_lossy(
+                &output.stdout,
+            ))));
+        }
+        let message = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        })
+        .trim()
+        .to_string();
+        if !message.is_empty() {
+            last_error = message;
+        }
+    }
+    Err(last_error)
+}
+
 pub fn connect_to_network(ssid: &str, password: &str, security: &str) -> (bool, String) {
     let ssid = ssid.trim();
     let security = normalize_security(security);
@@ -124,6 +158,28 @@ pub fn connect_to_network(ssid: &str, password: &str, security: &str) -> (bool, 
         command.args(["password", password]);
     }
 
+    let nmcli_result = run_connect_command(command);
+    if nmcli_result.0 {
+        disable_setup_ap();
+        return nmcli_result;
+    }
+
+    let wpa_result = connect_with_wpa_cli(ssid, password, &security);
+    if wpa_result.0 {
+        disable_setup_ap();
+        return wpa_result;
+    }
+
+    (
+        false,
+        format!(
+            "NetworkManager: {} wpa_supplicant: {}",
+            nmcli_result.1, wpa_result.1
+        ),
+    )
+}
+
+fn run_connect_command(mut command: Command) -> (bool, String) {
     match command.output() {
         Ok(output) => {
             let text = if output.stdout.is_empty() {
@@ -132,13 +188,10 @@ pub fn connect_to_network(ssid: &str, password: &str, security: &str) -> (bool, 
                 output.stdout
             };
             let message = String::from_utf8_lossy(&text).trim().to_string();
-            if output.status.success() {
-                disable_setup_ap();
-            }
             (
                 output.status.success(),
                 if message.is_empty() {
-                    "NetworkManager returned no output.".to_string()
+                    "Command returned no output.".to_string()
                 } else {
                     message
                 },
@@ -146,6 +199,89 @@ pub fn connect_to_network(ssid: &str, password: &str, security: &str) -> (bool, 
         }
         Err(error) => (false, error.to_string()),
     }
+}
+
+fn connect_with_wpa_cli(ssid: &str, password: &str, security: &str) -> (bool, String) {
+    let Some(interface) = wireless_interfaces().into_iter().next() else {
+        return (false, "No wireless interface found.".to_string());
+    };
+    let (added, network_id) = run_wpa_cli(&interface, &["add_network"]);
+    if !added {
+        return (false, network_id);
+    }
+    let network_id = network_id.trim();
+    if network_id.is_empty() {
+        return (false, "wpa_cli returned no network id.".to_string());
+    }
+
+    let ssid_value = quoted_wpa_value(ssid);
+    let (ssid_set, ssid_message) = run_wpa_cli(
+        &interface,
+        &["set_network", network_id, "ssid", &ssid_value],
+    );
+    if !ssid_set {
+        return (false, ssid_message);
+    }
+
+    if security == "open" {
+        let (key_set, key_message) =
+            run_wpa_cli(&interface, &["set_network", network_id, "key_mgmt", "NONE"]);
+        if !key_set {
+            return (false, key_message);
+        }
+    } else {
+        let psk_value = quoted_wpa_value(password);
+        let (psk_set, psk_message) =
+            run_wpa_cli(&interface, &["set_network", network_id, "psk", &psk_value]);
+        if !psk_set {
+            return (false, psk_message);
+        }
+    }
+
+    for args in [
+        vec!["enable_network", network_id],
+        vec!["save_config"],
+        vec!["reconfigure"],
+    ] {
+        let (success, message) = run_wpa_cli(&interface, &args);
+        if !success {
+            return (false, message);
+        }
+    }
+
+    (
+        true,
+        format!("Saved {ssid} to wpa_supplicant on {interface}."),
+    )
+}
+
+fn run_wpa_cli(interface: &str, args: &[&str]) -> (bool, String) {
+    let output = Command::new("wpa_cli")
+        .arg("-i")
+        .arg(interface)
+        .args(args)
+        .output();
+    match output {
+        Ok(output) => {
+            let text = if output.stdout.is_empty() {
+                output.stderr
+            } else {
+                output.stdout
+            };
+            let message = String::from_utf8_lossy(&text).trim().to_string();
+            let success = output.status.success()
+                && !matches!(
+                    message.as_str(),
+                    "FAIL" | "UNKNOWN COMMAND" | "INVALID COMMAND"
+                );
+            (success, message)
+        }
+        Err(error) => (false, error.to_string()),
+    }
+}
+
+fn quoted_wpa_value(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 pub fn cached_security_for(cache: &WifiCache, ssid: &str) -> String {
@@ -199,6 +335,57 @@ pub fn parse_nmcli_wifi_list(output: &str) -> Vec<WifiNetwork> {
             })
         })
         .collect()
+}
+
+pub fn parse_iw_scan(output: &str) -> Vec<WifiNetwork> {
+    let mut networks = Vec::new();
+    let mut ssid: Option<String> = None;
+    let mut raw_security = String::new();
+    let mut signal = 0;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("BSS ") {
+            push_iw_network(&mut networks, ssid.take(), &raw_security, signal);
+            raw_security.clear();
+            signal = 0;
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("SSID: ") {
+            ssid = Some(value.trim().to_string());
+        } else if let Some(value) = trimmed.strip_prefix("signal: ") {
+            signal = signal_dbm_to_percent(value);
+        } else if trimmed.starts_with("RSN:") {
+            raw_security.push_str(" RSN");
+        } else if trimmed.starts_with("WPA:") {
+            raw_security.push_str(" WPA");
+        } else if trimmed.contains("Privacy") {
+            raw_security.push_str(" WEP");
+        }
+    }
+    push_iw_network(&mut networks, ssid.take(), &raw_security, signal);
+    networks
+}
+
+fn push_iw_network(
+    networks: &mut Vec<WifiNetwork>,
+    ssid: Option<String>,
+    raw_security: &str,
+    signal: i32,
+) {
+    let Some(ssid) = ssid.map(|value| value.trim().to_string()) else {
+        return;
+    };
+    if ssid.is_empty() {
+        return;
+    }
+    let raw_security = raw_security.trim().to_string();
+    networks.push(WifiNetwork {
+        ssid,
+        security: normalize_security(&raw_security),
+        raw_security,
+        signal,
+    });
 }
 
 pub fn normalize_security(value: &str) -> String {
@@ -281,8 +468,33 @@ fn parse_signal(value: &str) -> i32 {
     value.parse::<i32>().unwrap_or(0).clamp(0, 100)
 }
 
+fn signal_dbm_to_percent(value: &str) -> i32 {
+    let dbm = value
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(-100.0);
+    (((dbm + 100.0) / 50.0) * 100.0).round().clamp(0.0, 100.0) as i32
+}
+
 fn unescape_nmcli(value: &str) -> String {
     value.replace("\\:", ":").replace("\\\\", "\\")
+}
+
+fn wireless_interfaces() -> Vec<String> {
+    env::var("OCTOCAM_WIFI_INTERFACE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| vec![value])
+        .unwrap_or_else(|| {
+            fs::read_dir("/sys/class/net")
+                .ok()
+                .into_iter()
+                .flat_map(|entries| entries.flatten())
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .filter(|name| name.starts_with("wlan") || name.starts_with("wl"))
+                .collect()
+        })
 }
 
 fn valid_cached_network(network: &WifiNetwork) -> bool {
@@ -309,5 +521,22 @@ mod tests {
         assert_eq!(normalize_security("WPA2 WPA3 SAE"), "wpa3");
         assert_eq!(normalize_security("--"), "open");
         assert_eq!(normalize_security("WEP"), "wep");
+    }
+
+    #[test]
+    fn parses_iw_scan_blocks() {
+        let networks = parse_iw_scan(
+            "BSS 60:22:32:ee:d5:2a(on wlan0)\n\
+             \tsignal: -57.00 dBm\n\
+             \tSSID: RoostUp-141-1\n\
+             \tRSN:\n\
+             BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\
+             \tsignal: -81.00 dBm\n\
+             \tSSID: Guest\n",
+        );
+        assert_eq!(networks[0].ssid, "RoostUp-141-1");
+        assert_eq!(networks[0].security, "wpa2");
+        assert_eq!(networks[0].signal, 86);
+        assert_eq!(networks[1].security, "open");
     }
 }

@@ -191,6 +191,9 @@ maintenance from a phone, tablet, or desktop browser.
 - Live status fields refresh every 5 seconds from `/api/settings` and
   `/api/status`, including camera state, services, system metrics, Wi-Fi
   details, and recent logs.
+- The Wi-Fi page focuses on the connected network, signal strength, local
+  Wi-Fi IP addresses, and saved profiles. Its add-network dialog supports scan
+  or manual entry, security selection, and open networks without passwords.
 - The System info page shows CPU, memory, and swap meters plus a Wi-Fi signal
   indicator derived from RSSI when available.
 - The System logs page lets the log panel fill the available content area.

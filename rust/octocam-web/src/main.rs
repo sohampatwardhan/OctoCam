@@ -89,6 +89,12 @@ struct WifiTemplate {
     page_title: String,
     settings: Settings,
     system: system::SystemView,
+    stored_profiles: Vec<system::StoredWifiProfile>,
+    wifi_networks: Vec<wifi::WifiNetworkView>,
+    has_wifi_networks: bool,
+    wifi_mac_address: String,
+    wifi_message: String,
+    has_wifi_message: bool,
     saved: bool,
     active_page: &'static str,
 }
@@ -239,6 +245,7 @@ struct HomeKitView {
 #[derive(Deserialize)]
 struct SavedQuery {
     saved: Option<String>,
+    wifi_message: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -274,6 +281,7 @@ async fn main() {
         .route("/stream", get(stream))
         .route("/setup", get(setup).post(complete_setup))
         .route("/wifi/scan", post(scan_wifi))
+        .route("/wifi/connect", post(connect_wifi))
         .route("/settings", post(update_settings))
         .route("/power", post(power_action))
         .route("/login", get(login).post(authenticate))
@@ -402,9 +410,21 @@ async fn wifi_page(
         return Ok(Redirect::to("/setup").into_response());
     }
     let status = system::status();
+    let cache = wifi::load_network_cache(&state.wifi_cache_path);
+    let wifi_networks = wifi::network_views(&cache, status.wifi.ssid.as_deref().unwrap_or(""));
     render(WifiTemplate {
         page_title: "Wi-Fi".to_string(),
         saved: query.saved.as_deref() == Some("1"),
+        stored_profiles: system::stored_wifi_profiles(&status.wifi),
+        has_wifi_networks: !wifi_networks.is_empty(),
+        wifi_networks,
+        wifi_mac_address: status
+            .wifi
+            .mac_address
+            .clone()
+            .unwrap_or_else(|| "Not available".to_string()),
+        wifi_message: query.wifi_message.clone().unwrap_or_default(),
+        has_wifi_message: query.wifi_message.is_some(),
         settings,
         system: system::view(&status),
         active_page: "wifi",
@@ -729,6 +749,47 @@ async fn scan_wifi(State(state): State<Arc<AppState>>) -> Response {
         urlencoding::encode(&message)
     ))
     .into_response()
+}
+
+async fn connect_wifi(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(mut form): Form<HashMap<String, String>>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+
+    let wifi_ssid = form
+        .remove("wifi_ssid")
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| form.remove("wifi_ssid_manual"))
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| form.remove("wifi_ssid_scanned"))
+        .unwrap_or_default();
+    let wifi_password = form.remove("wifi_password").unwrap_or_default();
+    if wifi_ssid.trim().is_empty() {
+        return Ok(
+            Redirect::to("/wifi?wifi_message=Enter%20a%20Wi-Fi%20network%20name.").into_response(),
+        );
+    }
+
+    let cache = wifi::load_network_cache(&state.wifi_cache_path);
+    let wifi_security = form
+        .remove("wifi_security")
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| wifi::cached_security_for(&cache, &wifi_ssid));
+    let (connected, message) = wifi::connect_to_network(&wifi_ssid, &wifi_password, &wifi_security);
+    if connected {
+        Ok(Redirect::to("/wifi?wifi_message=Network%20saved.").into_response())
+    } else {
+        Ok(Redirect::to(&format!(
+            "/wifi?wifi_message={}",
+            urlencoding::encode(&message)
+        ))
+        .into_response())
+    }
 }
 
 async fn update_settings(

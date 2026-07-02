@@ -20,6 +20,9 @@
   or shutting the device down.
 - Added system metric meters for CPU, memory, and swap, plus a Wi-Fi signal
   indicator based on RSSI when available.
+- Streamlined the Wi-Fi page around the connected network and saved profiles,
+  with an add-network dialog for scanned or manual networks and explicit
+  security selection.
 
 ### Removed
 
