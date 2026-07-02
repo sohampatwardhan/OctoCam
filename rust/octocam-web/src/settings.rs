@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{env, fs, io, path::PathBuf};
 
+/// Pi hardware H.264 encoder limits. 1640x1232 is a valid IMX219 sensor mode but
+/// exceeds 1080 encode lines; mediamtx then fails every frame with
+/// `encoder_hardware_h264_encode(): ioctl(VIDIOC_QBUF) failed` and readers get 400.
+pub const MAX_ENCODER_WIDTH: i32 = 1920;
+pub const MAX_ENCODER_HEIGHT: i32 = 1080;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub setup_complete: bool,
@@ -77,22 +83,10 @@ pub const RESOLUTION_PRESETS: &[ResolutionPreset] = &[
         height: 972,
     },
     ResolutionPreset {
-        value: "1640x1232",
-        label: "1640 x 1232 (4:3)",
-        width: 1640,
-        height: 1232,
-    },
-    ResolutionPreset {
-        value: "1920x1440",
-        label: "1920 x 1440 (4:3)",
-        width: 1920,
-        height: 1440,
-    },
-    ResolutionPreset {
-        value: "3280x2464",
-        label: "3280 x 2464 (4:3 full sensor)",
-        width: 3280,
-        height: 2464,
+        value: "1536x864",
+        label: "1536 x 864 (16:9)",
+        width: 1536,
+        height: 864,
     },
     ResolutionPreset {
         value: "1280x720",
@@ -340,7 +334,24 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         1,
         100,
     );
+    clamp_to_encoder_limits(&mut settings);
     settings
+}
+
+/// Snap any resolution the hardware encoder cannot handle to the largest safe 4:3 mode.
+fn clamp_to_encoder_limits(settings: &mut Settings) {
+    if settings.resolution_width > MAX_ENCODER_WIDTH
+        || settings.resolution_height > MAX_ENCODER_HEIGHT
+    {
+        settings.resolution_width = 1296;
+        settings.resolution_height = 972;
+    }
+    if settings.sub_resolution_width > MAX_ENCODER_WIDTH
+        || settings.sub_resolution_height > MAX_ENCODER_HEIGHT
+    {
+        settings.sub_resolution_width = 640;
+        settings.sub_resolution_height = 480;
+    }
 }
 
 pub fn preset_views(presets: &[ResolutionPreset], current: &str) -> Vec<PresetView> {
@@ -478,5 +489,34 @@ mod tests {
         let settings = validate_map(&map);
         assert_eq!(settings.rtsp_path, "main");
         assert_eq!(settings.sub_rtsp_path, "sub");
+    }
+
+    #[test]
+    fn clamps_resolution_to_encoder_limit() {
+        let mut map = Map::new();
+        map.insert("resolution_width".into(), Value::from(1640));
+        map.insert("resolution_height".into(), Value::from(1232));
+        let settings = validate_map(&map);
+        assert_eq!(settings.resolution_width, 1296);
+        assert_eq!(settings.resolution_height, 972);
+    }
+
+    #[test]
+    fn keeps_legal_resolution_unchanged() {
+        let mut map = Map::new();
+        map.insert("resolution_width".into(), Value::from(1536));
+        map.insert("resolution_height".into(), Value::from(864));
+        let settings = validate_map(&map);
+        assert_eq!(settings.resolution_width, 1536);
+        assert_eq!(settings.resolution_height, 864);
+    }
+
+    #[test]
+    fn presets_exclude_oversize_modes() {
+        assert!(RESOLUTION_PRESETS
+            .iter()
+            .all(|p| p.width <= MAX_ENCODER_WIDTH && p.height <= MAX_ENCODER_HEIGHT));
+        assert!(RESOLUTION_PRESETS.iter().any(|p| p.value == "1536x864"));
+        assert!(!RESOLUTION_PRESETS.iter().any(|p| p.value == "1640x1232"));
     }
 }
