@@ -1,4 +1,4 @@
-const OCTOCAM_CACHE = "octocam-ui-v20260629";
+const OCTOCAM_CACHE = "octocam-ui-v20260702-system-meters";
 const STATIC_ASSETS = [
   "/static/styles.css",
   "/static/app.js",

@@ -92,14 +92,20 @@ pub struct SystemView {
     pub camera_available: bool,
     pub camera_label: String,
     pub wifi_label: String,
+    pub wifi_signal_percent: f64,
+    pub wifi_signal_level: String,
+    pub wifi_signal_label: String,
     pub ip_addresses: String,
     pub uptime: String,
     pub cpu_temp: String,
     pub cpu_usage: String,
+    pub cpu_usage_percent: f64,
     pub load_average: String,
     pub memory: String,
+    pub memory_percent: f64,
     pub has_swap: bool,
     pub swap: String,
+    pub swap_percent: f64,
     pub web_state: String,
     pub rtsp_state: String,
     pub homekit_state: String,
@@ -153,6 +159,14 @@ pub fn view(status: &SystemStatus) -> SystemView {
             .map(|value| format!(" ({value:.1}%)"))
             .unwrap_or_default()
     );
+    let wifi_signal_percent = wifi_signal_percent(&status.wifi);
+    let wifi_signal_level = wifi_signal_level(wifi_signal_percent).to_string();
+    let wifi_signal_label = status
+        .wifi
+        .signal_dbm
+        .as_ref()
+        .map(|value| format!("Signal {value} ({wifi_signal_percent:.0}%)"))
+        .unwrap_or_else(|| "Signal unavailable".to_string());
 
     SystemView {
         camera_available: status.camera.available,
@@ -167,6 +181,9 @@ pub fn view(status: &SystemStatus) -> SystemView {
             .ssid
             .clone()
             .unwrap_or_else(|| status.wifi.message.clone()),
+        wifi_signal_percent,
+        wifi_signal_level,
+        wifi_signal_label,
         ip_addresses,
         uptime: status
             .uptime
@@ -181,14 +198,23 @@ pub fn view(status: &SystemStatus) -> SystemView {
             .cpu_usage_percent
             .map(|value| format!("{value:.1}%"))
             .unwrap_or_else(|| "Not available".to_string()),
+        cpu_usage_percent: clamp_percent(status.resources.cpu_usage_percent.unwrap_or_default()),
         load_average: status
             .resources
             .load_average
             .clone()
             .unwrap_or_else(|| "Not available".to_string()),
         memory,
+        memory_percent: clamp_percent(status.resources.memory.used_percent.unwrap_or_default()),
         has_swap: status.resources.memory.swap_total_mb > 0,
         swap,
+        swap_percent: clamp_percent(
+            status
+                .resources
+                .memory
+                .swap_used_percent
+                .unwrap_or_default(),
+        ),
         web_state: status.services.octocam_web.state.clone(),
         rtsp_state: status.services.rtsp.state.clone(),
         homekit_state: status.services.homekit.state.clone(),
@@ -196,6 +222,36 @@ pub fn view(status: &SystemStatus) -> SystemView {
         logs: status.logs.clone(),
         ssh_target,
     }
+}
+
+fn clamp_percent(value: f64) -> f64 {
+    value.clamp(0.0, 100.0)
+}
+
+fn wifi_signal_percent(wifi: &WifiStatus) -> f64 {
+    let Some(dbm) = wifi_signal_dbm(wifi) else {
+        return 0.0;
+    };
+    clamp_percent(((dbm + 100.0) / 50.0) * 100.0)
+}
+
+fn wifi_signal_level(percent: f64) -> &'static str {
+    if percent >= 67.0 {
+        "high"
+    } else if percent >= 34.0 {
+        "low"
+    } else {
+        "zero"
+    }
+}
+
+fn wifi_signal_dbm(wifi: &WifiStatus) -> Option<f64> {
+    wifi.signal_dbm
+        .as_deref()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 pub fn set_service_enabled(unit: &str, enabled: bool) -> Result<(), String> {

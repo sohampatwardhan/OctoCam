@@ -46,10 +46,6 @@ pub fn verify_password(password: &str, encoded: &str) -> bool {
     constant_time_eq(&actual, &expected)
 }
 
-pub fn valid_password(password: &str) -> bool {
-    password.chars().count() >= 12
-}
-
 pub fn sign_session(secret: &str) -> String {
     let signature = signature(secret, SESSION_VALUE);
     format!("{SESSION_VALUE}.{signature}")
@@ -87,7 +83,7 @@ mod tests {
     }
 
     #[test]
-    fn verifies_python_compatible_hash() {
+    fn verifies_existing_pbkdf2_hash() {
         let encoded = "pbkdf2_sha256$1$c2FsdDEyMzQ=$Ze1gBkrzGB_4uQatUMmRG9aOh4jpbYJspXhCDyhe24A=";
         assert!(verify_password("octocam-password", encoded));
     }

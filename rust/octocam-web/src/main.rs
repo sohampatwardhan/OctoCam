@@ -4,6 +4,7 @@ mod security;
 mod settings;
 mod system;
 mod wifi;
+mod wifi_setup;
 
 use askama::Template;
 use axum::{
@@ -15,7 +16,15 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    net::SocketAddr,
+    path::PathBuf,
+    process::{self, Command},
+    sync::Arc,
+};
+use tokio::time::{sleep, Duration};
 use tower_http::trace::TraceLayer;
 
 use settings::{preset_views, Settings, RESOLUTION_PRESETS, SUB_RESOLUTION_PRESETS};
@@ -232,11 +241,22 @@ struct SavedQuery {
     saved: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct PowerForm {
+    action: String,
+    #[serde(rename = "_return_to")]
+    return_to: Option<String>,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+
+    if run_cli_command() {
+        return;
+    }
 
     let state = Arc::new(AppState::from_env());
     let app = Router::new()
@@ -255,6 +275,7 @@ async fn main() {
         .route("/setup", get(setup).post(complete_setup))
         .route("/wifi/scan", post(scan_wifi))
         .route("/settings", post(update_settings))
+        .route("/power", post(power_action))
         .route("/login", get(login).post(authenticate))
         .route("/logout", post(logout))
         .route("/api/settings", get(api_settings))
@@ -281,6 +302,44 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .expect("serve OctoCam web app");
+}
+
+fn run_cli_command() -> bool {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.is_empty() {
+        return false;
+    }
+
+    match args[0].as_str() {
+        "--scan-wifi-cache" => {
+            let path = args
+                .get(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(wifi::default_cache_path);
+            match wifi::scan_and_cache_networks(&path) {
+                Ok(_) => true,
+                Err(error) => {
+                    eprintln!("Wi-Fi scan failed: {error}");
+                    process::exit(1);
+                }
+            }
+        }
+        "--wifi-setup" => match wifi_setup::run() {
+            Ok(_) => true,
+            Err(error) => {
+                eprintln!("Wi-Fi setup failed: {error}");
+                process::exit(1);
+            }
+        },
+        "--help" | "-h" => {
+            println!("Usage: octocam-web [--scan-wifi-cache [path] | --wifi-setup]");
+            true
+        }
+        unknown => {
+            eprintln!("Unknown option: {unknown}");
+            process::exit(2);
+        }
+    }
 }
 
 impl AppState {
@@ -621,12 +680,6 @@ async fn complete_setup(
     let cache = wifi::load_network_cache(&state.wifi_cache_path);
     let wifi_security = wifi::cached_security_for(&cache, &wifi_ssid);
 
-    if !security::valid_password(&admin_password) {
-        return Ok(Redirect::to(
-            "/setup?security_message=Admin%20password%20must%20be%20at%20least%2012%20characters.",
-        )
-        .into_response());
-    }
     if admin_password != admin_password_confirm {
         return Ok(
             Redirect::to("/setup?security_message=Admin%20passwords%20do%20not%20match.")
@@ -718,7 +771,7 @@ async fn update_settings(
     if admin_password.is_empty() && admin_password_confirm.is_empty() {
         validated.admin_password_hash = current.admin_password_hash.clone();
     } else {
-        if !security::valid_password(&admin_password) || admin_password != admin_password_confirm {
+        if admin_password != admin_password_confirm {
             return Ok(Redirect::to(&format!("{return_to}?saved=0")).into_response());
         }
         validated.admin_password_hash = security::hash_password(&admin_password);
@@ -730,6 +783,57 @@ async fn update_settings(
     let _ = mediamtx::configure_rtsp_service(&current, &state.mediamtx_config_path);
     configure_homekit_service(&current);
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
+}
+
+async fn power_action(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<PowerForm>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+
+    let return_to = clean_return_path(&form.return_to.unwrap_or_else(|| "/identity".to_string()));
+    schedule_power_action(&form.action)?;
+    Ok(Redirect::to(&return_to).into_response())
+}
+
+fn schedule_power_action(action: &str) -> Result<(), AppError> {
+    let args: &[&str] = match action {
+        "restart_service" => &["restart", "octocam-web.service"],
+        "restart_device" => &["reboot"],
+        "shutdown_device" => &["poweroff"],
+        _ => {
+            return Err(AppError("Unknown power action.".to_string()));
+        }
+    };
+    schedule_systemctl(args)
+}
+
+fn schedule_systemctl(args: &[&str]) -> Result<(), AppError> {
+    if !system::command_exists("systemctl") {
+        return Err(AppError("systemctl not found.".to_string()));
+    }
+
+    let (command, command_args) = if system::command_exists("sudo") {
+        let mut command_args = vec!["-n".to_string(), "systemctl".to_string()];
+        command_args.extend(args.iter().map(|arg| (*arg).to_string()));
+        ("sudo".to_string(), command_args)
+    } else {
+        (
+            "systemctl".to_string(),
+            args.iter().map(|arg| (*arg).to_string()).collect(),
+        )
+    };
+
+    tokio::spawn(async move {
+        sleep(Duration::from_millis(900)).await;
+        let _ = Command::new(command).args(command_args).status();
+    });
+
+    Ok(())
 }
 
 async fn login(Query(query): Query<LoginQuery>) -> AppResult {

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} HomeKit</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260629-homekit">
-    <script src="/static/app.js?v=20260629-cache" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260702-system-meters">
+    <script src="/static/app.js?v=20260702-system-meters" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -22,7 +22,7 @@
               <div class="section-heading"><h2>HomeKit</h2></div>
               <div class="toggle-row"><span>Bridge enabled</span><label class="switch"><input type="checkbox" name="homekit_enabled" {% if settings.homekit_enabled %}checked{% endif %}><span></span></label></div>
               <dl class="status-list compact-list">
-                <div><dt>Service</dt><dd>{{ system.homekit_state }}</dd></div>
+                <div><dt>Service</dt><dd data-live-status="homekit_state">{{ system.homekit_state }}</dd></div>
                 <div><dt>Pairing</dt><dd>{% if homekit.paired %}paired{% else %}not paired{% endif %}</dd></div>
                 <div><dt>Accessory</dt><dd>{{ homekit.status }}</dd></div>
                 <div><dt>Stream source</dt><dd>{{ homekit.stream_source }}</dd></div>

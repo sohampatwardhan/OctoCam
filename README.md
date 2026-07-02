@@ -38,8 +38,8 @@ Development preferences:
 
 - Prefer C, C++, or Rust for long-running camera, streaming, pairing, and device
   control daemons.
-- Use Rust for the long-running web control plane; keep Python only as a
-  development/reference implementation while the Rust service reaches parity.
+- Use Rust for the long-running web control plane and device orchestration
+  helpers.
 - Avoid heavy SPAs, Node build chains, large dependency trees, and background
   polling loops.
 - Bound memory, log size, subprocess use, network retries, and write frequency.
@@ -53,7 +53,7 @@ Passwords must never be stored in plaintext by OctoCam.
 
 - OctoCam admin passwords are stored only as salted PBKDF2-HMAC-SHA256 hashes.
 - Password hashes are not returned by the settings API.
-- The Flask session signing key is generated at install time and stored at
+- The web session signing key is generated at install time and stored at
   `/var/lib/octocam/secret-key`.
 - Wi-Fi passwords are not stored in OctoCam settings or scan caches.
 - Wi-Fi credentials are submitted directly to NetworkManager because the device
@@ -73,7 +73,7 @@ OctoCam, RTSP, and optional HomeKit accessory support, and avoid background desk
 developer conveniences.
 
 Raspberry Pi OS Legacy Lite is the reference baseline because it is the most
-boring path for Raspberry Pi camera, libcamera/Picamera2, and first-party Pi
+boring path for Raspberry Pi camera, libcamera/rpicam, and first-party Pi
 support.
 
 DietPi is the leading low-overhead candidate because it is Debian with reduced
@@ -89,7 +89,7 @@ DietPi acceptance criteria:
 
 - Use the ARMv8 Raspberry Pi Zero 2 W image, preferably Debian 12 `bookworm`
   while Bookworm remains the OctoCam baseline.
-- Verify Raspberry Pi camera support, Picamera2/libcamera packages, and the
+- Verify Raspberry Pi camera support, rpicam/libcamera packages, and the
   chosen RTSP service.
 - Verify NetworkManager, `nmcli`, setup AP mode, and captive portal behavior.
 - Verify HomeKit accessory runtime memory on a 512MB board.
@@ -137,6 +137,8 @@ Tradeoffs:
 ## Wi-Fi Setup Flow
 
 OctoCam uses NetworkManager for Wi-Fi setup on Raspberry Pi OS Lite.
+The boot-time setup service runs the Rust helper command
+`octocam-web --wifi-setup`.
 
 Expected first-boot behavior:
 
@@ -166,7 +168,8 @@ intercept layer after we test on iOS, macOS, Android, and Windows.
 - A Rust-based settings UI on port `8080`
 - A first-run setup flow at `/setup`
 - A systemd service named `octocam-web`
-- A first-boot Wi-Fi setup service named `octocam-wifi-setup`
+- A first-boot Wi-Fi setup service named `octocam-wifi-setup`, backed by
+  `octocam-web --wifi-setup`
 - Persistent settings at `/var/lib/octocam/settings.json`
 - Cached Wi-Fi scan results at `/var/lib/octocam/wifi-networks.json`
 - Raspberry Pi camera CLI packages for the current libcamera/rpicam stack
@@ -174,6 +177,26 @@ intercept layer after we test on iOS, macOS, Android, and Windows.
 
 The web UI is intentionally local-network oriented. Put the device behind a
 trusted network or add authentication before exposing it outside your LAN.
+
+## Control Panel
+
+The Rust control panel is server-rendered and designed for repeated appliance
+maintenance from a phone, tablet, or desktop browser.
+
+- The top bar keeps the OctoCam brand, mobile menu button, power options, and
+  logout action visible without a large hero pane.
+- Sidebar sections are ordered by use: View, Basic Settings, and Advanced
+  Settings. Each navigation item uses an inline Lucide icon.
+- On mobile viewports, the sidebar collapses behind the top-bar menu button.
+- Live status fields refresh every 5 seconds from `/api/settings` and
+  `/api/status`, including camera state, services, system metrics, Wi-Fi
+  details, and recent logs.
+- The System info page shows CPU, memory, and swap meters plus a Wi-Fi signal
+  indicator derived from RSSI when available.
+- The System logs page lets the log panel fill the available content area.
+- The power button opens a modal dialog with options to restart the OctoCam
+  service, restart the Raspberry Pi, or shut down the Raspberry Pi. A shutdown
+  requires unplugging and re-plugging power to turn the device back on.
 
 ## Quick Start On The Pi
 
@@ -214,6 +237,35 @@ Then open:
 http://127.0.0.1:8080
 ```
 
+## Build And Deploy From A Mac
+
+On Apple Silicon Macs, Docker can build the Raspberry Pi Linux ARM64 web binary
+much faster than compiling on the Pi itself.
+
+Start Docker Desktop, then run:
+
+```bash
+scripts/build-pi-web.sh
+scripts/deploy-pi-web.sh dietpi@192.168.2.211
+```
+
+The build artifact is written to `dist/pi/octocam-web`. The deploy script copies
+that binary to `/usr/local/bin/octocam-web`, syncs `static/`, installs the
+systemd unit files, enables `octocam-wifi-setup`, and restarts `octocam-web`.
+It renders the systemd service for `/root/OctoCam` and user `root` by default;
+override those with `OCTOCAM_REMOTE_DIR` and `OCTOCAM_SERVICE_USER`.
+
+To redeploy an already-built binary:
+
+```bash
+scripts/deploy-pi-web.sh --skip-build dietpi@192.168.2.211
+```
+
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md) for the current migration notes and user-facing
+changes.
+
 ## Web UI Design System
 
 The web UI uses server-rendered Rust templates, a local Pico-inspired CSS
@@ -232,21 +284,6 @@ Design rules:
   and tooltips.
 - Avoid full Material/React/Vue-style application frameworks unless a future
   feature clearly needs that cost.
-
-The older Flask reference app is still present during the transition:
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python -m octocam.app
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8080
-```
 
 ## Next Hardware-Facing Steps
 

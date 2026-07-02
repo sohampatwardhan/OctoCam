@@ -1,19 +1,97 @@
-<aside class="side-nav" aria-label="OctoCam sections">
+<aside class="side-nav" id="octocam-section-nav" aria-label="OctoCam sections" data-side-nav>
   <nav>
-    <p>Basic</p>
-    <a class="nav-link {% if active_page == "identity" %}is-active{% endif %}" href="/identity">Identity</a>
-    <a class="nav-link {% if active_page == "wifi" %}is-active{% endif %}" href="/wifi">Wi-Fi</a>
-    <a class="nav-link {% if active_page == "stream_settings" %}is-active{% endif %}" href="/stream-settings">Stream</a>
-    <a class="nav-link {% if active_page == "rtsp" %}is-active{% endif %}" href="/rtsp">RTSP</a>
-    <a class="nav-link {% if active_page == "homekit" %}is-active{% endif %}" href="/homekit">HomeKit</a>
-
     <p>View</p>
-    <a class="nav-link {% if active_page == "stream" %}is-active{% endif %}" href="/stream">Live stream</a>
+    <a class="nav-link {% if active_page == "stream" %}is-active{% endif %}" href="/stream">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"></path>
+        <rect x="2" y="6" width="14" height="12" rx="2"></rect>
+      </svg>
+      <span>Live stream</span>
+    </a>
 
-    <p>Advanced</p>
-    <a class="nav-link {% if active_page == "system" %}is-active{% endif %}" href="/system">System info</a>
-    <a class="nav-link {% if active_page == "logs" %}is-active{% endif %}" href="/logs">System logs</a>
-    <a class="nav-link {% if active_page == "terminal" %}is-active{% endif %}" href="/terminal">Terminal</a>
-    <a class="nav-link {% if active_page == "admin" %}is-active{% endif %}" href="/admin">Admin</a>
+    <p>Basic Settings</p>
+    <a class="nav-link {% if active_page == "identity" %}is-active{% endif %}" href="/identity">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="M12 16v-4"></path>
+        <path d="M12 8h.01"></path>
+      </svg>
+      <span>Identity</span>
+    </a>
+    <a class="nav-link {% if active_page == "wifi" %}is-active{% endif %}" href="/wifi">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20h.01"></path>
+        <path d="M2 8.82a15 15 0 0 1 20 0"></path>
+        <path d="M5 12.859a10 10 0 0 1 14 0"></path>
+        <path d="M8.5 16.429a5 5 0 0 1 7 0"></path>
+      </svg>
+      <span>Wi-Fi</span>
+    </a>
+    <a class="nav-link {% if active_page == "stream_settings" %}is-active{% endif %}" href="/stream-settings">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 12V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2"></path>
+        <path d="M14 2v5a1 1 0 0 0 1 1h5"></path>
+        <path d="m10 17.843 3.033-1.755a.64.64 0 0 1 .967.56v4.704a.65.65 0 0 1-.967.56L10 20.157"></path>
+        <rect width="7" height="6" x="3" y="16" rx="1"></rect>
+      </svg>
+      <span>Stream</span>
+    </a>
+    <a class="nav-link {% if active_page == "rtsp" %}is-active{% endif %}" href="/rtsp">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"></path>
+        <path d="M2 12a9 9 0 0 1 8 8"></path>
+        <path d="M2 16a5 5 0 0 1 4 4"></path>
+        <line x1="2" x2="2.01" y1="20" y2="20"></line>
+      </svg>
+      <span>RTSP</span>
+    </a>
+    <a class="nav-link {% if active_page == "homekit" %}is-active{% endif %}" href="/homekit">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.5 13.866a4 4 0 0 1 5 .01"></path>
+        <path d="M12 17h.01"></path>
+        <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+        <path d="M7 10.754a8 8 0 0 1 10 0"></path>
+      </svg>
+      <span>HomeKit</span>
+    </a>
+
+    <p>Advanced Settings</p>
+    <a class="nav-link {% if active_page == "system" %}is-active{% endif %}" href="/system">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 17v4"></path>
+        <path d="m14.305 7.53.923-.382"></path>
+        <path d="m15.228 4.852-.923-.383"></path>
+        <path d="m16.852 3.228-.383-.924"></path>
+        <path d="m16.852 8.772-.383.923"></path>
+        <path d="m19.148 3.228.383-.924"></path>
+        <path d="m19.53 9.696-.382-.924"></path>
+        <path d="m20.772 4.852.924-.383"></path>
+        <path d="m20.772 7.148.924.383"></path>
+        <path d="M22 13v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"></path>
+        <path d="M8 21h8"></path>
+        <circle cx="18" cy="6" r="3"></circle>
+      </svg>
+      <span>System info</span>
+    </a>
+    <a class="nav-link {% if active_page == "logs" %}is-active{% endif %}" href="/logs">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"></path>
+      </svg>
+      <span>System logs</span>
+    </a>
+    <a class="nav-link {% if active_page == "terminal" %}is-active{% endif %}" href="/terminal">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m7 11 2-2-2-2"></path>
+        <path d="M11 13h4"></path>
+        <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+      </svg>
+      <span>Terminal</span>
+    </a>
+    <a class="nav-link {% if active_page == "admin" %}is-active{% endif %}" href="/admin">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>
+      </svg>
+      <span>Admin</span>
+    </a>
   </nav>
 </aside>

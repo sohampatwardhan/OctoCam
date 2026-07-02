@@ -1,0 +1,27 @@
+# Changelog
+
+## Unreleased - 2026-07-02
+
+### Changed
+
+- Migrated the local web control panel from the legacy Python/Flask app to the
+  Rust `octocam-web` service.
+- Replaced the boot-time Wi-Fi setup shell/Python flow with
+  `octocam-web --wifi-setup`, keeping NetworkManager as the source of truth for
+  saved credentials.
+- Added Docker-based Mac-to-Raspberry Pi builds with `scripts/build-pi-web.sh`
+  and deployment with `scripts/deploy-pi-web.sh`.
+- Updated the control panel layout with a compact top bar, collapsible mobile
+  navigation, Lucide icons, View-first navigation order, and denser content
+  panes.
+- Added dynamic status refresh for settings, system status, Wi-Fi details, and
+  logs through `/api/settings` and `/api/status`.
+- Added a power dialog for restarting the OctoCam service, rebooting the device,
+  or shutting the device down.
+- Added system metric meters for CPU, memory, and swap, plus a Wi-Fi signal
+  indicator based on RSSI when available.
+
+### Removed
+
+- Removed the legacy Python package, Flask templates, `requirements.txt`, and
+  old Wi-Fi setup shell script now covered by the Rust service.

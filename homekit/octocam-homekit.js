@@ -25,6 +25,8 @@ const HAP_PORT = Number.parseInt(process.env.OCTOCAM_HOMEKIT_PORT || "51827", 10
 const DEBUG_FFMPEG = process.env.OCTOCAM_HOMEKIT_FFMPEG_DEBUG === "1";
 const MAX_HOMEKIT_WIDTH = Number.parseInt(process.env.OCTOCAM_HOMEKIT_MAX_WIDTH || "640", 10);
 const MAX_HOMEKIT_HEIGHT = Number.parseInt(process.env.OCTOCAM_HOMEKIT_MAX_HEIGHT || "480", 10);
+const SENSOR_ASPECT_WIDTH = 4;
+const SENSOR_ASPECT_HEIGHT = 3;
 
 const FFMPEG_H264_PROFILES = ["baseline", "main", "high"];
 const FFMPEG_H264_LEVELS = ["3.1", "3.2", "4.0"];
@@ -99,13 +101,15 @@ function sourceStream(settings) {
   return settings.sub_stream_enabled ? "sub" : "main";
 }
 
-function clampDimensions(width, height) {
+function homekitDimensions(width, height) {
   const safeWidth = Math.max(160, Number.parseInt(width || MAX_HOMEKIT_WIDTH, 10));
   const safeHeight = Math.max(120, Number.parseInt(height || MAX_HOMEKIT_HEIGHT, 10));
-  const scale = Math.min(1, MAX_HOMEKIT_WIDTH / safeWidth, MAX_HOMEKIT_HEIGHT / safeHeight);
+  const widthLimit = Math.min(safeWidth, MAX_HOMEKIT_WIDTH);
+  const heightLimit = Math.min(safeHeight, MAX_HOMEKIT_HEIGHT);
+  const unit = Math.max(40, Math.floor(Math.min(widthLimit / SENSOR_ASPECT_WIDTH, heightLimit / SENSOR_ASPECT_HEIGHT)));
   return {
-    width: Math.max(160, Math.floor(safeWidth * scale / 2) * 2),
-    height: Math.max(120, Math.floor(safeHeight * scale / 2) * 2),
+    width: Math.floor(unit * SENSOR_ASPECT_WIDTH / 2) * 2,
+    height: Math.floor(unit * SENSOR_ASPECT_HEIGHT / 2) * 2,
   };
 }
 
@@ -113,14 +117,12 @@ function supportedResolutions(settings) {
   const subWidth = settings.sub_resolution_width || 640;
   const subHeight = settings.sub_resolution_height || 480;
   const subFps = settings.sub_framerate || 10;
-  const primary = clampDimensions(subWidth, subHeight);
+  const primary = homekitDimensions(subWidth, subHeight);
   const candidates = [
     [primary.width, primary.height, subFps],
     [640, 480, 15],
-    [640, 360, 15],
     [480, 360, 15],
     [320, 240, 15],
-    [320, 180, 15],
   ];
   const seen = new Set();
   return candidates.filter(([width, height, fps]) => {
@@ -192,8 +194,8 @@ class OctoCamStreamingDelegate {
   handleSnapshotRequest(request, callback) {
     const settings = loadSettings();
     const stream = sourceStream(settings);
-    const dimensions = clampDimensions(request.width, request.height);
-    console.log(`HomeKit snapshot request: ${request.width}x${request.height} using ${stream}`);
+    const dimensions = homekitDimensions(request.width, request.height);
+    console.log(`HomeKit snapshot request: requested=${request.width}x${request.height} actual=${dimensions.width}x${dimensions.height} using ${stream}`);
     const args = [
       "-hide_banner",
       "-loglevel", "error",
@@ -273,7 +275,7 @@ class OctoCamStreamingDelegate {
     const settings = loadSettings();
     const stream = sourceStream(settings);
     const video = request.video;
-    const dimensions = clampDimensions(video.width, video.height);
+    const dimensions = homekitDimensions(video.width, video.height);
     const mtu = video.mtu || 1316;
     const profile = FFMPEG_H264_PROFILES[video.profile] || "baseline";
     const level = FFMPEG_H264_LEVELS[video.level] || "3.1";
@@ -292,7 +294,7 @@ class OctoCamStreamingDelegate {
       "-an",
       "-sn",
       "-dn",
-      "-vf", `scale=${dimensions.width}:${dimensions.height}:force_original_aspect_ratio=decrease,pad=${dimensions.width}:${dimensions.height}:(ow-iw)/2:(oh-ih)/2`,
+      "-vf", `scale=${dimensions.width}:${dimensions.height}`,
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",

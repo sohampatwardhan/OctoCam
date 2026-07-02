@@ -1,11 +1,124 @@
 <header class="topbar">
-  <div>
-    <p class="eyebrow">OctoCam</p>
-    <h1>{{ page_title }}</h1>
-    <p class="subhead">{{ settings.room }} &middot; {{ settings.device_name }}</p>
-  </div>
+  <button
+    class="icon-action menu-action"
+    type="button"
+    aria-label="Open menu"
+    aria-controls="octocam-section-nav"
+    aria-expanded="false"
+    data-menu-button
+  >
+    <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 12h16"></path>
+      <path d="M4 18h16"></path>
+      <path d="M4 6h16"></path>
+    </svg>
+  </button>
+  <a class="brand-mark" href="/identity" aria-label="OctoCam identity">OctoCam</a>
+  <span class="visually-hidden">{{ page_title }}</span>
   <div class="top-actions">
-    <div class="status-pill {% if system.camera_available %}is-on{% else %}is-off{% endif %}">{{ system.camera_label }}</div>
-    <form method="post" action="/logout"><button class="secondary compact" type="submit">Log out</button></form>
+    <a
+      class="icon-action power-action {% if settings.camera_enabled %}is-on{% else %}is-off{% endif %} {% if system.camera_available %}is-available{% else %}is-unavailable{% endif %}"
+      href="#power-options"
+      role="button"
+      aria-label="Open OctoCam power options"
+      aria-haspopup="dialog"
+      title="Open OctoCam power options"
+      data-power-button
+      data-power-dialog-open
+    >
+      <span class="visually-hidden" data-live-status="camera_label">{{ system.camera_label }}</span>
+      <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2v10"></path>
+        <path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path>
+      </svg>
+    </a>
+    <form method="post" action="/logout">
+      <button class="icon-action close-action" type="submit" aria-label="Log out" title="Log out">
+        <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m16 17 5-5-5-5"></path>
+          <path d="M21 12H9"></path>
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+        </svg>
+      </button>
+    </form>
   </div>
 </header>
+
+<div id="power-options" class="power-dialog" role="dialog" aria-modal="true" aria-labelledby="power-dialog-title" data-power-dialog>
+  <div class="power-dialog-inner">
+    <div class="power-dialog-head">
+      <div>
+        <p>Power</p>
+        <h2 id="power-dialog-title">OctoCam power options</h2>
+      </div>
+      <a class="icon-action" href="#" role="button" aria-label="Close power options" title="Close" data-power-dialog-close>
+        <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6 6 18"></path>
+          <path d="m6 6 12 12"></path>
+        </svg>
+      </a>
+    </div>
+
+    <div class="power-actions-list">
+      <form method="post" action="/power" data-power-option-form>
+        <input type="hidden" name="action" value="restart_service">
+        <input type="hidden" name="_return_to" value="/identity" data-return-to>
+        <button class="power-option" type="submit">
+          <svg class="power-option-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m10.852 14.772-.383.923"></path>
+            <path d="M13.148 14.772a3 3 0 1 0-2.296-5.544l-.383-.923"></path>
+            <path d="m13.148 9.228.383-.923"></path>
+            <path d="m13.53 15.696-.382-.924a3 3 0 1 1-2.296-5.544"></path>
+            <path d="m14.772 10.852.923-.383"></path>
+            <path d="m14.772 13.148.923.383"></path>
+            <path d="M4.5 10H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-.5"></path>
+            <path d="M4.5 14H4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2h-.5"></path>
+            <path d="M6 18h.01"></path>
+            <path d="M6 6h.01"></path>
+            <path d="m9.228 10.852-.923-.383"></path>
+            <path d="m9.228 13.148-.923.383"></path>
+          </svg>
+          <span>
+            <strong>Restart OctoCam service</strong>
+            <small>Restarts the OctoCam web server and service process.</small>
+          </span>
+        </button>
+      </form>
+
+      <form method="post" action="/power" data-power-option-form>
+        <input type="hidden" name="action" value="restart_device">
+        <input type="hidden" name="_return_to" value="/identity" data-return-to>
+        <button class="power-option" type="submit">
+          <svg class="power-option-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path>
+            <path d="M21 3v5h-5"></path>
+          </svg>
+          <span>
+            <strong>Restart device</strong>
+            <small>Reboots the Raspberry Pi.</small>
+          </span>
+        </button>
+      </form>
+
+      <form method="post" action="/power" data-power-option-form>
+        <input type="hidden" name="action" value="shutdown_device">
+        <input type="hidden" name="_return_to" value="/identity" data-return-to>
+        <button class="power-option power-option-danger" type="submit">
+          <svg class="power-option-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18.36 6.64A9 9 0 0 1 20.77 15"></path>
+            <path d="M6.16 6.16a9 9 0 1 0 12.68 12.68"></path>
+            <path d="M12 2v4"></path>
+            <path d="m2 2 20 20"></path>
+          </svg>
+          <span>
+            <strong>Shut down device</strong>
+            <small>Requires unplugging and re-plugging power to turn it back on.</small>
+          </span>
+        </button>
+      </form>
+    </div>
+
+    <a class="secondary power-cancel" href="#" role="button" data-power-dialog-close>Cancel</a>
+  </div>
+</div>
+<a class="power-dialog-backdrop" href="#" aria-label="Close power options" data-power-dialog-backdrop></a>

@@ -7,9 +7,8 @@ Before=octocam-web.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-Environment=OCTOCAM_PROJECT_DIR=__PROJECT_DIR__
 Environment=OCTOCAM_WIFI_CACHE_PATH=/var/lib/octocam/wifi-networks.json
-ExecStart=__PROJECT_DIR__/scripts/octocam-wifi-setup.sh
+ExecStart=/usr/local/bin/octocam-web --wifi-setup
 
 [Install]
 WantedBy=multi-user.target
