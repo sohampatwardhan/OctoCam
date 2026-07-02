@@ -85,8 +85,8 @@ pub fn scan_networks() -> Result<Vec<WifiNetwork>, String> {
 }
 
 fn scan_networks_with_nmcli() -> Result<Vec<WifiNetwork>, String> {
-    let output = Command::new("nmcli")
-        .args([
+    let output = crate::proc::run(
+        Command::new("nmcli").args([
             "-t",
             "-f",
             "SSID,SECURITY,SIGNAL",
@@ -95,9 +95,10 @@ fn scan_networks_with_nmcli() -> Result<Vec<WifiNetwork>, String> {
             "list",
             "--rescan",
             "yes",
-        ])
-        .output()
-        .map_err(|error| error.to_string())?;
+        ]),
+        crate::proc::SCAN_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())?;
 
     if !output.status.success() {
         let message = String::from_utf8_lossy(if output.stderr.is_empty() {
@@ -116,10 +117,11 @@ fn scan_networks_with_iw() -> Result<Vec<WifiNetwork>, String> {
     let interfaces = wireless_interfaces();
     let mut last_error = "No wireless interface found.".to_string();
     for interface in interfaces {
-        let output = Command::new("iw")
-            .args(["dev", &interface, "scan"])
-            .output()
-            .map_err(|error| error.to_string())?;
+        let output = crate::proc::run(
+            Command::new("iw").args(["dev", &interface, "scan"]),
+            crate::proc::SCAN_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
         if output.status.success() {
             return Ok(dedupe_networks(parse_iw_scan(&String::from_utf8_lossy(
                 &output.stdout,
@@ -163,6 +165,14 @@ pub fn connect_to_network(ssid: &str, password: &str, security: &str) -> (bool, 
         disable_setup_ap();
         return nmcli_result;
     }
+
+    // FIX-4: a failed/timed-out `nmcli dev wifi connect` can leave NetworkManager with a
+    // half-activated profile. Force it down before trying wpa_supplicant, so NM and a
+    // manual wpa_cli attempt don't fight over the same interface. Best-effort, bounded.
+    let _ = crate::proc::run(
+        Command::new("nmcli").args(["connection", "down", "id", ssid]),
+        crate::proc::SERVICE_TIMEOUT,
+    );
 
     let wpa_result = connect_with_wpa_cli(ssid, password, &security);
     if wpa_result.0 {
@@ -239,7 +249,7 @@ fn wpa_network_id_for_ssid(output: &str, ssid: &str) -> Option<String> {
 }
 
 fn run_connect_command(mut command: Command) -> (bool, String) {
-    match command.output() {
+    match crate::proc::run(&mut command, crate::proc::CONNECT_TIMEOUT) {
         Ok(output) => {
             let text = if output.stdout.is_empty() {
                 output.stderr
@@ -315,11 +325,10 @@ fn connect_with_wpa_cli(ssid: &str, password: &str, security: &str) -> (bool, St
 }
 
 fn run_wpa_cli(interface: &str, args: &[&str]) -> (bool, String) {
-    let output = Command::new("wpa_cli")
-        .arg("-i")
-        .arg(interface)
-        .args(args)
-        .output();
+    let output = crate::proc::run(
+        Command::new("wpa_cli").arg("-i").arg(interface).args(args),
+        crate::proc::DEFAULT_TIMEOUT,
+    );
     match output {
         Ok(output) => {
             let text = if output.stdout.is_empty() {
@@ -488,18 +497,20 @@ pub fn split_escaped(value: &str) -> Vec<String> {
 
 fn disable_setup_ap() {
     let ap_ssid = env::var("OCTOCAM_SETUP_AP_SSID").unwrap_or_else(|_| "OctoCam-Setup".to_string());
-    let _ = Command::new("nmcli")
-        .args([
+    let _ = crate::proc::run(
+        Command::new("nmcli").args([
             "connection",
             "modify",
             &ap_ssid,
             "connection.autoconnect",
             "no",
-        ])
-        .output();
-    let _ = Command::new("nmcli")
-        .args(["connection", "down", &ap_ssid])
-        .output();
+        ]),
+        crate::proc::SERVICE_TIMEOUT,
+    );
+    let _ = crate::proc::run(
+        Command::new("nmcli").args(["connection", "down", &ap_ssid]),
+        crate::proc::SERVICE_TIMEOUT,
+    );
 }
 
 fn dedupe_networks(networks: Vec<WifiNetwork>) -> Vec<WifiNetwork> {
