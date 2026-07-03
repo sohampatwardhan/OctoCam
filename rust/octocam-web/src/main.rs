@@ -342,6 +342,8 @@ async fn async_main() {
         }
     }
 
+    spawn_internal_listener(state.clone());
+
     let app = Router::new()
         .route("/", get(identity))
         .route("/identity", get(identity))
@@ -1148,6 +1150,13 @@ async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
     if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
+    serve_snapshot(&state).await
+}
+
+/// Shared snapshot core: the authenticated /snapshot.jpg route and the
+/// loopback-only internal listener both funnel here, so the camera_enabled
+/// gate and the 2s single-flight cache apply identically to both.
+async fn serve_snapshot(state: &Arc<AppState>) -> AppResult {
     let settings = settings::load_settings(&state.config_path);
     if !settings.camera_enabled {
         return Ok((
@@ -1390,6 +1399,34 @@ async fn captive_probe() -> Response {
         return StatusCode::NOT_FOUND.into_response();
     }
     Redirect::temporary(&captive_redirect_target()).into_response()
+}
+
+/// Loopback-only endpoint for local daemons (the Matter camera-app fetches
+/// snapshots here). Binding a separate 127.0.0.1 listener is the guard —
+/// structurally unreachable from the LAN, no header/peer-address parsing —
+/// while serve_snapshot keeps the camera_enabled check (hardening FIX-3).
+async fn internal_snapshot(State(state): State<Arc<AppState>>) -> AppResult {
+    serve_snapshot(&state).await
+}
+
+fn spawn_internal_listener(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let port = env::var("OCTOCAM_INTERNAL_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(8081);
+        let app = Router::new()
+            .route("/internal/snapshot.jpg", get(internal_snapshot))
+            .with_state(state);
+        match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => {
+                let _ = axum::serve(listener, app).await;
+            }
+            Err(error) => {
+                eprintln!("internal listener unavailable (127.0.0.1:{port}): {error}");
+            }
+        }
+    });
 }
 
 fn spawn_captive_portal_listener() {
