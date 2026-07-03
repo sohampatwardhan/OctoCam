@@ -1,3 +1,4 @@
+use crate::settings::Settings;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path, path::PathBuf};
@@ -218,6 +219,99 @@ pub fn default_identity_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/matter-identity.json"))
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct MatterStatus {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub commissioned: bool,
+    #[serde(default)]
+    pub fabric_count: u32,
+    #[serde(default)]
+    pub stream_state: String,
+    #[serde(default)]
+    pub error: String,
+}
+
+pub fn render_matter_env(settings: &Settings, identity: &MatterIdentity) -> String {
+    // Mirror the HomeKit daemon's default source preference: sub when enabled
+    // (bandwidth-friendly), main otherwise. The daemon is configured at exec;
+    // configure_matter_service() restarts it only when this render changes.
+    let stream_path = if settings.sub_stream_enabled {
+        &settings.sub_rtsp_path
+    } else {
+        &settings.rtsp_path
+    };
+    format!(
+        "OCTOCAM_MATTER_DISCRIMINATOR={disc}\nOCTOCAM_MATTER_PASSCODE={pass}\nOCTOCAM_MATTER_VENDOR_ID={vid}\nOCTOCAM_MATTER_PRODUCT_ID={pid}\nOCTOCAM_MATTER_RTSP_URL=rtsp://127.0.0.1:8554/{path}\nOCTOCAM_MATTER_SNAPSHOT_URL=http://127.0.0.1:8081/internal/snapshot.jpg\n",
+        disc = identity.discriminator,
+        pass = identity.passcode,
+        vid = identity.vendor_id,
+        pid = identity.product_id,
+        path = stream_path,
+    )
+}
+
+/// Writes the daemon env file; Ok(true) when content changed (mirrors
+/// write_mediamtx_config so callers restart only on real changes).
+pub fn write_matter_env(settings: &Settings, identity: &MatterIdentity, path: &Path) -> Result<bool, String> {
+    let next = render_matter_env(settings, identity);
+    let current = fs::read_to_string(path).unwrap_or_default();
+    if current == next {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, next).map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+pub fn read_status(path: &Path) -> MatterStatus {
+    fs::read_to_string(path)
+        .ok()
+        .map(|raw| status_view(&raw))
+        .unwrap_or_default()
+}
+
+fn status_view(raw: &str) -> MatterStatus {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+/// Matter requires IPv6 (at least link-local). Parses /proc/net/if_inet6
+/// content; separated from the read for testability off-Linux.
+pub fn ipv6_link_local_present(if_inet6: &str) -> bool {
+    if_inet6
+        .lines()
+        .any(|line| line.trim_start().to_ascii_lowercase().starts_with("fe80"))
+}
+
+pub fn ipv6_preflight_ok() -> bool {
+    match fs::read_to_string("/proc/net/if_inet6") {
+        Ok(content) => ipv6_link_local_present(&content),
+        // Non-Linux dev machines: don't block the UI on a missing procfs.
+        Err(_) => true,
+    }
+}
+
+pub fn default_env_path() -> PathBuf {
+    std::env::var_os("OCTOCAM_MATTER_ENV_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/matter-env"))
+}
+
+pub fn default_status_path() -> PathBuf {
+    std::env::var_os("OCTOCAM_MATTER_STATUS_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/matter-storage/status.json"))
+}
+
+pub fn default_storage_dir() -> PathBuf {
+    std::env::var_os("OCTOCAM_MATTER_STORAGE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/matter-storage"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +384,52 @@ mod tests {
         let svg = qr_svg(&qr_payload(&id));
         assert!(svg.starts_with("<svg"));
         assert!(svg.contains("</svg>"));
+    }
+
+    #[test]
+    fn env_render_selects_sub_stream_and_contains_contract_keys() {
+        let id = MatterIdentity { passcode: 20202021, discriminator: 3840, vendor_id: 0xFFF1, product_id: 0x8001 };
+        let settings = Settings::default(); // sub_stream_enabled: true
+        let env = render_matter_env(&settings, &id);
+        assert!(env.contains("OCTOCAM_MATTER_DISCRIMINATOR=3840\n"));
+        assert!(env.contains("OCTOCAM_MATTER_PASSCODE=20202021\n"));
+        assert!(env.contains("OCTOCAM_MATTER_VENDOR_ID=65521\n"));
+        assert!(env.contains("OCTOCAM_MATTER_PRODUCT_ID=32769\n"));
+        assert!(env.contains("OCTOCAM_MATTER_RTSP_URL=rtsp://127.0.0.1:8554/sub\n"));
+        assert!(env.contains("OCTOCAM_MATTER_SNAPSHOT_URL=http://127.0.0.1:8081/internal/snapshot.jpg\n"));
+        let main_only = Settings { sub_stream_enabled: false, ..Settings::default() };
+        assert!(render_matter_env(&main_only, &id).contains("OCTOCAM_MATTER_RTSP_URL=rtsp://127.0.0.1:8554/main\n"));
+    }
+
+    #[test]
+    fn env_write_reports_changes_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("matter-env");
+        let id = generate_identity();
+        let settings = Settings::default();
+        assert!(write_matter_env(&settings, &id, &path).unwrap(), "first write changes");
+        assert!(!write_matter_env(&settings, &id, &path).unwrap(), "identical write is a no-op");
+        let changed = Settings { sub_stream_enabled: false, ..settings };
+        assert!(write_matter_env(&changed, &id, &path).unwrap(), "config change must be detected");
+    }
+
+    #[test]
+    fn status_parses_and_defaults() {
+        let view = status_view(r#"{"status":"running","commissioned":true,"fabric_count":2,"stream_state":"streaming","error":""}"#);
+        assert_eq!(view.status, "running");
+        assert!(view.commissioned);
+        assert_eq!(view.fabric_count, 2);
+        let empty = status_view("not json");
+        assert_eq!(empty.status, "");
+        assert_eq!(empty.fabric_count, 0);
+    }
+
+    #[test]
+    fn ipv6_preflight_detects_link_local() {
+        let with = "fe800000000000001234567890abcdef 03 40 20 80    wlan0\n";
+        let without = "20010db8000000000000000000000001 02 40 00 80    eth0\n";
+        assert!(ipv6_link_local_present(with));
+        assert!(!ipv6_link_local_present(without));
+        assert!(!ipv6_link_local_present(""));
     }
 }
