@@ -50,6 +50,9 @@ struct AppState {
     homekit_status_path: PathBuf,
     secret_key: String,
     snapshot_cache: SnapshotCache,
+    /// Set when the loopback snapshot listener could not bind — surfaced on
+    /// /matter, since the Matter daemon has no snapshot fallback.
+    internal_listener_down: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -449,6 +452,7 @@ impl AppState {
             homekit_status_path,
             secret_key,
             snapshot_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            internal_listener_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -1415,17 +1419,34 @@ fn spawn_internal_listener(state: Arc<AppState>) {
             .ok()
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(8081);
-        let app = Router::new()
-            .route("/internal/snapshot.jpg", get(internal_snapshot))
-            .with_state(state);
-        match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
-            Ok(listener) => {
-                let _ = axum::serve(listener, app).await;
-            }
-            Err(error) => {
-                eprintln!("internal listener unavailable (127.0.0.1:{port}): {error}");
+        // First-boot bind races are a known failure class on this hardware
+        // (cf. 460ee33): retry briefly before declaring the endpoint down.
+        for attempt in 1..=3u32 {
+            match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+                Ok(listener) => {
+                    state
+                        .internal_listener_down
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                    let app = Router::new()
+                        .route("/internal/snapshot.jpg", get(internal_snapshot))
+                        .with_state(state.clone());
+                    let _ = axum::serve(listener, app).await;
+                    return;
+                }
+                Err(error) => {
+                    tracing::error!(
+                        "internal snapshot listener bind failed (127.0.0.1:{port}, attempt {attempt}/3): {error}"
+                    );
+                    sleep(Duration::from_secs(2)).await;
+                }
             }
         }
+        state
+            .internal_listener_down
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        tracing::error!(
+            "internal snapshot listener unavailable (127.0.0.1:{port}); Matter snapshots will fail until octocam-web restarts"
+        );
     });
 }
 
