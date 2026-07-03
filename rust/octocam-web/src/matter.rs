@@ -385,6 +385,22 @@ pub fn configure_matter_service(settings: &Settings, env_path: &Path, identity_p
     }
 }
 
+/// Wipe a directory's contents while preserving the directory itself — the
+/// daemon's storage dir is owned by the sandboxed octocam-matter user
+/// (install.sh: -o octocam-matter -m 750); removing and recreating it here
+/// would hand ownership to octocam-web's user and lock the daemon out.
+fn clear_dir_contents(dir: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            fs::remove_dir_all(entry.path())?;
+        } else {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
 /// Reset pairing: stop → wipe KVS → rotate passcode → restart if enabled.
 /// Wiping under a live daemon is racy (it holds fabric state in memory and
 /// rewrites the KVS), hence the strict ordering.
@@ -393,14 +409,19 @@ pub fn reset_pairing(settings: &Settings, storage_dir: &Path, env_path: &Path, i
     if let Err(error) = crate::system::set_service_enabled(UNIT, false) {
         tracing::error!("matter reset: failed to stop daemon: {error}");
     }
-    if let Err(error) = fs::remove_dir_all(storage_dir) {
-        // NotFound is fine (nothing commissioned yet); anything else is a real failure.
-        if error.kind() != io::ErrorKind::NotFound {
+    match clear_dir_contents(storage_dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            // Dir absent (fresh install / never enabled): create it so the
+            // daemon has somewhere to write; ownership fixup is install.sh's
+            // job and the daemon isn't running yet in this state anyway.
+            if let Err(error) = fs::create_dir_all(storage_dir) {
+                tracing::error!("matter reset: failed to create {}: {error}", storage_dir.display());
+            }
+        }
+        Err(error) => {
             tracing::error!("matter reset: failed to wipe {}: {error}", storage_dir.display());
         }
-    }
-    if let Err(error) = fs::create_dir_all(storage_dir) {
-        tracing::error!("matter reset: failed to recreate {}: {error}", storage_dir.display());
     }
     match rotate_identity(identity_path) {
         Ok(identity) => {
@@ -469,6 +490,18 @@ mod tests {
         }
         let rotated = rotate_identity(&path).unwrap();
         assert_ne!(first.passcode, rotated.passcode, "reset must rotate the passcode");
+    }
+
+    #[test]
+    fn clear_dir_contents_preserves_the_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = dir.path().join("matter-storage");
+        std::fs::create_dir_all(storage.join("sub")).unwrap();
+        std::fs::write(storage.join("kvs"), "x").unwrap();
+        std::fs::write(storage.join("sub/f"), "y").unwrap();
+        clear_dir_contents(&storage).unwrap();
+        assert!(storage.exists(), "directory inode must survive the wipe");
+        assert_eq!(std::fs::read_dir(&storage).unwrap().count(), 0);
     }
 
     /// Known CHIP test vector: discriminator 3840, passcode 20202021.
