@@ -43,6 +43,7 @@ pub struct Settings {
     pub contrast: f64,
     pub homekit_enabled: bool,
     pub homekit_paired: bool,
+    pub matter_enabled: bool,
     pub motion_enabled: bool,
     pub motion_sensitivity: i32,
 }
@@ -177,6 +178,7 @@ impl Default for Settings {
             contrast: 1.0,
             homekit_enabled: false,
             homekit_paired: false,
+            matter_enabled: false,
             motion_enabled: false,
             motion_sensitivity: 50,
         }
@@ -331,6 +333,7 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
     settings.contrast = float_value(&map, "contrast", settings.contrast, 0.0, 4.0);
     settings.homekit_enabled = bool_value(&map, "homekit_enabled", settings.homekit_enabled);
     settings.homekit_paired = bool_value(&map, "homekit_paired", settings.homekit_paired);
+    settings.matter_enabled = bool_value(&map, "matter_enabled", settings.matter_enabled);
     settings.motion_enabled = bool_value(&map, "motion_enabled", settings.motion_enabled);
     settings.motion_sensitivity = int_value(
         &map,
@@ -341,6 +344,15 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
     );
     clamp_to_encoder_limits(&mut settings);
     settings
+}
+
+/// The Matter pairing QR is a durable commission-this-camera credential, and
+/// require_admin_login() is a no-op while the admin password hash is empty —
+/// so an empty hash must force Matter off (spec: "octocam-web integration").
+pub fn enforce_matter_requires_admin(settings: &mut Settings) {
+    if settings.admin_password_hash.is_empty() {
+        settings.matter_enabled = false;
+    }
 }
 
 /// Snap any resolution the hardware encoder cannot handle to a safe fallback.
@@ -536,5 +548,28 @@ mod tests {
             .all(|p| p.width <= MAX_ENCODER_WIDTH && p.height <= MAX_ENCODER_HEIGHT));
         assert!(RESOLUTION_PRESETS.iter().any(|p| p.value == "1536x864"));
         assert!(!RESOLUTION_PRESETS.iter().any(|p| p.value == "1640x1232"));
+    }
+
+    #[test]
+    fn matter_defaults_off_and_parses() {
+        assert!(!Settings::default().matter_enabled);
+        let mut map = Map::new();
+        map.insert("matter_enabled".into(), Value::String("true".into()));
+        map.insert("admin_password_hash".into(), Value::String("x".into()));
+        assert!(validate_map(&map).matter_enabled);
+    }
+
+    #[test]
+    fn matter_requires_admin_password() {
+        let mut map = Map::new();
+        map.insert("matter_enabled".into(), Value::String("true".into()));
+        let mut s = validate_map(&map);
+        assert!(s.admin_password_hash.is_empty());
+        enforce_matter_requires_admin(&mut s);
+        assert!(!s.matter_enabled, "matter must not enable without an admin password");
+        s.admin_password_hash = "hash".into();
+        s.matter_enabled = true;
+        enforce_matter_requires_admin(&mut s);
+        assert!(s.matter_enabled);
     }
 }
