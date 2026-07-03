@@ -140,6 +140,7 @@ const wifiConnectForm = document.querySelector("[data-wifi-connect-form]");
 const wifiSaveButton = document.querySelector("[data-wifi-save-button]");
 let liveRefreshTimer = null;
 let liveRefreshPending = false;
+let updateViewerCells = null; // set by the stream page block when present
 
 function present(value, fallback = "Not available") {
   if (value === null || value === undefined || value === "") {
@@ -392,6 +393,7 @@ async function refreshLiveState() {
       fetchJson("/api/status"),
     ]);
     applyLiveState({ settings, status });
+    if (updateViewerCells) updateViewerCells(status);
   } catch (error) {
   } finally {
     liveRefreshPending = false;
@@ -698,10 +700,38 @@ if (streamPreview) {
   let activeStream = streamPreview.dataset.initialStream || "main";
   let playing = true;
 
+  const note = streamPreview.querySelector("[data-stream-note]");
+  let latestViewers = null;
+
+  function mainIsFull() {
+    if (!latestViewers || !latestViewers.main) return false;
+    const m = latestViewers.main;
+    return m.browser + m.rtsp >= m.capacity;
+  }
+
+  function showBusyNote(show) {
+    if (note) note.hidden = !show;
+  }
+
+  updateViewerCells = (status) => {
+    latestViewers = (status && status.viewers) || null;
+    const mainCell = document.querySelector("[data-viewers-main]");
+    const subCell = document.querySelector("[data-viewers-sub]");
+    if (latestViewers) {
+      if (mainCell) mainCell.textContent = `${latestViewers.main.total} / ${latestViewers.main.capacity}`;
+      if (subCell) subCell.textContent = `${latestViewers.sub.total} / ${latestViewers.sub.capacity}`;
+    } else {
+      if (mainCell) mainCell.textContent = "unavailable";
+      if (subCell) subCell.textContent = "unavailable";
+    }
+  };
+
   function loadPreviewCache() {
     try {
       const cached = JSON.parse(localStorage.getItem(STREAM_PREVIEW_CACHE_KEY) || "{}");
       if (cached.activeStream === "main" || (cached.activeStream === "sub" && sources.sub)) {
+        // Cached "main" is kept as-is: switching automatically would interrupt playback;
+        // the click guard handles new choices.
         activeStream = cached.activeStream;
       }
       if (typeof cached.playing === "boolean") {
@@ -762,7 +792,14 @@ if (streamPreview) {
       if (choice.disabled) {
         return;
       }
-      activeStream = choice.dataset.streamChoice || "main";
+      let requested = choice.dataset.streamChoice || "main";
+      if (requested === "main" && mainIsFull() && sources.sub) {
+        requested = "sub";
+        showBusyNote(true);
+      } else {
+        showBusyNote(false);
+      }
+      activeStream = requested;
       playing = true;
       syncPreview();
     });

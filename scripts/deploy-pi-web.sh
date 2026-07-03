@@ -106,8 +106,17 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n systemctl restart octocam-web.service
   rm -rf '$REMOTE_TMP'
   # Health gate: the UI must actually serve, not just be \"active\". Roll back on failure.
-  sleep 2
-  if ! curl -fsS -m 8 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\"; then
+  # Poll up to ~30s: on the first boot after an upgrade the startup mediamtx
+  # reconcile can restart octocam-rtsp (bounded ~10s) BEFORE the listener binds.
+  healthy=false
+  for _ in \$(seq 1 15); do
+    if curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\"; then
+      healthy=true
+      break
+    fi
+    sleep 2
+  done
+  if [ \"\$healthy\" != true ]; then
     echo \"health check FAILED — rolling back\" >&2
     if [ -x /usr/local/bin/octocam-web.bak ]; then
       sudo -n cp -f /usr/local/bin/octocam-web.bak /usr/local/bin/octocam-web

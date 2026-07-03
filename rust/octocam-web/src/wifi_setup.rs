@@ -30,6 +30,7 @@ pub fn run() -> Result<(), String> {
         SavedProfileResult::Connected => Ok(()),
         SavedProfileResult::NoProfiles | SavedProfileResult::Failed => {
             println!("No saved Wi-Fi profile connected successfully; falling back to setup AP.");
+            write_captive_dns_config();
             start_setup_ap(&config)
         }
     }
@@ -105,6 +106,18 @@ fn saved_wifi_profiles_by_last_connected(ap_ssid: &str) -> Result<Vec<String>, S
 
     profiles.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     Ok(profiles.into_iter().map(|(_, name)| name).collect())
+}
+
+/// NM's shared-mode dnsmasq reads this drop-in dir; the wildcard makes every DNS
+/// name resolve to the AP gateway so OS captive probes actually reach our port-80
+/// listener. Only affects the dnsmasq instance NM spawns for shared (AP)
+/// connections — normal client-mode DNS is untouched. Best-effort.
+fn write_captive_dns_config() {
+    let _ = std::fs::create_dir_all("/etc/NetworkManager/dnsmasq-shared.d");
+    let _ = std::fs::write(
+        "/etc/NetworkManager/dnsmasq-shared.d/octocam-captive.conf",
+        "# OctoCam setup AP: resolve everything to the gateway so captive probes reach us.\naddress=/#/10.42.0.1\n",
+    );
 }
 
 fn start_setup_ap(config: &SetupConfig) -> Result<(), String> {

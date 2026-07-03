@@ -24,11 +24,11 @@ pub fn default_config_path() -> PathBuf {
 
 pub fn configure_rtsp_service(settings: &Settings, path: &PathBuf) -> ConfigureResult {
     let config = match write_mediamtx_config(settings, path) {
-        Ok(()) => ActionResult {
+        Ok(changed) => ActionResult {
             path: Some(path.display().to_string()),
             unit: None,
-            changed: true,
-            message: "ok".to_string(),
+            changed,
+            message: if changed { "ok" } else { "unchanged" }.to_string(),
         },
         Err(error) => ActionResult {
             path: Some(path.display().to_string()),
@@ -54,7 +54,11 @@ pub fn configure_rtsp_service(settings: &Settings, path: &PathBuf) -> ConfigureR
     ConfigureResult { config, service }
 }
 
-pub fn write_mediamtx_config(settings: &Settings, path: &PathBuf) -> Result<(), String> {
+pub fn render_mediamtx_config(settings: &Settings) -> String {
+    // HomeKit's daemon reads via a local RTSP session (ffmpeg), so reserve one
+    // reader slot per path — user-facing capacity should not shrink when the
+    // Home app is watching. Soft reservation: see the design doc.
+    let reserve = if settings.homekit_enabled { 1 } else { 0 };
     let mut path_sections = vec![mediamtx_camera_path(
         &settings.rtsp_path,
         false,
@@ -62,7 +66,7 @@ pub fn write_mediamtx_config(settings: &Settings, path: &PathBuf) -> Result<(), 
         settings.resolution_height,
         settings.framerate,
         settings.bitrate_kbps,
-        settings.rtsp_max_clients,
+        settings.rtsp_max_clients + reserve,
     )];
 
     if settings.sub_stream_enabled {
@@ -73,12 +77,15 @@ pub fn write_mediamtx_config(settings: &Settings, path: &PathBuf) -> Result<(), 
             settings.sub_resolution_height,
             settings.sub_framerate,
             settings.sub_bitrate_kbps,
-            settings.sub_rtsp_max_clients,
+            settings.sub_rtsp_max_clients + reserve,
         ));
     }
 
     let mut content = vec![
         "logLevel: info".to_string(),
+        String::new(),
+        "api: yes".to_string(),
+        "apiAddress: 127.0.0.1:9997".to_string(),
         String::new(),
         "rtsp: true".to_string(),
         "rtspAddress: :8554".to_string(),
@@ -104,7 +111,18 @@ pub fn write_mediamtx_config(settings: &Settings, path: &PathBuf) -> Result<(), 
     ];
     content.extend(path_sections);
     content.push(String::new());
-    fs::write(path, content.join("\n")).map_err(|error| error.to_string())
+    content.join("\n")
+}
+
+/// Writes the config; returns Ok(true) if the file content changed.
+pub fn write_mediamtx_config(settings: &Settings, path: &PathBuf) -> Result<bool, String> {
+    let next = render_mediamtx_config(settings);
+    let current = fs::read_to_string(path).unwrap_or_default();
+    if current == next {
+        return Ok(false);
+    }
+    fs::write(path, next).map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 pub fn mediamtx_camera_path(
@@ -142,5 +160,37 @@ mod tests {
         assert!(content.contains("rpiCameraIDRPeriod: 15"));
         assert!(content.contains("rpiCameraH264Profile: baseline"));
         assert!(content.contains("maxReaders: 1"));
+    }
+
+    #[test]
+    fn config_enables_localhost_api() {
+        let settings = Settings::default();
+        let content = render_mediamtx_config(&settings);
+        assert!(content.contains("api: yes"));
+        assert!(content.contains("apiAddress: 127.0.0.1:9997"));
+    }
+
+    #[test]
+    fn homekit_reserve_adds_one_reader() {
+        let mut settings = Settings {
+            homekit_enabled: false,
+            ..Default::default()
+        };
+        let without = render_mediamtx_config(&settings);
+        settings.homekit_enabled = true;
+        let with = render_mediamtx_config(&settings);
+        let max_readers = |content: &str| -> Vec<i32> {
+            content
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .map(|v| v.parse().unwrap())
+                .collect()
+        };
+        let a = max_readers(&without);
+        let b = max_readers(&with);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(y - x, 1, "homekit reserve must add exactly one reader per path");
+        }
     }
 }

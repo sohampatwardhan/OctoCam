@@ -20,19 +20,22 @@
               data-stream-preview
               data-main-src="{{ browser_stream_urls.main }}"
               data-sub-src="{{ browser_stream_urls.sub }}"
-              data-initial-stream="{% if browser_stream_urls.has_sub %}sub{% else %}main{% endif %}"
+              data-initial-stream="{{ initial_stream }}"
             >
               <div class="stream-toolbar">
                 <div class="segmented-control" role="group" aria-label="Preview stream">
-                  <button type="button" data-stream-choice="main" aria-pressed="{% if browser_stream_urls.has_sub %}false{% else %}true{% endif %}">Main</button>
-                  <button type="button" data-stream-choice="sub" aria-pressed="{% if browser_stream_urls.has_sub %}true{% else %}false{% endif %}" {% if !browser_stream_urls.has_sub %}disabled{% endif %}>Sub</button>
+                  <button type="button" data-stream-choice="main" aria-pressed="{% if initial_stream == "main" %}true{% else %}false{% endif %}">Main</button>
+                  <button type="button" data-stream-choice="sub" aria-pressed="{% if initial_stream == "sub" %}true{% else %}false{% endif %}" {% if !browser_stream_urls.has_sub %}disabled{% endif %}>Sub</button>
                 </div>
                 <button class="secondary compact stream-toggle" type="button" data-stream-toggle aria-pressed="true">Stop</button>
               </div>
+              <p class="stream-note" data-stream-note {% if !main_busy %}hidden{% endif %}>
+                Main stream is at capacity — showing the sub stream.
+              </p>
               <div class="live-frame">
                 <iframe
                   class="live-video"
-                  src="{% if browser_stream_urls.has_sub %}{{ browser_stream_urls.sub }}{% else %}{{ browser_stream_urls.main }}{% endif %}"
+                  src="{% if initial_stream == "sub" %}{{ browser_stream_urls.sub }}{% else %}{{ browser_stream_urls.main }}{% endif %}"
                   title="Live OctoCam stream"
                   allow="autoplay; fullscreen"
                   data-stream-frame
@@ -48,6 +51,8 @@
               <div><dt>Status</dt><dd data-live-status="rtsp_state">{{ system.rtsp_state }}</dd></div>
               <div><dt>Main limit</dt><dd>{{ settings.rtsp_max_clients }} clients</dd></div>
               <div><dt>Sub limit</dt><dd>{% if settings.sub_stream_enabled %}{{ settings.sub_rtsp_max_clients }}{% else %}0{% endif %} clients</dd></div>
+              <div><dt>Main viewers</dt><dd data-viewers-main>{{ viewers_main_text }}</dd></div>
+              <div><dt>Sub viewers</dt><dd data-viewers-sub>{{ viewers_sub_text }}</dd></div>
             </dl>
 
             {% if settings.rtsp_enabled %}

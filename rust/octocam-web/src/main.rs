@@ -3,6 +3,7 @@ mod mediamtx;
 mod proc;
 mod security;
 mod settings;
+mod streams;
 mod system;
 mod wifi;
 mod wifi_setup;
@@ -36,6 +37,9 @@ const SERVICE_WORKER_JS: &str = include_str!("../../../static/sw.js");
 
 type AppResult = Result<Response, AppError>;
 
+/// Latest snapshot bytes plus when they were captured; None until first capture.
+type SnapshotCache = Arc<tokio::sync::Mutex<Option<(std::time::Instant, Vec<u8>)>>>;
+
 #[derive(Clone)]
 struct AppState {
     project_dir: PathBuf,
@@ -44,6 +48,7 @@ struct AppState {
     mediamtx_config_path: PathBuf,
     homekit_status_path: PathBuf,
     secret_key: String,
+    snapshot_cache: SnapshotCache,
 }
 
 #[derive(Debug)]
@@ -206,6 +211,10 @@ struct StreamTemplate {
     rtsp_urls: StreamUrls,
     browser_stream_urls: StreamUrls,
     active_page: &'static str,
+    initial_stream: String, // "main" | "sub"
+    main_busy: bool,        // reserved for the client-side busy note; starts false
+    viewers_main_text: String,
+    viewers_sub_text: String,
 }
 
 #[derive(Template)]
@@ -301,6 +310,37 @@ async fn async_main() {
     }
 
     let state = Arc::new(AppState::from_env());
+
+    // Reconcile the mediamtx config with (possibly migrated) settings at startup,
+    // restarting the RTSP service only when the rendered config actually changed.
+    // The /run marker (tmpfs, cleared each boot) limits the reconcile restart to once
+    // per boot so a crash-looping octocam-web cannot flap the camera service.
+    {
+        let settings = settings::load_settings(&state.config_path);
+        let config_path = state.mediamtx_config_path.clone();
+        let _ = run_blocking(move || {
+            match mediamtx::write_mediamtx_config(&settings, &config_path) {
+                Ok(true) => {
+                    let marker = std::path::Path::new("/run/octocam-rtsp-reconciled");
+                    if !marker.exists() {
+                        let _ = std::fs::write(marker, b"1");
+                        let _ = system::restart_service("octocam-rtsp");
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => eprintln!("mediamtx config reconcile failed: {error}"),
+            }
+        })
+        .await;
+    }
+
+    {
+        let settings = settings::load_settings(&state.config_path);
+        if !settings.setup_complete {
+            spawn_captive_portal_listener();
+        }
+    }
+
     let app = Router::new()
         .route("/", get(identity))
         .route("/identity", get(identity))
@@ -405,6 +445,7 @@ impl AppState {
             mediamtx_config_path,
             homekit_status_path,
             secret_key,
+            snapshot_cache: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 }
@@ -688,6 +729,20 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
     }
     let host = request_hostname(&headers);
     let status = run_blocking(system::status).await?;
+    let viewers = streams::viewer_report(&settings).await;
+    // Sub-first default (product decision, hardening 2026-07-02): the dashboard opens
+    // on sub so a forgotten kiosk tab never pins main's only slot. Main is opt-in via
+    // the Main button; app.js reroutes that click to sub (with a note) when main is
+    // full. `main_busy` therefore starts false — the note is client-toggled.
+    let initial_stream = if settings.sub_stream_enabled { "sub" } else { "main" }.to_string();
+    let main_busy = false;
+    let (viewers_main_text, viewers_sub_text) = match &viewers {
+        Some(report) => (
+            format!("{} / {}", report.main.total, report.main.capacity),
+            format!("{} / {}", report.sub.total, report.sub.capacity),
+        ),
+        None => ("unavailable".to_string(), "unavailable".to_string()),
+    };
     render(StreamTemplate {
         page_title: "Live stream".to_string(),
         rtsp_urls: stream_urls_for(&settings, host.clone(), "rtsp"),
@@ -695,6 +750,10 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
         system: system::view(&status),
         settings,
         active_page: "stream",
+        initial_stream,
+        main_busy,
+        viewers_main_text,
+        viewers_sub_text,
     })
 }
 
@@ -1036,8 +1095,22 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
     if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
-    let status = run_blocking(system::status).await?;
-    Ok(Json(status).into_response())
+    let settings = settings::load_settings(&state.config_path);
+    let (status, viewers) = tokio::join!(
+        run_blocking(system::status),
+        streams::viewer_report(&settings)
+    );
+    #[derive(Serialize)]
+    struct StatusResponse {
+        #[serde(flatten)]
+        status: system::SystemStatus,
+        viewers: Option<streams::ViewerReport>,
+    }
+    Ok(Json(StatusResponse {
+        status: status?,
+        viewers,
+    })
+    .into_response())
 }
 
 async fn api_wifi_networks(
@@ -1082,9 +1155,23 @@ async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
         )
             .into_response());
     }
+    let mut cache = state.snapshot_cache.lock().await;
+    if let Some((at, bytes)) = cache.as_ref() {
+        if camera::snapshot_is_fresh(*at, std::time::Instant::now()) {
+            let bytes = bytes.clone();
+            return Ok(([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response());
+        }
+    }
+    // Cold path: hold the lock across capture so concurrent requests coalesce onto
+    // one capture (bounded by CAPTURE_TIMEOUT = 8s). Accepted trade-off: a burst of
+    // concurrent snapshot requests serializes behind the first — worst case one
+    // 8s wait, then everyone is served from cache.
     let settings_for_capture = settings.clone();
-    match run_blocking(move || camera::capture_jpeg(&settings_for_capture)).await? {
-        Ok(data) => Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response()),
+    match run_blocking(move || camera::capture_snapshot(&settings_for_capture)).await? {
+        Ok(data) => {
+            *cache = Some((std::time::Instant::now(), data.clone()));
+            Ok(([(header::CONTENT_TYPE, "image/jpeg")], data).into_response())
+        }
         Err(error) => Ok((
             StatusCode::SERVICE_UNAVAILABLE,
             format!("Snapshot unavailable: {error}\n"),
@@ -1281,4 +1368,55 @@ fn rotation_views(current: i32) -> Vec<RotationView> {
 
 fn merge_settings(current: &mut Settings, next: Settings) {
     *current = next;
+}
+
+/// NetworkManager shared-mode gateway address of the OctoCam-Setup AP.
+const SETUP_AP_GATEWAY: &str = "10.42.0.1";
+
+/// Captive probes carry Host headers like captive.apple.com, which the joined
+/// client CANNOT resolve on our uplink-less AP — echoing the Host would produce a
+/// dead redirect. Always send clients to the AP gateway IP literal.
+fn captive_redirect_target() -> String {
+    format!("http://{SETUP_AP_GATEWAY}:8080/setup")
+}
+
+async fn captive_probe() -> Response {
+    // The listener keeps running until the process restarts, even after setup
+    // completes. Re-check per request so a completed setup stops hijacking
+    // port 80 — plain 404 instead of redirecting everything to /setup.
+    let settings = settings::load_settings(&settings::default_config_path());
+    if settings.setup_complete {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    Redirect::temporary(&captive_redirect_target()).into_response()
+}
+
+fn spawn_captive_portal_listener() {
+    tokio::spawn(async {
+        let app = Router::new()
+            .route("/hotspot-detect.html", get(captive_probe))
+            .route("/generate_204", get(captive_probe))
+            // axum 0.8: fallback takes a Handler, not a MethodRouter — no get() wrapper.
+            .fallback(captive_probe);
+        match tokio::net::TcpListener::bind("0.0.0.0:80").await {
+            Ok(listener) => {
+                let _ = axum::serve(listener, app).await;
+            }
+            Err(error) => {
+                eprintln!("captive portal listener unavailable (port 80): {error}");
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captive_redirect_targets_the_ap_gateway() {
+        // Never echo the probe's Host header (captive.apple.com etc.) — the client
+        // cannot resolve it on the uplink-less AP. Always the gateway IP literal.
+        assert_eq!(captive_redirect_target(), "http://10.42.0.1:8080/setup");
+    }
 }
