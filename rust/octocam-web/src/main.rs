@@ -334,6 +334,13 @@ async fn async_main() {
         .await;
     }
 
+    {
+        let settings = settings::load_settings(&state.config_path);
+        if !settings.setup_complete {
+            spawn_captive_portal_listener();
+        }
+    }
+
     let app = Router::new()
         .route("/", get(identity))
         .route("/identity", get(identity))
@@ -1361,4 +1368,48 @@ fn rotation_views(current: i32) -> Vec<RotationView> {
 
 fn merge_settings(current: &mut Settings, next: Settings) {
     *current = next;
+}
+
+/// NetworkManager shared-mode gateway address of the OctoCam-Setup AP.
+const SETUP_AP_GATEWAY: &str = "10.42.0.1";
+
+/// Captive probes carry Host headers like captive.apple.com, which the joined
+/// client CANNOT resolve on our uplink-less AP — echoing the Host would produce a
+/// dead redirect. Always send clients to the AP gateway IP literal.
+fn captive_redirect_target() -> String {
+    format!("http://{SETUP_AP_GATEWAY}:8080/setup")
+}
+
+async fn captive_probe() -> Response {
+    Redirect::temporary(&captive_redirect_target()).into_response()
+}
+
+fn spawn_captive_portal_listener() {
+    tokio::spawn(async {
+        let app = Router::new()
+            .route("/hotspot-detect.html", get(captive_probe))
+            .route("/generate_204", get(captive_probe))
+            // axum 0.8: fallback takes a Handler, not a MethodRouter — no get() wrapper.
+            .fallback(captive_probe);
+        match tokio::net::TcpListener::bind("0.0.0.0:80").await {
+            Ok(listener) => {
+                let _ = axum::serve(listener, app).await;
+            }
+            Err(error) => {
+                eprintln!("captive portal listener unavailable (port 80): {error}");
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn captive_redirect_targets_the_ap_gateway() {
+        // Never echo the probe's Host header (captive.apple.com etc.) — the client
+        // cannot resolve it on the uplink-less AP. Always the gateway IP literal.
+        assert_eq!(captive_redirect_target(), "http://10.42.0.1:8080/setup");
+    }
 }
