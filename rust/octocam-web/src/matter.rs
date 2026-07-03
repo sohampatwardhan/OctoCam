@@ -309,9 +309,6 @@ pub struct MatterView {
     pub status: String,
     pub commissioned: bool,
     pub fabric_count: u32,
-    // Not referenced by matter.html yet (it keys off commissioned/orphaned_fabrics).
-    #[allow(dead_code)]
-    pub has_fabrics: bool,
     pub orphaned_fabrics: bool, // fabrics persisted while matter_enabled=false
     pub manual_code: String,
     pub qr_svg: String,
@@ -347,7 +344,6 @@ pub fn view(settings: &Settings, identity: Option<&MatterIdentity>, status: &Mat
         status: status_label,
         commissioned: status.commissioned,
         fabric_count: status.fabric_count,
-        has_fabrics: status.fabric_count > 0,
         orphaned_fabrics: status.fabric_count > 0 && !settings.matter_enabled,
         manual_code,
         qr_svg: qr_svg_text,
@@ -374,7 +370,15 @@ pub fn configure_matter_service(settings: &Settings, env_path: &Path, identity_p
         tracing::error!("matter: cannot load or generate identity");
         return;
     };
-    let changed = write_matter_env(settings, &identity, env_path).unwrap_or(false);
+    let changed = match write_matter_env(settings, &identity, env_path) {
+        Ok(changed) => changed,
+        Err(error) => {
+            // Distinct from Ok(false): the env on disk may now be stale/absent.
+            // systemd will surface a missing EnvironmentFile as a unit failure.
+            tracing::error!("matter: failed to write daemon env: {error}");
+            false
+        }
+    };
     let _ = crate::system::set_service_enabled(UNIT, true);
     if changed {
         let _ = crate::system::restart_service(UNIT);
@@ -386,15 +390,33 @@ pub fn configure_matter_service(settings: &Settings, env_path: &Path, identity_p
 /// rewrites the KVS), hence the strict ordering.
 pub fn reset_pairing(settings: &Settings, storage_dir: &Path, env_path: &Path, identity_path: &Path) {
     const UNIT: &str = "octocam-matter";
-    let _ = crate::system::set_service_enabled(UNIT, false);
-    let _ = fs::remove_dir_all(storage_dir);
-    let _ = fs::create_dir_all(storage_dir);
-    if let Ok(identity) = rotate_identity(identity_path) {
-        let _ = write_matter_env(settings, &identity, env_path);
+    if let Err(error) = crate::system::set_service_enabled(UNIT, false) {
+        tracing::error!("matter reset: failed to stop daemon: {error}");
+    }
+    if let Err(error) = fs::remove_dir_all(storage_dir) {
+        // NotFound is fine (nothing commissioned yet); anything else is a real failure.
+        if error.kind() != io::ErrorKind::NotFound {
+            tracing::error!("matter reset: failed to wipe {}: {error}", storage_dir.display());
+        }
+    }
+    if let Err(error) = fs::create_dir_all(storage_dir) {
+        tracing::error!("matter reset: failed to recreate {}: {error}", storage_dir.display());
+    }
+    match rotate_identity(identity_path) {
+        Ok(identity) => {
+            if let Err(error) = write_matter_env(settings, &identity, env_path) {
+                tracing::error!("matter reset: failed to rewrite env: {error}");
+            }
+        }
+        Err(error) => tracing::error!("matter reset: failed to rotate identity: {error}"),
     }
     if settings.matter_enabled {
-        let _ = crate::system::set_service_enabled(UNIT, true);
-        let _ = crate::system::restart_service(UNIT);
+        if let Err(error) = crate::system::set_service_enabled(UNIT, true) {
+            tracing::error!("matter reset: failed to re-enable daemon: {error}");
+        }
+        if let Err(error) = crate::system::restart_service(UNIT) {
+            tracing::error!("matter reset: failed to restart daemon: {error}");
+        }
     }
 }
 
