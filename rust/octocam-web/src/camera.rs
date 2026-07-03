@@ -8,8 +8,8 @@ pub fn snapshot_is_fresh(captured: Instant, now: Instant) -> bool {
     now.duration_since(captured) < SNAPSHOT_TTL
 }
 
-/// Grab one JPEG frame through mediamtx. While RTSP is enabled, mediamtx's
-/// rpiCamera source owns the camera continuously and libcamera allows a single
+/// Grab one JPEG frame through mediamtx. While mediamtx runs, its rpiCamera
+/// source owns the camera continuously and libcamera allows a single
 /// consumer — `rpicam-still` CANNOT acquire the device then, so direct capture
 /// would always fail. Pull a frame off the sub stream instead (same pattern the
 /// HomeKit daemon already uses for its snapshots).
@@ -46,9 +46,14 @@ pub fn capture_jpeg_via_rtsp(settings: &Settings) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Route snapshots through mediamtx whenever it owns the camera.
+/// Route snapshots through mediamtx whenever it owns the camera — that is
+/// whenever the octocam-rtsp unit runs, not just when LAN RTSP is exposed.
+/// The routing condition MUST be the same predicate that decides whether the
+/// unit runs (`rtsp_service_should_run`, unit-tested in mediamtx.rs); routing
+/// on `rtsp_enabled` alone would run rpicam-still while mediamtx still holds
+/// the single libcamera consumer slot, failing every snapshot.
 pub fn capture_snapshot(settings: &Settings) -> Result<Vec<u8>, String> {
-    if settings.rtsp_enabled {
+    if crate::mediamtx::rtsp_service_should_run(settings) {
         capture_jpeg_via_rtsp(settings)
     } else {
         capture_jpeg(settings)
