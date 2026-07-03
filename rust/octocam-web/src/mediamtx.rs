@@ -172,8 +172,10 @@ mod tests {
 
     #[test]
     fn homekit_reserve_adds_one_reader() {
-        let mut settings = Settings::default();
-        settings.homekit_enabled = false;
+        let mut settings = Settings {
+            homekit_enabled: false,
+            ..Default::default()
+        };
         let without = render_mediamtx_config(&settings);
         settings.homekit_enabled = true;
         let with = render_mediamtx_config(&settings);
