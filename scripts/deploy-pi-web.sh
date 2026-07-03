@@ -80,10 +80,13 @@ sed \
   -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
   "$PROJECT_DIR/systemd/octocam-web.service" > "$LOCAL_TMP/octocam-web.service"
 cp "$PROJECT_DIR/systemd/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-wifi-setup.service"
+sed \
+  -e "s|__PROJECT_DIR__|$REMOTE_DIR|g" \
+  "$PROJECT_DIR/systemd/octocam-matter.service" > "$LOCAL_TMP/octocam-matter.service"
 
 ssh "$SSH_TARGET" "mkdir -p '$REMOTE_TMP'"
 rsync -az "$ARTIFACT" "$SSH_TARGET:$REMOTE_TMP/octocam-web"
-rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$SSH_TARGET:$REMOTE_TMP/"
+rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-matter.service" "$SSH_TARGET:$REMOTE_TMP/"
 
 ssh "$SSH_TARGET" "sudo -n mkdir -p '$REMOTE_DIR/static'"
 rsync -az --delete \
@@ -101,6 +104,13 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n install -m 0755 '$REMOTE_TMP/octocam-web' /usr/local/bin/octocam-web
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-web.service' /etc/systemd/system/octocam-web.service
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-wifi-setup.service' /etc/systemd/system/octocam-wifi-setup.service
+  sudo -n install -m 0644 '$REMOTE_TMP/octocam-matter.service' /etc/systemd/system/octocam-matter.service
+  # Matter daemon runs sandboxed as its own user (never root: parses untrusted
+  # LAN traffic). Storage dir owns the CHIP KVS + status file.
+  if ! id -u octocam-matter >/dev/null 2>&1; then
+    sudo -n useradd --system --no-create-home --shell /usr/sbin/nologin octocam-matter
+  fi
+  sudo -n install -d -o octocam-matter -g octocam-matter -m 750 /var/lib/octocam/matter-storage
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable octocam-wifi-setup.service >/dev/null
   sudo -n systemctl restart octocam-web.service

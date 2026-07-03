@@ -1,0 +1,38 @@
+[Unit]
+Description=OctoCam Matter camera accessory (CHIP camera-app)
+Wants=network-online.target octocam-rtsp.service avahi-daemon.service
+After=network-online.target octocam-rtsp.service octocam-web.service avahi-daemon.service
+
+[Service]
+Type=simple
+# Deliberately not the shared service user (root by default): this daemon
+# parses untrusted pre-auth Matter traffic from the whole LAN on TCP/UDP 5540
+# and is built from example-quality upstream code. Least privilege, always.
+User=octocam-matter
+Group=octocam-matter
+EnvironmentFile=/var/lib/octocam/matter-env
+ExecStart=__PROJECT_DIR__/dist/chip-camera-app \
+  --discriminator $OCTOCAM_MATTER_DISCRIMINATOR \
+  --passcode $OCTOCAM_MATTER_PASSCODE \
+  --vendor-id $OCTOCAM_MATTER_VENDOR_ID \
+  --product-id $OCTOCAM_MATTER_PRODUCT_ID \
+  --secured-device-port 5540 \
+  --KVS /var/lib/octocam/matter-storage/kvs \
+  --rtsp-source $OCTOCAM_MATTER_RTSP_URL \
+  --snapshot-url $OCTOCAM_MATTER_SNAPSHOT_URL \
+  --status-file /var/lib/octocam/matter-storage/status.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/octocam/matter-storage
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+MemoryMax=150M
+OOMScoreAdjust=500
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
+
+[Install]
+WantedBy=multi-user.target

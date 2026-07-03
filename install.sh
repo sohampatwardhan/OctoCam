@@ -10,11 +10,14 @@ HOMEKIT_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-homekit.service"
 HOMEKIT_SERVICE_FILE="/etc/systemd/system/octocam-homekit.service"
 WIFI_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-wifi-setup.service"
 WIFI_SERVICE_FILE="/etc/systemd/system/octocam-wifi-setup.service"
+MATTER_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-matter.service"
+MATTER_SERVICE_FILE="/etc/systemd/system/octocam-matter.service"
 MINIMIZE_SCRIPT="$PROJECT_DIR/scripts/minimize-os.sh"
 SERVICE_USER="${SUDO_USER:-${USER}}"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 STATE_DIR="/var/lib/octocam"
 LOG_DIR="/var/log/octocam"
+MATTER_STORAGE_DIR="$STATE_DIR/matter-storage"
 SECRET_KEY_FILE="$STATE_DIR/secret-key"
 WEB_BINARY="/usr/local/bin/octocam-web"
 MINIMAL_OS=0
@@ -51,6 +54,11 @@ if [[ ! -f "$WIFI_SERVICE_TEMPLATE" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$MATTER_SERVICE_TEMPLATE" ]]; then
+  echo "Missing Matter service template: $MATTER_SERVICE_TEMPLATE"
+  exit 1
+fi
+
 if [[ "$MINIMAL_OS" -eq 1 ]]; then
   if [[ ! -x "$MINIMIZE_SCRIPT" ]]; then
     echo "Missing executable minimization script: $MINIMIZE_SCRIPT"
@@ -62,6 +70,7 @@ fi
 
 echo "Installing OctoCam dependencies..."
 apt-get update
+# octocam-matter runtime deps (GStreamer/avahi) land with the Plan-2 daemon build; see docs/matter.md
 apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config network-manager nodejs npm ffmpeg
 
 if ! apt-get install -y --no-install-recommends rpicam-apps; then
@@ -98,6 +107,13 @@ npm ci --omit=dev --prefix "$HOMEKIT_DIR"
 
 echo "Preparing OctoCam state directories..."
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR" "$LOG_DIR"
+
+# Matter daemon runs sandboxed as its own user (never root: parses untrusted
+# LAN traffic). Storage dir owns the CHIP KVS + status file.
+if ! id -u octocam-matter >/dev/null 2>&1; then
+  useradd --system --no-create-home --shell /usr/sbin/nologin octocam-matter
+fi
+install -d -o octocam-matter -g octocam-matter -m 750 "$MATTER_STORAGE_DIR"
 
 if [[ ! -f "$SECRET_KEY_FILE" ]]; then
   umask 077
@@ -163,6 +179,11 @@ sed \
   "$WIFI_SERVICE_TEMPLATE" > "$WIFI_SERVICE_FILE"
 chmod 0644 "$WIFI_SERVICE_FILE"
 
+sed \
+  -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
+  "$MATTER_SERVICE_TEMPLATE" > "$MATTER_SERVICE_FILE"
+chmod 0644 "$MATTER_SERVICE_FILE"
+
 for group in video gpio i2c; do
   if getent group "$group" >/dev/null; then
     usermod -aG "$group" "$SERVICE_USER"
@@ -180,6 +201,10 @@ if grep -q '"homekit_enabled": true' "$STATE_DIR/settings.json"; then
   systemctl enable --now octocam-homekit.service
 else
   systemctl disable --now octocam-homekit.service >/dev/null 2>&1 || true
+fi
+
+if grep -q '"matter_enabled": true' /var/lib/octocam/settings.json 2>/dev/null; then
+  systemctl enable octocam-matter.service
 fi
 
 echo "OctoCam web UI is installed."
