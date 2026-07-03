@@ -37,7 +37,7 @@ pub fn configure_rtsp_service(settings: &Settings, path: &PathBuf) -> ConfigureR
             message: error,
         },
     };
-    let service = match system::set_service_enabled("octocam-rtsp", settings.rtsp_enabled) {
+    let service = match system::set_service_enabled("octocam-rtsp", rtsp_service_should_run(settings)) {
         Ok(()) => ActionResult {
             path: None,
             unit: Some("octocam-rtsp".to_string()),
@@ -54,11 +54,18 @@ pub fn configure_rtsp_service(settings: &Settings, path: &PathBuf) -> ConfigureR
     ConfigureResult { config, service }
 }
 
+/// mediamtx must keep running while any local daemon consumes it, even when the
+/// user turns LAN RTSP exposure off — rtsp_enabled=false used to stop the unit,
+/// permanently killing the daemons' only video source.
+pub fn rtsp_service_should_run(settings: &Settings) -> bool {
+    settings.rtsp_enabled || settings.homekit_enabled || settings.matter_enabled
+}
+
 pub fn render_mediamtx_config(settings: &Settings) -> String {
-    // HomeKit's daemon reads via a local RTSP session (ffmpeg), so reserve one
-    // reader slot per path — user-facing capacity should not shrink when the
-    // Home app is watching. Soft reservation: see the design doc.
-    let reserve = if settings.homekit_enabled { 1 } else { 0 };
+    // Each enabled local daemon (HomeKit, Matter) reads via its own local RTSP
+    // session, so reserve one slot per daemon per path — user-facing capacity
+    // must not shrink when a bridge is watching. Soft reservation: see the spec.
+    let reserve = i32::from(settings.homekit_enabled) + i32::from(settings.matter_enabled);
     let mut path_sections = vec![mediamtx_camera_path(
         &settings.rtsp_path,
         false,
@@ -192,5 +199,52 @@ mod tests {
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(y - x, 1, "homekit reserve must add exactly one reader per path");
         }
+    }
+
+    #[test]
+    fn matter_reserve_adds_one_reader() {
+        let mut settings = Settings { matter_enabled: false, ..Default::default() };
+        let without = render_mediamtx_config(&settings);
+        settings.matter_enabled = true;
+        let with = render_mediamtx_config(&settings);
+        let max_readers = |content: &str| -> Vec<i32> {
+            content.lines()
+                .filter_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .map(|v| v.parse().unwrap())
+                .collect()
+        };
+        for (x, y) in max_readers(&without).iter().zip(max_readers(&with).iter()) {
+            assert_eq!(y - x, 1, "matter reserve must add exactly one reader per path");
+        }
+    }
+
+    #[test]
+    fn homekit_and_matter_reserves_are_additive() {
+        let base = Settings { homekit_enabled: false, matter_enabled: false, ..Default::default() };
+        let both = Settings { homekit_enabled: true, matter_enabled: true, ..base.clone() };
+        let first_max = |content: &str| -> i32 {
+            content.lines()
+                .find_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .unwrap().parse().unwrap()
+        };
+        assert_eq!(
+            first_max(&render_mediamtx_config(&both)) - first_max(&render_mediamtx_config(&base)),
+            2
+        );
+    }
+
+    #[test]
+    fn rtsp_service_runs_whenever_a_daemon_needs_it() {
+        // rtsp_enabled=false must NOT stop mediamtx while a daemon consumes it —
+        // the daemons' only video source is this unit (hardening FIX-1).
+        let mut s = Settings { rtsp_enabled: false, homekit_enabled: false, matter_enabled: false, ..Default::default() };
+        assert!(!rtsp_service_should_run(&s));
+        s.matter_enabled = true;
+        assert!(rtsp_service_should_run(&s));
+        s.matter_enabled = false;
+        s.homekit_enabled = true;
+        assert!(rtsp_service_should_run(&s));
+        s = Settings { rtsp_enabled: true, ..Default::default() };
+        assert!(rtsp_service_should_run(&s));
     }
 }
