@@ -4,6 +4,14 @@
 
 ### Added
 
+- feat(web): SSH keys page (Advanced Settings) to view, revoke, and authorize
+  the public keys in root's `/root/.ssh/authorized_keys`. Keys are shown with
+  type, comment, and SHA256 fingerprint. Added keys are validated as a single
+  well-formed line (multi-line, control-char, options-prefixed, and oversized
+  input rejected); the file is rewritten atomically after verifying staged
+  contents, and never emptied except on a confirmed last-key revoke, which
+  warns that root SSH access will be lost. POST routes require an admin session
+  and a same-origin request; only enumerated status codes travel in redirects.
 - feat(matter): Matter 1.5 camera control plane — matter_enabled setting,
   onboarding QR/manual code generated locally, sandboxed octocam-matter
   systemd unit, loopback snapshot endpoint, additive reader reservation,

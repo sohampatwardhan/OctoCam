@@ -4,6 +4,7 @@ mod matter;
 mod proc;
 mod security;
 mod settings;
+mod ssh_keys;
 mod streams;
 mod system;
 mod wifi;
@@ -204,6 +205,23 @@ struct SystemTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "ssh_keys.html")]
+struct SshKeysTemplate {
+    page_title: String,
+    settings: Settings,
+    system: system::SystemView,
+    active_page: &'static str,
+    keys: Vec<ssh_keys::AuthorizedKey>,
+    has_keys: bool,
+    read_error: bool,
+    message: String,
+    has_message: bool,
+    message_is_error: bool,
+    warn_fingerprint: String,
+    has_warn: bool,
+}
+
+#[derive(Template)]
 #[template(path = "logs.html")]
 struct LogsTemplate {
     page_title: String,
@@ -303,6 +321,23 @@ struct SavedQuery {
 }
 
 #[derive(Deserialize)]
+struct SshKeysQuery {
+    status: Option<String>,
+    warn: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SshKeyAddForm {
+    public_key: String,
+}
+
+#[derive(Deserialize)]
+struct SshKeyRevokeForm {
+    fingerprint: String,
+    confirm: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct PowerForm {
     action: String,
     #[serde(rename = "_return_to")]
@@ -376,6 +411,9 @@ async fn async_main() {
         .route("/system", get(system_page))
         .route("/logs", get(logs))
         .route("/terminal", get(terminal))
+        .route("/ssh-keys", get(ssh_keys_page))
+        .route("/ssh-keys/add", post(ssh_keys_add))
+        .route("/ssh-keys/revoke", post(ssh_keys_revoke))
         .route("/stream", get(stream))
         .route("/setup", get(setup).post(complete_setup))
         .route("/wifi/scan", post(scan_wifi))
@@ -746,6 +784,168 @@ async fn terminal(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: U
         system: system::view(&status),
         active_page: "terminal",
     })
+}
+
+/// State directory that holds the service-user-owned temp file used to stage an
+/// atomic authorized_keys rewrite (the parent of the settings file).
+fn ssh_keys_state_dir(state: &AppState) -> PathBuf {
+    state
+        .config_path
+        .parent()
+        .map(|dir| dir.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/var/lib/octocam"))
+}
+
+/// Reject a state-changing POST that a browser reports came from a different
+/// origin. If neither `Origin` nor `Referer` is present we allow it — the
+/// session cookie is `SameSite=Lax`, which already blocks cross-site POST-form
+/// submissions. This is contained defense-in-depth for the root-key surface,
+/// not an app-wide CSRF-token scheme.
+fn cross_origin(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    let source = headers
+        .get(header::ORIGIN)
+        .or_else(|| headers.get(header::REFERER))
+        .and_then(|value| value.to_str().ok());
+    let Some(source) = source else {
+        return false;
+    };
+    let source_host = source
+        .split_once("://")
+        .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
+        .unwrap_or("");
+    source_host != host
+}
+
+/// Canned, escape-safe message for a redirect status code. Detailed causes are
+/// logged server-side; only the enumerated code travels in the URL.
+fn ssh_key_message(status: Option<&str>, has_warn: bool) -> (String, bool) {
+    if has_warn {
+        return (
+            "This is the last key authorized for root SSH — removing it ends remote \
+             SSH access to this device. Confirm below only if you're sure."
+                .to_string(),
+            true,
+        );
+    }
+    match status {
+        Some("added") => ("SSH key authorized.".to_string(), false),
+        Some("revoked") => ("SSH key revoked.".to_string(), false),
+        Some("duplicate") => ("That key is already authorized.".to_string(), true),
+        Some("bad_key") => (
+            "That isn't a single valid public key. Paste one line like \
+             'ssh-ed25519 AAAA… comment' — options and multi-line input aren't accepted."
+                .to_string(),
+            true,
+        ),
+        Some("too_long") => ("That key is too large to store.".to_string(), true),
+        Some("write_failed") => (
+            "Couldn't update root's authorized_keys — check the service user's sudo access."
+                .to_string(),
+            true,
+        ),
+        Some("read_failed") => (
+            "Couldn't read root's authorized_keys — check the service user's sudo access."
+                .to_string(),
+            true,
+        ),
+        Some("csrf") => (
+            "Request rejected because it came from another site.".to_string(),
+            true,
+        ),
+        _ => (String::new(), false),
+    }
+}
+
+async fn ssh_keys_page(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(query): Query<SshKeysQuery>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    if !settings.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    let status = run_blocking(system::status).await?;
+    // ssh_keys::list returns Result<_, KeyError>, so run_blocking yields a
+    // nested Result; both the inner Err and a join failure surface as read_error.
+    let (keys, read_error) = match run_blocking(ssh_keys::list).await {
+        Ok(Ok(keys)) => (keys, false),
+        Ok(Err(_)) => (Vec::new(), true),
+        Err(_join) => (Vec::new(), true),
+    };
+    let warn_fingerprint = query.warn.unwrap_or_default();
+    let has_warn = !warn_fingerprint.is_empty();
+    let (message, message_is_error) = ssh_key_message(query.status.as_deref(), has_warn);
+    render(SshKeysTemplate {
+        page_title: "SSH keys".to_string(),
+        settings,
+        system: system::view(&status),
+        active_page: "ssh_keys",
+        has_keys: !keys.is_empty(),
+        keys,
+        read_error,
+        has_message: !message.is_empty(),
+        message,
+        message_is_error,
+        warn_fingerprint,
+        has_warn,
+    })
+}
+
+async fn ssh_keys_add(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<SshKeyAddForm>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    if cross_origin(&headers) {
+        return Ok(Redirect::to("/ssh-keys?status=csrf").into_response());
+    }
+    let state_dir = ssh_keys_state_dir(&state);
+    let public_key = form.public_key;
+    let status = match run_blocking(move || ssh_keys::add(&state_dir, &public_key)).await {
+        Ok(Ok(())) => "added",
+        Ok(Err(error)) => error.code(),
+        Err(_join) => "write_failed",
+    };
+    Ok(Redirect::to(&format!("/ssh-keys?status={status}")).into_response())
+}
+
+async fn ssh_keys_revoke(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<SshKeyRevokeForm>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    if cross_origin(&headers) {
+        return Ok(Redirect::to("/ssh-keys?status=csrf").into_response());
+    }
+    let state_dir = ssh_keys_state_dir(&state);
+    let confirm = form.confirm.as_deref() == Some("1");
+    let target = form.fingerprint;
+    let warn_target = target.clone();
+    let redirect = match run_blocking(move || ssh_keys::revoke(&state_dir, &target, confirm)).await {
+        Ok(Ok(ssh_keys::RevokeOutcome::Revoked)) => "/ssh-keys?status=revoked".to_string(),
+        Ok(Ok(ssh_keys::RevokeOutcome::Warn)) => {
+            format!("/ssh-keys?warn={}", urlencoding::encode(&warn_target))
+        }
+        Ok(Err(error)) => format!("/ssh-keys?status={}", error.code()),
+        Err(_join) => "/ssh-keys?status=write_failed".to_string(),
+    };
+    Ok(Redirect::to(&redirect).into_response())
 }
 
 async fn service_worker() -> Response {

@@ -62,6 +62,13 @@ Passwords must never be stored in plaintext by OctoCam.
 - Wi-Fi credentials are submitted directly to NetworkManager because the device
   needs a recoverable Wi-Fi secret to reconnect; OctoCam does not keep its own
   copy.
+- Root SSH keys are managed through `/root/.ssh/authorized_keys`. The control
+  panel validates a pasted key as a single well-formed line before authorizing
+  it (rejecting multi-line, control-character, options-prefixed, and oversized
+  input), rewrites the file atomically after verifying the staged contents, and
+  never writes an empty key file except on a confirmed last-key revoke. Adding
+  or revoking a key requires an authenticated admin session and a same-origin
+  request. Full key material is never placed in a URL or log line.
 
 ## OS Baseline
 
@@ -203,6 +210,11 @@ maintenance from a phone, tablet, or desktop browser.
 - The power button opens a modal dialog with options to restart the OctoCam
   service, restart the Raspberry Pi, or shut down the Raspberry Pi. A shutdown
   requires unplugging and re-plugging power to turn the device back on.
+- The SSH keys page (Advanced Settings) lists the public keys authorized for
+  root SSH login, shows each key's type, comment, and SHA256 fingerprint, and
+  lets you revoke a key or authorize a new one. Removing the last remaining key
+  requires an explicit confirmation, since it ends root SSH access to the
+  device.
 
 ## Quick Start On The Pi
 

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} SSH keys</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-setup-lucide">
+    <script src="/static/app.js?v=20260702-wifi-setup-lucide" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+
+          {% if has_message %}
+            {% if message_is_error %}
+              <div class="pairing-box error-pairing"><span>{{ message }}</span></div>
+            {% else %}
+              <div class="toast-region" role="status" aria-live="polite" aria-atomic="true">
+                <p class="toast">{{ message }}</p>
+              </div>
+            {% endif %}
+          {% endif %}
+
+          <section class="panel settings-card">
+            <div class="section-heading"><h2>Root SSH keys</h2></div>
+            <p class="empty-note">These public keys can log in to this device over SSH as <code>root</code> (<code>ssh root@{{ system.ssh_target }}</code>). Revoke any you don't recognise.</p>
+
+            {% if read_error %}
+              <div class="pairing-box error-pairing"><span>Couldn't read <code>/root/.ssh/authorized_keys</code>. This usually means the OctoCam service user lacks passwordless <code>sudo</code>. Check the system logs.</span></div>
+            {% else if !has_keys %}
+              <p class="empty-note">No SSH keys are authorized for root. Add one below to enable SSH access.</p>
+            {% else %}
+              {% for key in keys %}
+                <div class="panel settings-card ssh-key-row">
+                  <dl class="status-list compact-list">
+                    <div><dt>Type</dt><dd>{{ key.key_type }}</dd></div>
+                    <div><dt>Comment</dt><dd>{% if key.comment.len() > 0 %}{{ key.comment }}{% else %}(none){% endif %}</dd></div>
+                    <div><dt>Fingerprint</dt><dd>{{ key.fingerprint }}</dd></div>
+                    <div><dt>Key</dt><dd>{{ key.preview }}</dd></div>
+                  </dl>
+                  {% if has_warn && warn_fingerprint == key.fingerprint %}
+                    <form class="settings-stack" method="post" action="/ssh-keys/revoke">
+                      <input type="hidden" name="fingerprint" value="{{ key.fingerprint }}">
+                      <input type="hidden" name="confirm" value="1">
+                      <button class="danger" type="submit">Yes — remove my last key and end root SSH</button>
+                      <small>This is the only key. After removing it you will not be able to SSH in as root until you add another (e.g. via console or a reflash).</small>
+                    </form>
+                  {% else %}
+                    <form class="settings-stack" method="post" action="/ssh-keys/revoke">
+                      <input type="hidden" name="fingerprint" value="{{ key.fingerprint }}">
+                      <button type="submit">Revoke</button>
+                    </form>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            {% endif %}
+          </section>
+
+          <form class="settings-stack" method="post" action="/ssh-keys/add">
+            <section class="panel settings-card">
+              <div class="section-heading"><h2>Authorize a new key</h2></div>
+              <p class="empty-note">Paste a single public key line, e.g. the contents of <code>~/.ssh/id_ed25519.pub</code>.</p>
+              <label class="field">
+                <span>Public key</span>
+                <textarea name="public_key" rows="3" placeholder="ssh-ed25519 AAAA… user@host" required></textarea>
+              </label>
+              <button class="primary" type="submit">Authorize key</button>
+            </section>
+          </form>
+
+        </section>
+      </div>
+    </main>
+  </body>
+</html>
