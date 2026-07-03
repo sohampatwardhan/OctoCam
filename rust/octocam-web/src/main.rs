@@ -1,5 +1,6 @@
 mod camera;
 mod mediamtx;
+mod matter;
 mod proc;
 mod security;
 mod settings;
