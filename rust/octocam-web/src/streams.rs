@@ -12,9 +12,10 @@ pub struct PathViewers {
     pub browser: u32,
     pub rtsp: u32,
     pub homekit: u32,
+    pub matter: u32,
     pub hls: u32,
     pub total: u32,
-    /// User-facing cap (excludes the HomeKit reserve slot).
+    /// User-facing cap (excludes the local daemon reserve slots — HomeKit/Matter).
     pub capacity: u32,
 }
 
@@ -25,8 +26,9 @@ pub struct ViewerReport {
 }
 
 impl ViewerReport {
-    /// Main has room for another NON-local viewer. HomeKit's reserve and lingering
-    /// HLS sessions are deliberately excluded from capacity math.
+    /// Main has room for another NON-local viewer. The local daemon buckets
+    /// (HomeKit/Matter) and lingering HLS sessions are deliberately excluded from
+    /// capacity math — mis-attribution between daemons can never mark a path full.
     #[cfg_attr(not(test), allow(dead_code))] // exercised by unit tests; capacity gating is client-side
     pub fn main_available(&self) -> bool {
         self.main.browser + self.main.rtsp < self.main.capacity
@@ -44,9 +46,14 @@ pub async fn viewer_report(settings: &Settings) -> Option<ViewerReport> {
         &settings.sub_rtsp_path,
         settings.rtsp_max_clients.max(0) as u32,
         settings.sub_rtsp_max_clients.max(0) as u32,
+        settings.homekit_enabled,
+        settings.matter_enabled,
     )
 }
 
+/// (test seam: the flat argument list mirrors the mediamtx API inputs plus
+/// the two daemon flags; a params struct would only obscure the call sites)
+#[allow(clippy::too_many_arguments)]
 fn classify(
     paths_json: &str,
     sessions_json: &str,
@@ -54,6 +61,8 @@ fn classify(
     sub_path: &str,
     main_cap: u32,
     sub_cap: u32,
+    homekit_enabled: bool,
+    matter_enabled: bool,
 ) -> Option<ViewerReport> {
     let paths: Value = serde_json::from_str(paths_json).ok()?;
     let sessions: Value = serde_json::from_str(sessions_json).unwrap_or(Value::Null);
@@ -76,12 +85,14 @@ fn classify(
         main: PathViewers { capacity: main_cap, ..Default::default() },
         sub: PathViewers { capacity: sub_cap, ..Default::default() },
     };
+    let mut local_main = 0u32;
+    let mut local_sub = 0u32;
     for item in paths.get("items")?.as_array()? {
         let name = item.get("name").and_then(Value::as_str).unwrap_or("");
-        let target = if name == main_path {
-            &mut report.main
+        let (target, local_count) = if name == main_path {
+            (&mut report.main, &mut local_main)
         } else if name == sub_path {
-            &mut report.sub
+            (&mut report.sub, &mut local_sub)
         } else {
             continue;
         };
@@ -100,7 +111,8 @@ fn classify(
                 "hlsSession" => target.hls += 1,
                 "rtspSession" | "rtspsSession" => {
                     if local_session.get(id).copied().unwrap_or(false) {
-                        target.homekit += 1;
+                        // Local daemon readers; attributed between homekit/matter below.
+                        *local_count += 1;
                     } else {
                         target.rtsp += 1;
                     }
@@ -110,7 +122,30 @@ fn classify(
             target.total += 1;
         }
     }
+    let (hk, mt) = attribute_local(local_main, homekit_enabled, matter_enabled);
+    report.main.homekit = hk;
+    report.main.matter = mt;
+    let (hk, mt) = attribute_local(local_sub, homekit_enabled, matter_enabled);
+    report.sub.homekit = hk;
+    report.sub.matter = mt;
     Some(report)
+}
+
+/// mediamtx's session list exposes only remoteAddr, so two loopback daemons are
+/// indistinguishable at the protocol level. Each daemon holds at most one
+/// persistent reader per path; the transient snapshot ffmpeg also shows as
+/// local. Attribution: single-daemon setups get everything; with both enabled,
+/// matter is credited one reader once a second local reader exists, and any
+/// extras (snapshot capture) ride the homekit bucket.
+fn attribute_local(local: u32, homekit_enabled: bool, matter_enabled: bool) -> (u32, u32) {
+    if !matter_enabled {
+        return (local, 0);
+    }
+    if !homekit_enabled {
+        return (0, local);
+    }
+    let matter = u32::from(local >= 2);
+    (local - matter, matter)
 }
 
 /// Minimal HTTP/1.0 GET to the localhost mediamtx API. HTTP/1.0 forces
@@ -152,15 +187,15 @@ mod tests {
 
     #[test]
     fn classifies_readers_by_type_and_locality() {
-        let report = classify(PATHS, SESSIONS, "main", "sub", 1, 2).unwrap();
-        assert_eq!(report.main, PathViewers { browser: 1, rtsp: 1, homekit: 0, hls: 0, total: 2, capacity: 1 });
-        assert_eq!(report.sub, PathViewers { browser: 0, rtsp: 0, homekit: 1, hls: 1, total: 2, capacity: 2 });
+        let report = classify(PATHS, SESSIONS, "main", "sub", 1, 2, true, false).unwrap();
+        assert_eq!(report.main, PathViewers { browser: 1, rtsp: 1, homekit: 0, matter: 0, hls: 0, total: 2, capacity: 1 });
+        assert_eq!(report.sub, PathViewers { browser: 0, rtsp: 0, homekit: 1, matter: 0, hls: 1, total: 2, capacity: 2 });
     }
 
     #[test]
     fn lingering_hls_does_not_consume_capacity() {
         let paths = r#"{"items":[{"name":"main","readers":[{"type":"hlsSession","id":"h9"}]},{"name":"sub","readers":[]}]}"#;
-        let report = classify(paths, SESSIONS, "main", "sub", 1, 2).unwrap();
+        let report = classify(paths, SESSIONS, "main", "sub", 1, 2, true, false).unwrap();
         assert_eq!(report.main.hls, 1);
         assert!(report.main_available(), "a lingering HLS session must not mark main full");
     }
@@ -168,24 +203,55 @@ mod tests {
     #[test]
     fn main_availability_ignores_homekit() {
         let paths = r#"{"items":[{"name":"main","readers":[{"type":"rtspSession","id":"r2"}]},{"name":"sub","readers":[]}]}"#;
-        let report = classify(paths, SESSIONS, "main", "sub", 1, 2).unwrap();
+        let report = classify(paths, SESSIONS, "main", "sub", 1, 2, true, false).unwrap();
         assert_eq!(report.main.homekit, 1);
         assert!(report.main_available(), "a HomeKit reader must not consume user capacity");
     }
 
     #[test]
     fn malformed_paths_yields_none_but_sessions_degrade() {
-        assert!(classify("not json", SESSIONS, "main", "sub", 1, 2).is_none());
-        assert!(classify(PATHS, "{}", "main", "sub", 1, 2).is_some());
+        assert!(classify("not json", SESSIONS, "main", "sub", 1, 2, true, false).is_none());
+        assert!(classify(PATHS, "{}", "main", "sub", 1, 2, true, false).is_some());
     }
 
     #[test]
     fn sessions_endpoint_down_still_reports_non_rtsp_counts() {
-        let report = classify(PATHS, "{}", "main", "sub", 1, 2).unwrap();
+        let report = classify(PATHS, "{}", "main", "sub", 1, 2, true, false).unwrap();
         assert_eq!(report.main.browser, 1);
         assert_eq!(report.sub.hls, 1);
         // Without locality info the sub rtsp reader counts as external, not homekit.
         assert_eq!(report.sub.rtsp, 1);
         assert_eq!(report.sub.homekit, 0);
+    }
+
+    #[test]
+    fn local_reader_attributed_to_matter_when_only_matter_enabled() {
+        let paths = r#"{"items":[{"name":"main","readers":[{"type":"rtspSession","id":"r2"}]},{"name":"sub","readers":[]}]}"#;
+        let report = classify(paths, SESSIONS, "main", "sub", 1, 2, false, true).unwrap();
+        assert_eq!(report.main.matter, 1);
+        assert_eq!(report.main.homekit, 0);
+        assert!(report.main_available(), "a Matter reader must not consume user capacity");
+    }
+
+    #[test]
+    fn two_local_readers_split_between_daemons_when_both_enabled() {
+        let paths = r#"{"items":[{"name":"sub","readers":[{"type":"rtspSession","id":"r2"},{"type":"rtspSession","id":"r3"}]},{"name":"main","readers":[]}]}"#;
+        let sessions = r#"{"items":[
+            {"id":"r2","remoteAddr":"127.0.0.1:44064"},
+            {"id":"r3","remoteAddr":"127.0.0.1:44100"}
+        ]}"#;
+        let report = classify(paths, sessions, "main", "sub", 1, 2, true, true).unwrap();
+        assert_eq!(report.sub.homekit, 1);
+        assert_eq!(report.sub.matter, 1);
+    }
+
+    #[test]
+    fn attribute_local_rules() {
+        assert_eq!(attribute_local(3, true, false), (3, 0));
+        assert_eq!(attribute_local(3, false, true), (0, 3));
+        assert_eq!(attribute_local(1, true, true), (1, 0)); // ambiguous single: homekit, stable
+        assert_eq!(attribute_local(2, true, true), (1, 1));
+        assert_eq!(attribute_local(3, true, true), (2, 1)); // transient snapshot ffmpeg rides homekit bucket
+        assert_eq!(attribute_local(2, false, false), (2, 0)); // legacy fallback
     }
 }
