@@ -182,11 +182,15 @@ passcode, and restarts the daemon (if still enabled) with a fresh identity.
 
 **Storage wipe preserves the directory.** "Reset Matter pairing" clears the
 *contents* of `/var/lib/octocam/matter-storage` rather than removing and
-recreating the directory itself. The directory is owned by the sandboxed
-`octocam-matter` user (created by `install.sh` with `-o octocam-matter -m
-750`); if `octocam-web` (running as a different user) deleted and recreated
-it, ownership would flip to `octocam-web`'s user and lock the daemon out of
-its own storage. If the directory is missing entirely (a fresh install, or
+recreating the directory itself. The directory is owned by
+`octocam-matter:octocam-matter` with mode `770` (created by `install.sh`),
+and the service user is added to the `octocam-matter` group so the control
+plane (`octocam-web`) can perform pairing resets even when it does not run
+as root. This widens who may write to the directory, not what the daemon
+can touch: the systemd sandbox still confines the daemon itself to exactly
+this directory via `ReadWritePaths`. If `octocam-web` (running as a
+different user) deleted and recreated the directory, ownership would flip
+to `octocam-web`'s user and lock the daemon out of its own storage. If the directory is missing entirely (a fresh install, or
 Matter was never enabled), reset creates it, but ownership repair in that
 case is `install.sh`'s job, not the reset action's.
 

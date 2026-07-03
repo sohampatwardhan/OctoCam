@@ -110,7 +110,12 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   if ! id -u octocam-matter >/dev/null 2>&1; then
     sudo -n useradd --system --no-create-home --shell /usr/sbin/nologin octocam-matter
   fi
-  sudo -n install -d -o octocam-matter -g octocam-matter -m 750 /var/lib/octocam/matter-storage
+  # octocam-web (running as the service user) must be able to wipe the KVS on
+  # \"Reset Matter pairing\"; grant it group access to the daemon storage dir.
+  if [ '$SERVICE_USER' != root ]; then
+    sudo -n usermod -aG octocam-matter '$SERVICE_USER'
+  fi
+  sudo -n install -d -o octocam-matter -g octocam-matter -m 770 /var/lib/octocam/matter-storage
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable octocam-wifi-setup.service >/dev/null
   sudo -n systemctl restart octocam-web.service

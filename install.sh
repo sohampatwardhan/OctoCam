@@ -113,7 +113,12 @@ install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$STATE_DIR" "$LOG_DIR"
 if ! id -u octocam-matter >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin octocam-matter
 fi
-install -d -o octocam-matter -g octocam-matter -m 750 "$MATTER_STORAGE_DIR"
+# octocam-web (running as $SERVICE_USER) must be able to wipe the KVS on
+# "Reset Matter pairing"; grant it group access to the daemon's storage.
+if [ "$SERVICE_USER" != "root" ]; then
+  usermod -aG octocam-matter "$SERVICE_USER"
+fi
+install -d -o octocam-matter -g octocam-matter -m 770 "$MATTER_STORAGE_DIR"
 
 if [[ ! -f "$SECRET_KEY_FILE" ]]; then
   umask 077
