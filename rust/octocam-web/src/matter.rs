@@ -216,7 +216,10 @@ pub fn qr_svg(payload: &str) -> String {
                 None => rendered,
             }
         }
-        Err(_) => String::new(),
+        Err(error) => {
+            tracing::error!("matter QR render failed: {error}");
+            String::new()
+        }
     }
 }
 
@@ -234,6 +237,8 @@ pub struct MatterStatus {
     pub commissioned: bool,
     #[serde(default)]
     pub fabric_count: u32,
+    // Part of the daemon status-file contract; not yet surfaced in the UI.
+    #[allow(dead_code)]
     #[serde(default)]
     pub stream_state: String,
     #[serde(default)]
@@ -295,6 +300,101 @@ pub fn ipv6_preflight_ok() -> bool {
         Ok(content) => ipv6_link_local_present(&content),
         // Non-Linux dev machines: don't block the UI on a missing procfs.
         Err(_) => true,
+    }
+}
+
+/// Everything matter.html needs, precomputed (askama templates stay logic-free).
+#[derive(Clone, Debug)]
+pub struct MatterView {
+    pub status: String,
+    pub commissioned: bool,
+    pub fabric_count: u32,
+    // Not referenced by matter.html yet (it keys off commissioned/orphaned_fabrics).
+    #[allow(dead_code)]
+    pub has_fabrics: bool,
+    pub orphaned_fabrics: bool, // fabrics persisted while matter_enabled=false
+    pub manual_code: String,
+    pub qr_svg: String,
+    pub qr_payload: String,
+    pub stream_source: String,
+    pub error: String,
+    pub has_error: bool,
+    pub ipv6_ok: bool,
+    pub admin_password_set: bool,
+    pub snapshot_endpoint_down: bool,
+}
+
+pub fn view(settings: &Settings, identity: Option<&MatterIdentity>, status: &MatterStatus) -> MatterView {
+    let status_label = if !status.status.is_empty() {
+        status.status.clone()
+    } else if settings.matter_enabled {
+        "starting".to_string()
+    } else {
+        "disabled".to_string()
+    };
+    let (manual_code, qr_svg_text, payload) = match identity {
+        Some(id) => {
+            let payload = qr_payload(id);
+            (
+                manual_pairing_code(id.discriminator, id.passcode),
+                qr_svg(&payload),
+                payload,
+            )
+        }
+        None => (String::new(), String::new(), String::new()),
+    };
+    MatterView {
+        status: status_label,
+        commissioned: status.commissioned,
+        fabric_count: status.fabric_count,
+        has_fabrics: status.fabric_count > 0,
+        orphaned_fabrics: status.fabric_count > 0 && !settings.matter_enabled,
+        manual_code,
+        qr_svg: qr_svg_text,
+        qr_payload: payload,
+        stream_source: if settings.sub_stream_enabled { "sub" } else { "main" }.to_string(),
+        has_error: !status.error.is_empty(),
+        error: status.error.clone(),
+        ipv6_ok: ipv6_preflight_ok(),
+        admin_password_set: !settings.admin_password_hash.is_empty(),
+        snapshot_endpoint_down: false, // set by the handler from AppState
+    }
+}
+
+/// Enable/disable + reconfigure the daemon. Unlike configure_homekit_service,
+/// this restarts ONLY when the rendered config changed — a brightness save must
+/// not drop live Matter WebRTC sessions (hardening FIX-10).
+pub fn configure_matter_service(settings: &Settings, env_path: &Path, identity_path: &Path) {
+    const UNIT: &str = "octocam-matter";
+    if !settings.matter_enabled {
+        let _ = crate::system::set_service_enabled(UNIT, false);
+        return;
+    }
+    let Ok(identity) = load_or_generate_identity(identity_path) else {
+        tracing::error!("matter: cannot load or generate identity");
+        return;
+    };
+    let changed = write_matter_env(settings, &identity, env_path).unwrap_or(false);
+    let _ = crate::system::set_service_enabled(UNIT, true);
+    if changed {
+        let _ = crate::system::restart_service(UNIT);
+    }
+}
+
+/// Reset pairing: stop → wipe KVS → rotate passcode → restart if enabled.
+/// Wiping under a live daemon is racy (it holds fabric state in memory and
+/// rewrites the KVS), hence the strict ordering.
+pub fn reset_pairing(settings: &Settings, storage_dir: &Path, env_path: &Path, identity_path: &Path) {
+    const UNIT: &str = "octocam-matter";
+    let _ = crate::system::set_service_enabled(UNIT, false);
+    let _ = fs::remove_dir_all(storage_dir);
+    let _ = fs::create_dir_all(storage_dir);
+    if let Ok(identity) = rotate_identity(identity_path) {
+        let _ = write_matter_env(settings, &identity, env_path);
+    }
+    if settings.matter_enabled {
+        let _ = crate::system::set_service_enabled(UNIT, true);
+        let _ = crate::system::restart_service(UNIT);
     }
 }
 

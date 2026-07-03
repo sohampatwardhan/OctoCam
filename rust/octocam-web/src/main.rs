@@ -48,6 +48,10 @@ struct AppState {
     wifi_cache_path: PathBuf,
     mediamtx_config_path: PathBuf,
     homekit_status_path: PathBuf,
+    matter_identity_path: PathBuf,
+    matter_env_path: PathBuf,
+    matter_status_path: PathBuf,
+    matter_storage_dir: PathBuf,
     secret_key: String,
     snapshot_cache: SnapshotCache,
     /// Set when the loopback snapshot listener could not bind — surfaced on
@@ -165,6 +169,17 @@ struct HomeKitTemplate {
     settings: Settings,
     system: system::SystemView,
     homekit: HomeKitView,
+    saved: bool,
+    active_page: &'static str,
+}
+
+#[derive(Template)]
+#[template(path = "matter.html")]
+struct MatterTemplate {
+    page_title: String,
+    settings: Settings,
+    system: system::SystemView,
+    matter: matter::MatterView,
     saved: bool,
     active_page: &'static str,
 }
@@ -354,6 +369,8 @@ async fn async_main() {
         .route("/stream-settings", get(stream_settings))
         .route("/rtsp", get(rtsp_page))
         .route("/homekit", get(homekit))
+        .route("/matter", get(matter_page))
+        .route("/matter/reset", post(matter_reset))
         .route("/admin", get(admin))
         .route("/advanced", get(system_page))
         .route("/system", get(system_page))
@@ -450,6 +467,10 @@ impl AppState {
             wifi_cache_path,
             mediamtx_config_path,
             homekit_status_path,
+            matter_identity_path: matter::default_identity_path(),
+            matter_env_path: matter::default_env_path(),
+            matter_status_path: matter::default_status_path(),
+            matter_storage_dir: matter::default_storage_dir(),
             secret_key,
             snapshot_cache: Arc::new(tokio::sync::Mutex::new(None)),
             internal_listener_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -593,6 +614,60 @@ async fn homekit(
         system: system::view(&status),
         active_page: "homekit",
     })
+}
+
+async fn matter_page(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(query): Query<SavedQuery>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    if !settings.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    let status = run_blocking(system::status).await?;
+    // Identity is only materialized once Matter has been enabled; before that
+    // the page shows the enable flow without minting a credential.
+    let identity = if settings.matter_enabled {
+        matter::load_or_generate_identity(&state.matter_identity_path).ok()
+    } else {
+        None
+    };
+    let matter_status = matter::read_status(&state.matter_status_path);
+    let mut matter_view = matter::view(&settings, identity.as_ref(), &matter_status);
+    matter_view.snapshot_endpoint_down = state
+        .internal_listener_down
+        .load(std::sync::atomic::Ordering::Relaxed);
+    render(MatterTemplate {
+        page_title: "Matter".to_string(),
+        saved: query.saved.as_deref() == Some("1"),
+        matter: matter_view,
+        settings,
+        system: system::view(&status),
+        active_page: "matter",
+    })
+}
+
+async fn matter_reset(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let (storage, env_path, id_path) = (
+        state.matter_storage_dir.clone(),
+        state.matter_env_path.clone(),
+        state.matter_identity_path.clone(),
+    );
+    run_blocking(move || matter::reset_pairing(&settings, &storage, &env_path, &id_path)).await?;
+    Ok(Redirect::to("/matter?saved=1").into_response())
 }
 
 async fn admin(
@@ -986,12 +1061,16 @@ async fn update_settings(
         validated.admin_password_hash = security::hash_password(&admin_password);
     }
     validated.setup_complete = current.setup_complete;
+    settings::enforce_matter_requires_admin(&mut validated);
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
     let _ = mediamtx::configure_rtsp_service(&current, &state.mediamtx_config_path);
     let homekit_settings = current.clone();
     run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
+    let matter_settings = current.clone();
+    let (matter_env, matter_id) = (state.matter_env_path.clone(), state.matter_identity_path.clone());
+    run_blocking(move || matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)).await?;
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
 }
 

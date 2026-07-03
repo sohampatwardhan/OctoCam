@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ settings.device_name }} Matter</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-setup-lucide">
+    <script src="/static/app.js?v=20260702-wifi-setup-lucide" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      {% include "_topbar.html" %}
+      {% include "_settings_toast.html" %}
+
+      <div class="app-layout">
+        {% include "_sidebar.html" %}
+        <section class="content-stack">
+          <form class="settings-stack" method="post" action="/settings">
+            <input type="hidden" name="_return_to" value="/matter">
+            <input type="hidden" name="_checkboxes" value="matter_enabled">
+            <section class="panel settings-card">
+              <div class="section-heading"><h2>Matter</h2></div>
+              {% if !matter.admin_password_set %}
+                <div class="pairing-box error-pairing"><span>Set an admin password first (Admin page). The Matter pairing code is a durable credential for this camera's feed, and without a password anyone on your network could read it.</span></div>
+              {% endif %}
+              <div class="toggle-row"><span>Matter camera enabled</span><label class="switch"><input type="checkbox" name="matter_enabled" {% if settings.matter_enabled %}checked{% endif %} {% if !matter.admin_password_set %}disabled{% endif %}><span></span></label></div>
+              <dl class="status-list compact-list">
+                <div><dt>Accessory</dt><dd>{{ matter.status }}</dd></div>
+                <div><dt>Commissioned</dt><dd>{% if matter.commissioned %}yes ({{ matter.fabric_count }} fabric{% if matter.fabric_count != 1 %}s{% endif %}){% else %}not commissioned{% endif %}</dd></div>
+                <div><dt>Stream source</dt><dd>{{ matter.stream_source }}</dd></div>
+              </dl>
+              {% if !matter.ipv6_ok %}
+                <div class="pairing-box error-pairing"><span>IPv6 appears disabled on this device. Matter requires IPv6 (link-local at minimum) — commissioning will fail until it is re-enabled.</span></div>
+              {% endif %}
+              {% if matter.snapshot_endpoint_down %}
+                <div class="pairing-box error-pairing"><span>The internal snapshot endpoint failed to start; Matter controllers will not receive snapshots until OctoCam restarts. Check the system logs.</span></div>
+              {% endif %}
+              {% if matter.orphaned_fabrics %}
+                <div class="pairing-box error-pairing"><span>Matter is disabled but {{ matter.fabric_count }} previously paired ecosystem(s) still hold credentials. Re-enabling restores their access to the camera; use "Reset Matter pairing" to revoke.</span></div>
+              {% endif %}
+              {% if matter.has_error %}
+                <div class="pairing-box error-pairing"><span>{{ matter.error }}</span></div>
+              {% endif %}
+              {% if settings.matter_enabled %}
+                {% if matter.manual_code.len() > 0 %}
+                  <div class="homekit-pairing">
+                    <div class="homekit-qr">{{ matter.qr_svg|safe }}</div>
+                    <div class="homekit-pairing-details">
+                      <span>Manual code</span>
+                      <strong>{{ matter.manual_code }}</strong>
+                      <small>{{ matter.qr_payload }}</small>
+                    </div>
+                  </div>
+                {% endif %}
+                <div class="pairing-box compact-pairing"><span>Ecosystem support (July 2026): SmartThings works. Home Assistant is experimental and blocks uncertified devices by default (this camera uses a test vendor ID) — a manual override is required. Alexa commissions but cannot show video yet. Google Home and Apple Home do not support Matter cameras yet.</span></div>
+                <div class="pairing-box compact-pairing"><span>Disabling Matter stops the service but does not revoke access: previously paired ecosystems regain the camera feed when re-enabled. Use "Reset Matter pairing" to revoke all pairings.</span></div>
+              {% else %}
+                <div class="pairing-box compact-pairing"><span>Enable Matter and save to publish this camera to Matter ecosystems (SmartThings, Home Assistant, and others as support rolls out).</span></div>
+              {% endif %}
+            </section>
+            <section class="panel action-card">
+              <button class="primary" type="submit">Save Matter settings</button>
+            </section>
+          </form>
+          <form class="settings-stack" method="post" action="/matter/reset">
+            <section class="panel action-card">
+              <button type="submit">Reset Matter pairing</button>
+              <small>Removes all paired ecosystems and rotates the pairing code.</small>
+            </section>
+          </form>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>
