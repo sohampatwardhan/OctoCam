@@ -2,6 +2,14 @@
 
 ## Unreleased - 2026-07-02
 
+### Added
+
+- feat(matter): Matter 1.5 camera control plane — matter_enabled setting,
+  onboarding QR/manual code generated locally, sandboxed octocam-matter
+  systemd unit, loopback snapshot endpoint, additive reader reservation,
+  /matter settings page. Daemon binary (patched CHIP camera-app) tracked
+  separately; see docs/matter.md.
+
 ### Changed
 
 - Migrated the local web control panel from the legacy Python/Flask app to the

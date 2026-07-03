@@ -16,10 +16,13 @@ The product shape is intentionally appliance-like:
    automation stack.
 4. After setup, the UI collapses into a compact settings/status page.
 
-Matter 1.5 camera support is a future consideration, but it is intentionally out
-of scope for now. Apple Home does not currently treat Matter 1.5 cameras as
-first-class camera devices, so OctoCam should prioritize RTSP and HomeKit-style
-integration until that platform support matures.
+Matter 1.5 camera support is implemented as an optional sidecar daemon (a
+patched build of connectedhomeip's camera-app) that relays the mediamtx H.264
+stream over Matter/WebRTC. As of mid-2026 only SmartThings has shipped Matter
+camera viewing; Home Assistant support is experimental, and Alexa/Google/Apple
+have not shipped it — the /matter page in the web UI shows an honest
+per-ecosystem support matrix. See docs/matter.md. Note: disabling mDNS
+(scripts/minimize-os.sh --disable-mdns) breaks Matter commissioning.
 
 ## Embedded Constraints
 
@@ -298,5 +301,7 @@ Design rules:
 - Add authenticated admin access if the UI will leave a trusted LAN.
 - Add motion detection and recording controls once the desired camera pipeline is
   chosen.
-- Revisit Matter camera support later, after Apple Home exposes Matter cameras
-  as first-class camera devices.
+- Track the CHIP camera-app fork (`docs/superpowers/plans/2026-07-02-matter-chip-fork.md`)
+  to build and deploy the Matter daemon binary, then revisit certification and
+  additional ecosystem onboarding as Matter camera viewing support rolls out
+  beyond SmartThings.
