@@ -36,6 +36,32 @@ pub fn generate_identity() -> MatterIdentity {
     }
 }
 
+/// Write a file containing commissioning secrets with mode 0600 from the
+/// moment it exists: pre-delete so O_CREAT semantics always apply (a
+/// pre-existing looser file would otherwise keep its mode), then create
+/// with the restrictive mode — no world-readable window.
+fn write_secret_file(path: &Path, content: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let _ = fs::remove_file(path);
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content.as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    fs::write(path, content)?;
+    Ok(())
+}
+
 /// Load the persisted identity, or generate + persist one (file mode 0600 —
 /// the passcode is a durable commission-this-camera credential; see the spec's
 /// documented deviation from the no-plaintext-secrets model).
@@ -46,26 +72,7 @@ pub fn load_or_generate_identity(path: &Path) -> io::Result<MatterIdentity> {
         }
     }
     let identity = generate_identity();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        // Remove any pre-existing (e.g. corrupt) file so `.mode(0o600)` always
-        // applies — mode only takes effect when the open creates the file.
-        let _ = fs::remove_file(path);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)?;
-        file.write_all(serde_json::to_string_pretty(&identity)?.as_bytes())?;
-    }
-    #[cfg(not(unix))]
-    fs::write(path, serde_json::to_string_pretty(&identity)?)?;
+    write_secret_file(path, &serde_json::to_string_pretty(&identity)?)?;
     Ok(identity)
 }
 
@@ -260,10 +267,7 @@ pub fn write_matter_env(settings: &Settings, identity: &MatterIdentity, path: &P
     if current == next {
         return Ok(false);
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    fs::write(path, next).map_err(|error| error.to_string())?;
+    write_secret_file(path, &next).map_err(|error| error.to_string())?;
     Ok(true)
 }
 
@@ -408,6 +412,12 @@ mod tests {
         let id = generate_identity();
         let settings = Settings::default();
         assert!(write_matter_env(&settings, &id, &path).unwrap(), "first write changes");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "env file duplicates the passcode; must be 0600");
+        }
         assert!(!write_matter_env(&settings, &id, &path).unwrap(), "identical write is a no-op");
         let changed = Settings { sub_stream_enabled: false, ..settings };
         assert!(write_matter_env(&changed, &id, &path).unwrap(), "config change must be detected");
