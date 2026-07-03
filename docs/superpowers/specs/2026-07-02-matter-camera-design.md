@@ -112,7 +112,14 @@ cost; camera-app is example-quality code under active churn.
 ### 2. Build & deploy
 
 - `scripts/build-matter.sh` cross-compiles an ARM64 binary on the Mac using
-  CHIP's `chip-build-crosscompile` Docker image. **Never build on the Pi.**
+  CHIP's `chip-build-crosscompile` Docker image (documented flow: pull
+  `ghcr.io/project-chip/chip-build-crosscompile`, build target
+  `linux-arm64-camera-clang` via `build_examples.py` inside the container).
+  **Never build on the Pi.**
+- Identity is injected via the standard Linux-app flags (`--discriminator`,
+  `--passcode`, `--secured-device-port`, `--KVS
+  /var/lib/octocam/matter-storage/kvs`) — no CHIP patch needed for identity
+  or storage paths.
 - The binary deploys over rsync like the rest of OctoCam.
 - `install.sh` adds runtime deps: GStreamer core/base/good/bad + RTSP
   plugins. No libav/ugly (we never decode video on-device).
@@ -173,7 +180,13 @@ link. A "reset Matter pairing" action wipes `matter-storage/`.
   vectors).
 - **Build check**: cross-compile succeeds on the Mac.
 - **Acceptance gate**: commission from CHIP's reference `camera-controller`
-  (built on the Mac) and get live WebRTC view + a snapshot from the Pi.
+  and get live WebRTC view + a snapshot from the Pi. The controller's only
+  documented build target is `linux-x64-camera-controller` (no macOS
+  target), so it runs in a Linux environment on the LAN — a Linux VM or
+  container on the Mac, or any Linux host. Documented flow:
+  `pairing onnetwork 1 <passcode>` then
+  `liveview start 1 --min-res-width 640 --min-res-height 480
+  --min-framerate 30`.
 - **Best-effort, non-gating**: commission into Home Assistant's matter.js
   server and document behavior. Known caveat: HA's new server blocks
   uncertified devices by default and needs a manual override — document it.
