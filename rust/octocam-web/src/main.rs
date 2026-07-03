@@ -1381,6 +1381,13 @@ fn captive_redirect_target() -> String {
 }
 
 async fn captive_probe() -> Response {
+    // The listener keeps running until the process restarts, even after setup
+    // completes. Re-check per request so a completed setup stops hijacking
+    // port 80 — plain 404 instead of redirecting everything to /setup.
+    let settings = settings::load_settings(&settings::default_config_path());
+    if settings.setup_complete {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     Redirect::temporary(&captive_redirect_target()).into_response()
 }
 
