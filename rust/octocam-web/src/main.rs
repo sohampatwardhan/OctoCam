@@ -203,6 +203,9 @@ struct SystemTemplate {
     settings: Settings,
     system: system::SystemView,
     active_page: &'static str,
+    restore_message: String,
+    has_restore_message: bool,
+    restore_is_error: bool,
 }
 
 #[derive(Template)]
@@ -324,6 +327,12 @@ struct SavedQuery {
 struct SshKeysQuery {
     status: Option<String>,
     warn: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SystemQuery {
+    restore: Option<String>,
+    keys: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -740,6 +749,7 @@ async fn system_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     uri: Uri,
+    Query(query): Query<SystemQuery>,
 ) -> AppResult {
     if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
         return Ok(response);
@@ -749,11 +759,29 @@ async fn system_page(
         return Ok(Redirect::to("/setup").into_response());
     }
     let status = run_blocking(system::status).await?;
+    let (restore_message, restore_is_error) = match query.restore.as_deref() {
+        Some("ok") => {
+            let added = query.keys.as_deref().unwrap_or("0");
+            (format!("Configuration restored. {added} SSH key(s) added."), false)
+        }
+        Some("ok_keys_failed") => (
+            "Configuration restored, but SSH keys could not be written.".to_string(),
+            true,
+        ),
+        Some("invalid") => ("That file is not a valid OctoCam backup.".to_string(), true),
+        Some("too_large") => ("That backup file is too large.".to_string(), true),
+        Some("empty") => ("No backup file was uploaded.".to_string(), true),
+        Some("csrf") => ("Restore blocked: request came from another origin.".to_string(), true),
+        _ => (String::new(), false),
+    };
     render(SystemTemplate {
         page_title: "System info".to_string(),
         settings,
         system: system::view(&status),
         active_page: "system",
+        has_restore_message: !restore_message.is_empty(),
+        restore_message,
+        restore_is_error,
     })
 }
 
