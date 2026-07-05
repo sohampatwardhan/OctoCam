@@ -48,6 +48,8 @@ pub const PORTABLE_FIELDS: &[&str] = &[
 
 /// Fields deliberately NOT ported — preserved from the target device on restore.
 /// `admin_password_hash` is never even written to the file.
+// Referenced only by the field-coverage test; kept as the documented excluded set.
+#[allow(dead_code)]
 pub const EXCLUDED_FIELDS: &[&str] = &[
     "admin_password_hash",
     "setup_complete",
@@ -196,11 +198,13 @@ mod tests {
 
     #[test]
     fn build_backup_includes_only_portable_fields() {
-        let mut settings = Settings::default();
-        settings.admin_password_hash = "secret-hash".to_string();
-        settings.device_name = "Nursery Cam".to_string();
-        settings.homekit_paired = true;
-        settings.wifi_ssid = "HomeNet".to_string();
+        let settings = Settings {
+            admin_password_hash: "secret-hash".to_string(),
+            device_name: "Nursery Cam".to_string(),
+            homekit_paired: true,
+            wifi_ssid: "HomeNet".to_string(),
+            ..Settings::default()
+        };
 
         let backup = build_backup(&settings, 1_751_716_800, vec!["ssh-ed25519 AAAA test".to_string()]);
 
@@ -237,12 +241,14 @@ mod tests {
 
     #[test]
     fn parse_restore_overlays_portable_and_preserves_excluded() {
-        let mut current = Settings::default();
-        current.admin_password_hash = "keep-me".to_string();
-        current.setup_complete = true;
-        current.homekit_paired = true;
-        current.wifi_ssid = "TargetNet".to_string();
-        current.device_name = "Old Name".to_string();
+        let current = Settings {
+            admin_password_hash: "keep-me".to_string(),
+            setup_complete: true,
+            homekit_paired: true,
+            wifi_ssid: "TargetNet".to_string(),
+            device_name: "Old Name".to_string(),
+            ..Settings::default()
+        };
 
         let mut s = Map::new();
         s.insert("device_name".to_string(), Value::from("New Name"));

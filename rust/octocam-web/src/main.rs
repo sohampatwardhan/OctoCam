@@ -850,30 +850,22 @@ async fn restore_upload(
 
     // Read the first uploaded field's bytes. The route-scoped DefaultBodyLimit
     // (see route registration) rejects an oversize body before we get here.
-    let mut file_bytes: Option<Vec<u8>> = None;
-    loop {
-        let field = match multipart.next_field().await {
-            Ok(Some(field)) => field,
-            Ok(None) => break,
-            Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-                return Ok(Redirect::to("/system?restore=too_large").into_response());
-            }
-            Err(error) => return Err(AppError(error.to_string())),
-        };
-        let data = match field.bytes().await {
-            Ok(data) => data,
-            Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-                return Ok(Redirect::to("/system?restore=too_large").into_response());
-            }
-            Err(error) => return Err(AppError(error.to_string())),
-        };
-        file_bytes = Some(data.to_vec());
-        break;
-    }
-
-    let Some(bytes) = file_bytes else {
-        return Ok(Redirect::to("/system?restore=empty").into_response());
+    let field = match multipart.next_field().await {
+        Ok(Some(field)) => field,
+        Ok(None) => return Ok(Redirect::to("/system?restore=empty").into_response()),
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Ok(Redirect::to("/system?restore=too_large").into_response());
+        }
+        Err(error) => return Err(AppError(error.to_string())),
     };
+    let data = match field.bytes().await {
+        Ok(data) => data,
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Ok(Redirect::to("/system?restore=too_large").into_response());
+        }
+        Err(error) => return Err(AppError(error.to_string())),
+    };
+    let bytes = data.to_vec();
     if bytes.len() > MAX_RESTORE_BYTES {
         return Ok(Redirect::to("/system?restore=too_large").into_response());
     }
