@@ -4,6 +4,17 @@
 
 ### Added
 
+- feat(web): configuration backup & restore on the System page. `GET /backup`
+  downloads a versioned JSON envelope of the portable settings (camera, stream,
+  RTSP, image, motion, feature toggles) plus authorized SSH public keys; the
+  admin password hash and Wi-Fi credentials are never included. `POST /restore`
+  imports a backup onto an already-set-up device: portable fields are overlaid
+  on the current settings (device-bound fields — admin hash, `setup_complete`,
+  HomeKit pairing, Wi-Fi SSID — are preserved, not taken from the file), all
+  values are re-validated/clamped, downstream services are reconfigured, and
+  SSH keys are merged (union, deduped by fingerprint) in one atomic write. Both
+  routes require setup to be complete and an admin session; restore also
+  requires a same-origin request and caps the upload at 256 KB.
 - feat(web): SSH keys page (Advanced Settings) to view, revoke, and authorize
   the public keys in root's `/root/.ssh/authorized_keys`. Keys are shown with
   type, comment, and SHA256 fingerprint. Added keys are validated as a single

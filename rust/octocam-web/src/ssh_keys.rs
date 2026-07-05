@@ -14,6 +14,7 @@ use base64::{
     Engine,
 };
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Command;
 
@@ -199,6 +200,14 @@ pub fn list() -> Result<Vec<AuthorizedKey>, KeyError> {
     Ok(parse_authorized_keys(&read_raw()?))
 }
 
+/// Full normalized key lines for backup export (type + body + optional comment).
+/// Reuses `validate_new_key` to normalize and drop options-prefixed/unknown
+/// lines. Fails closed like `read_raw`.
+pub fn export_lines() -> Result<Vec<String>, KeyError> {
+    let raw = read_raw()?;
+    Ok(raw.lines().filter_map(|line| validate_new_key(line).ok()).collect())
+}
+
 fn sudo(args: &[&str]) -> Result<(), KeyError> {
     let mut full = vec!["-n"];
     full.extend_from_slice(args);
@@ -292,6 +301,56 @@ pub fn add(state_dir: &Path, input: &str) -> Result<(), KeyError> {
         return Err(KeyError::TooLong);
     }
     write_raw(state_dir, &contents, existing.len() + 1, false)
+}
+
+/// Pure merge: given the current file contents and candidate key strings, return
+/// the new file contents plus (added, skipped) counts. Skips invalid keys and
+/// any whose fingerprint already exists (in the file or earlier in the batch).
+/// No I/O — unit-testable.
+fn merge_contents(raw: &str, candidates: &[String]) -> (String, usize, usize) {
+    let mut seen: HashSet<String> = parse_authorized_keys(raw)
+        .into_iter()
+        .map(|key| key.fingerprint)
+        .collect();
+    let mut contents = raw.to_string();
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for candidate in candidates {
+        let Ok(line) = validate_new_key(candidate) else {
+            skipped += 1;
+            continue;
+        };
+        let fp = line.split_whitespace().nth(1).and_then(fingerprint);
+        match fp {
+            Some(fp) if seen.insert(fp.clone()) => {
+                if !contents.is_empty() && !contents.ends_with('\n') {
+                    contents.push('\n');
+                }
+                contents.push_str(&line);
+                contents.push('\n');
+                added += 1;
+            }
+            _ => skipped += 1,
+        }
+    }
+    (contents, added, skipped)
+}
+
+/// Validate and merge a batch of candidate public keys into `authorized_keys` in
+/// ONE atomic write (one `read_raw` + one `write_raw`), deduping by fingerprint.
+/// Returns (added, skipped). Never removes existing keys. If nothing new is
+/// added, no write occurs.
+pub fn merge(state_dir: &Path, candidates: &[String]) -> Result<(usize, usize), KeyError> {
+    let raw = read_raw()?;
+    let existing_count = parse_authorized_keys(&raw).len();
+    let (contents, added, skipped) = merge_contents(&raw, candidates);
+    if added == 0 {
+        return Ok((0, skipped));
+    }
+    if contents.len() > MAX_FILE_LEN {
+        return Err(KeyError::TooLong);
+    }
+    write_raw(state_dir, &contents, existing_count + added, false)?;
+    Ok((added, skipped))
 }
 
 /// Remove every line whose parsed fingerprint matches `target_fp`, preserving
@@ -419,5 +478,31 @@ mod tests {
     #[test]
     fn validate_rejects_empty() {
         assert_eq!(validate_new_key("   "), Err(KeyError::BadKey));
+    }
+
+    #[test]
+    fn merge_contents_appends_new_and_skips_duplicates_and_invalid() {
+        let existing = format!("ssh-ed25519 {ED25519_BODY} existing@host\n");
+        let second = "AAAAC3NzaC1lZDI1NTE5AAAAIJH3eo2Bbz4nE/2yOXdADwxpiYAyAkP1zn+WH2Lvco7b";
+        let candidates = vec![
+            format!("ssh-ed25519 {ED25519_BODY} dup@host"),
+            format!("ssh-ed25519 {second} new@host"),
+            "not a key".to_string(),
+            format!("ssh-ed25519 {second} again@host"),
+        ];
+        let (contents, added, skipped) = merge_contents(&existing, &candidates);
+        assert_eq!(added, 1);
+        assert_eq!(skipped, 3);
+        assert_eq!(parse_authorized_keys(&contents).len(), 2);
+        assert!(contents.ends_with('\n'));
+    }
+
+    #[test]
+    fn merge_contents_into_empty_file() {
+        let (contents, added, skipped) =
+            merge_contents("", &[format!("ssh-ed25519 {ED25519_BODY} a@b")]);
+        assert_eq!(added, 1);
+        assert_eq!(skipped, 0);
+        assert_eq!(parse_authorized_keys(&contents).len(), 1);
     }
 }

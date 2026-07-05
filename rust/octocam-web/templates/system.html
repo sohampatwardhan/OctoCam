@@ -80,6 +80,32 @@
               </dl>
             {% endif %}
           </section>
+
+          <section class="panel settings-card">
+            <div class="section-heading"><h2>Backup &amp; Restore</h2></div>
+
+            {% if has_restore_message %}
+              {% if restore_is_error %}
+                <div class="pairing-box error-pairing"><span>{{ restore_message }}</span></div>
+              {% else %}
+                <div class="toast-region" role="status" aria-live="polite" aria-atomic="true">
+                  <p class="toast">{{ restore_message }}</p>
+                </div>
+              {% endif %}
+            {% endif %}
+
+            <p class="empty-note">Restoring does not change the admin password, Wi-Fi credentials, or existing HomeKit/Matter pairings. SSH keys found in the backup are added to the existing set, not replaced.</p>
+
+            <a class="secondary" href="/backup">Download backup</a>
+
+            <form class="settings-stack" method="post" action="/restore" enctype="multipart/form-data" data-confirm-message="Restore configuration from this file? Current stream, image, and feature settings will be overwritten.">
+              <label class="field">
+                <span>Backup file</span>
+                <input type="file" name="backup" accept="application/json,.json" required>
+              </label>
+              <button class="primary" type="submit">Restore from backup</button>
+            </form>
+          </section>
         </section>
       </div>
     </main>

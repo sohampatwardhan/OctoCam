@@ -1,3 +1,4 @@
+mod backup;
 mod camera;
 mod mediamtx;
 mod matter;
@@ -12,7 +13,7 @@ mod wifi_setup;
 
 use askama::Template;
 use axum::{
-    extract::{Form, Path as AxumPath, Query, State},
+    extract::{DefaultBodyLimit, Form, Multipart, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -202,6 +203,9 @@ struct SystemTemplate {
     settings: Settings,
     system: system::SystemView,
     active_page: &'static str,
+    restore_message: String,
+    has_restore_message: bool,
+    restore_is_error: bool,
 }
 
 #[derive(Template)]
@@ -245,7 +249,6 @@ struct StreamTemplate {
     page_title: String,
     settings: Settings,
     system: system::SystemView,
-    rtsp_urls: StreamUrls,
     browser_stream_urls: StreamUrls,
     active_page: &'static str,
     initial_stream: String, // "main" | "sub"
@@ -324,6 +327,12 @@ struct SavedQuery {
 struct SshKeysQuery {
     status: Option<String>,
     warn: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SystemQuery {
+    restore: Option<String>,
+    keys: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -409,6 +418,11 @@ async fn async_main() {
         .route("/admin", get(admin))
         .route("/advanced", get(system_page))
         .route("/system", get(system_page))
+        .route("/backup", get(backup_download))
+        .route(
+            "/restore",
+            post(restore_upload).layer(DefaultBodyLimit::max(MAX_RESTORE_BYTES)),
+        )
         .route("/logs", get(logs))
         .route("/terminal", get(terminal))
         .route("/ssh-keys", get(ssh_keys_page))
@@ -735,6 +749,7 @@ async fn system_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     uri: Uri,
+    Query(query): Query<SystemQuery>,
 ) -> AppResult {
     if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
         return Ok(response);
@@ -744,12 +759,134 @@ async fn system_page(
         return Ok(Redirect::to("/setup").into_response());
     }
     let status = run_blocking(system::status).await?;
+    let (restore_message, restore_is_error) = match query.restore.as_deref() {
+        Some("ok") => {
+            let added = query.keys.as_deref().unwrap_or("0");
+            (format!("Configuration restored. {added} SSH key(s) added."), false)
+        }
+        Some("ok_keys_failed") => (
+            "Configuration restored, but SSH keys could not be written.".to_string(),
+            true,
+        ),
+        Some("invalid") => ("That file is not a valid OctoCam backup.".to_string(), true),
+        Some("too_large") => ("That backup file is too large.".to_string(), true),
+        Some("empty") => ("No backup file was uploaded.".to_string(), true),
+        Some("csrf") => ("Restore blocked: request came from another origin.".to_string(), true),
+        _ => (String::new(), false),
+    };
     render(SystemTemplate {
         page_title: "System info".to_string(),
         settings,
         system: system::view(&status),
         active_page: "system",
+        has_restore_message: !restore_message.is_empty(),
+        restore_message,
+        restore_is_error,
     })
+}
+
+async fn backup_download(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> AppResult {
+    let settings = settings::load_settings(&state.config_path);
+    // Pre-setup lockout: never expose config before the device has an admin
+    // password (require_admin_login is a no-op while the hash is empty).
+    if !settings.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+
+    // SSH keys are best-effort: a read failure must not block the settings backup.
+    let ssh_keys = run_blocking(ssh_keys::export_lines)
+        .await?
+        .unwrap_or_default();
+
+    let exported_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let backup = backup::build_backup(&settings, exported_at, ssh_keys);
+    let body = serde_json::to_string_pretty(&backup).map_err(|error| AppError(error.to_string()))?;
+    let filename = backup::backup_filename(&settings.device_name, exported_at);
+
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        response.headers_mut().insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok(response)
+}
+
+/// Cap the restore upload well under the global body limit — a settings + keys
+/// envelope is a few KB; 256 KB is generous and bounds memory.
+const MAX_RESTORE_BYTES: usize = 256 * 1024;
+
+async fn restore_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    mut multipart: Multipart,
+) -> AppResult {
+    let current = settings::load_settings(&state.config_path);
+    if !current.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    // Restore can inject root SSH keys — match the ssh_keys handlers' CSRF guard,
+    // which update_settings does not have.
+    if cross_origin(&headers) {
+        return Ok(Redirect::to("/system?restore=csrf").into_response());
+    }
+
+    // Read the first uploaded field's bytes. The route-scoped DefaultBodyLimit
+    // (see route registration) rejects an oversize body before we get here.
+    let field = match multipart.next_field().await {
+        Ok(Some(field)) => field,
+        Ok(None) => return Ok(Redirect::to("/system?restore=empty").into_response()),
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Ok(Redirect::to("/system?restore=too_large").into_response());
+        }
+        Err(error) => return Err(AppError(error.to_string())),
+    };
+    let data = match field.bytes().await {
+        Ok(data) => data,
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Ok(Redirect::to("/system?restore=too_large").into_response());
+        }
+        Err(error) => return Err(AppError(error.to_string())),
+    };
+    let bytes = data.to_vec();
+    if bytes.len() > MAX_RESTORE_BYTES {
+        return Ok(Redirect::to("/system?restore=too_large").into_response());
+    }
+
+    let (restored, keys) = match backup::parse_restore(&bytes, &current) {
+        Ok(result) => result,
+        Err(_) => return Ok(Redirect::to("/system?restore=invalid").into_response()),
+    };
+
+    settings::save_settings(&state.config_path, &restored)
+        .map_err(|error| AppError(error.to_string()))?;
+    apply_settings_side_effects(&state, &restored).await?;
+
+    // Best-effort key merge; a key-write failure does not roll back the settings
+    // (both are individually atomic and settings are already committed).
+    let state_dir = ssh_keys_state_dir(&state);
+    let redirect = match run_blocking(move || ssh_keys::merge(&state_dir, &keys)).await? {
+        Ok((added, _skipped)) => format!("/system?restore=ok&keys={added}"),
+        Err(_) => "/system?restore=ok_keys_failed".to_string(),
+    };
+    Ok(Redirect::to(&redirect).into_response())
 }
 
 async fn logs(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
@@ -1027,7 +1164,6 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
     };
     render(StreamTemplate {
         page_title: "Live stream".to_string(),
-        rtsp_urls: stream_urls_for(&settings, host.clone(), "rtsp"),
         browser_stream_urls: stream_urls_for(&settings, host, "webrtc"),
         system: system::view(&status),
         settings,
@@ -1265,12 +1401,7 @@ async fn update_settings(
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
-    let _ = mediamtx::configure_rtsp_service(&current, &state.mediamtx_config_path);
-    let homekit_settings = current.clone();
-    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
-    let matter_settings = current.clone();
-    let (matter_env, matter_id) = (state.matter_env_path.clone(), state.matter_identity_path.clone());
-    run_blocking(move || matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)).await?;
+    apply_settings_side_effects(&state, &current).await?;
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
 }
 
@@ -1513,6 +1644,20 @@ fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
         has_error: !error.is_empty(),
         error,
     }
+}
+
+/// Reconfigure the downstream services from the current settings: mediamtx RTSP,
+/// the HomeKit accessory daemon, and the Matter sidecar. Shared by
+/// `update_settings` and `restore_upload` so the two paths cannot drift. Assumes
+/// settings have already been persisted with `save_settings`.
+async fn apply_settings_side_effects(state: &Arc<AppState>, settings: &Settings) -> Result<(), AppError> {
+    let _ = mediamtx::configure_rtsp_service(settings, &state.mediamtx_config_path);
+    let homekit_settings = settings.clone();
+    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
+    let matter_settings = settings.clone();
+    let (matter_env, matter_id) = (state.matter_env_path.clone(), state.matter_identity_path.clone());
+    run_blocking(move || matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)).await?;
+    Ok(())
 }
 
 fn configure_homekit_service(settings: &Settings) {
