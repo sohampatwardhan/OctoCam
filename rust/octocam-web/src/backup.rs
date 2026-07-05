@@ -113,6 +113,65 @@ pub fn backup_filename(device_name: &str, exported_at: u64) -> String {
     format!("octocam-backup-{slug}-{exported_at}.json")
 }
 
+/// Why a restore upload was rejected. Coarse on purpose — the handler maps this
+/// to a redirect query param; detailed causes are not surfaced to the client.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreError {
+    /// Not valid JSON, not a JSON object, or `settings` is not an object.
+    BadJson,
+    /// `octocam_backup_version` is missing or newer than `BACKUP_VERSION`.
+    BadVersion,
+}
+
+/// Parse and validate an uploaded backup file's bytes against the current
+/// on-disk settings.
+///
+/// Returns the settings to save (portable fields overlaid on `current`, all
+/// clamped/sanitized by `validate_map`, with `enforce_matter_requires_admin`
+/// applied) and the raw SSH key strings to merge.
+///
+/// Crucially: the map handed to `validate_map` is seeded from `current` and only
+/// the portable keys are overlaid from the upload. `validate_map` starts from
+/// `Settings::default()` for any absent field, so validating the upload alone
+/// would reset the excluded fields (empty admin hash, etc.). Seeding from current
+/// keeps the excluded fields correct and makes them unreachable from the upload.
+pub fn parse_restore(bytes: &[u8], current: &Settings) -> Result<(Settings, Vec<String>), RestoreError> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| RestoreError::BadJson)?;
+    let Value::Object(root) = value else {
+        return Err(RestoreError::BadJson);
+    };
+
+    match root.get("octocam_backup_version").and_then(Value::as_u64) {
+        Some(version) if version <= BACKUP_VERSION as u64 => {}
+        _ => return Err(RestoreError::BadVersion),
+    }
+
+    let Some(Value::Object(uploaded)) = root.get("settings") else {
+        return Err(RestoreError::BadJson);
+    };
+
+    // Seed from current settings, then overlay ONLY the portable keys.
+    let mut seed = settings_map(current);
+    for &field in PORTABLE_FIELDS {
+        if let Some(value) = uploaded.get(field) {
+            seed.insert(field.to_string(), value.clone());
+        }
+    }
+
+    let mut restored = settings::validate_map(&seed);
+    settings::enforce_matter_requires_admin(&mut restored);
+
+    let keys = match root.get("ssh_authorized_keys") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    Ok((restored, keys))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +225,85 @@ mod tests {
             backup_filename("", 42),
             "octocam-backup-octocam-42.json"
         );
+    }
+
+    fn envelope(settings_json: Value, keys: Value, version: Value) -> Vec<u8> {
+        let mut root = Map::new();
+        root.insert("octocam_backup_version".to_string(), version);
+        root.insert("settings".to_string(), settings_json);
+        root.insert("ssh_authorized_keys".to_string(), keys);
+        serde_json::to_vec(&Value::Object(root)).unwrap()
+    }
+
+    #[test]
+    fn parse_restore_overlays_portable_and_preserves_excluded() {
+        let mut current = Settings::default();
+        current.admin_password_hash = "keep-me".to_string();
+        current.setup_complete = true;
+        current.homekit_paired = true;
+        current.wifi_ssid = "TargetNet".to_string();
+        current.device_name = "Old Name".to_string();
+
+        let mut s = Map::new();
+        s.insert("device_name".to_string(), Value::from("New Name"));
+        s.insert("framerate".to_string(), Value::from(20));
+        s.insert("admin_password_hash".to_string(), Value::from("attacker"));
+        s.insert("setup_complete".to_string(), Value::from(false));
+        s.insert("homekit_paired".to_string(), Value::from(false));
+        s.insert("wifi_ssid".to_string(), Value::from("AttackerNet"));
+
+        let bytes = envelope(Value::Object(s), Value::Array(vec![]), Value::from(1));
+        let (restored, keys) = parse_restore(&bytes, &current).expect("valid backup");
+
+        assert_eq!(restored.device_name, "New Name");
+        assert_eq!(restored.framerate, 20);
+        assert_eq!(restored.admin_password_hash, "keep-me");
+        assert!(restored.setup_complete);
+        assert!(restored.homekit_paired);
+        assert_eq!(restored.wifi_ssid, "TargetNet");
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn parse_restore_clamps_out_of_range_values() {
+        let current = Settings::default();
+        let mut s = Map::new();
+        s.insert("framerate".to_string(), Value::from(999));
+        let bytes = envelope(Value::Object(s), Value::Array(vec![]), Value::from(1));
+        let (restored, _keys) = parse_restore(&bytes, &current).unwrap();
+        assert_eq!(restored.framerate, 60);
+    }
+
+    #[test]
+    fn parse_restore_reads_ssh_keys_array() {
+        let current = Settings::default();
+        let keys = Value::Array(vec![Value::from("ssh-ed25519 AAAA a"), Value::from("ssh-rsa BBBB b")]);
+        let bytes = envelope(Value::Object(Map::new()), keys, Value::from(1));
+        let (_restored, keys) = parse_restore(&bytes, &current).unwrap();
+        assert_eq!(keys, vec!["ssh-ed25519 AAAA a".to_string(), "ssh-rsa BBBB b".to_string()]);
+    }
+
+    #[test]
+    fn parse_restore_rejects_bad_version_and_shape() {
+        let current = Settings::default();
+        let bytes = envelope(Value::Object(Map::new()), Value::Array(vec![]), Value::from(2));
+        assert!(matches!(parse_restore(&bytes, &current), Err(RestoreError::BadVersion)));
+        let mut root = Map::new();
+        root.insert("settings".to_string(), Value::Object(Map::new()));
+        let bytes = serde_json::to_vec(&Value::Object(root)).unwrap();
+        assert!(matches!(parse_restore(&bytes, &current), Err(RestoreError::BadVersion)));
+        let bytes = serde_json::to_vec(&Value::from("nope")).unwrap();
+        assert!(matches!(parse_restore(&bytes, &current), Err(RestoreError::BadJson)));
+        assert!(matches!(parse_restore(b"{not json", &current), Err(RestoreError::BadJson)));
+    }
+
+    #[test]
+    fn parse_restore_matter_off_when_no_admin_password() {
+        let current = Settings::default();
+        let mut s = Map::new();
+        s.insert("matter_enabled".to_string(), Value::from(true));
+        let bytes = envelope(Value::Object(s), Value::Array(vec![]), Value::from(1));
+        let (restored, _keys) = parse_restore(&bytes, &current).unwrap();
+        assert!(!restored.matter_enabled);
     }
 }
