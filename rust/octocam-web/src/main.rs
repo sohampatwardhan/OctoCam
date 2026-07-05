@@ -409,6 +409,7 @@ async fn async_main() {
         .route("/admin", get(admin))
         .route("/advanced", get(system_page))
         .route("/system", get(system_page))
+        .route("/backup", get(backup_download))
         .route("/logs", get(logs))
         .route("/terminal", get(terminal))
         .route("/ssh-keys", get(ssh_keys_page))
@@ -750,6 +751,46 @@ async fn system_page(
         system: system::view(&status),
         active_page: "system",
     })
+}
+
+async fn backup_download(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> AppResult {
+    let settings = settings::load_settings(&state.config_path);
+    // Pre-setup lockout: never expose config before the device has an admin
+    // password (require_admin_login is a no-op while the hash is empty).
+    if !settings.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+
+    // SSH keys are best-effort: a read failure must not block the settings backup.
+    let ssh_keys = run_blocking(ssh_keys::export_lines)
+        .await?
+        .unwrap_or_default();
+
+    let exported_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let backup = backup::build_backup(&settings, exported_at, ssh_keys);
+    let body = serde_json::to_string_pretty(&backup).map_err(|error| AppError(error.to_string()))?;
+    let filename = backup::backup_filename(&settings.device_name, exported_at);
+
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        response.headers_mut().insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok(response)
 }
 
 async fn logs(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
