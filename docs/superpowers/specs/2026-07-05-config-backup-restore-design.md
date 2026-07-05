@@ -45,7 +45,7 @@ Filename: `octocam-backup-<device_name>-<YYYY-MM-DD>.json` (device name slugifie
 ```json
 {
   "octocam_backup_version": 1,
-  "exported_at": "2026-07-05T12:00:00Z",
+  "exported_at": 1751716800,
   "device_name": "Nursery Cam",
   "settings": {
     "device_name": "Nursery Cam",
@@ -82,11 +82,22 @@ Filename: `octocam-backup-<device_name>-<YYYY-MM-DD>.json` (device name slugifie
 }
 ```
 
-- `exported_at` uses the server clock (RFC 3339 UTC), informational only.
+- `exported_at` is a **Unix epoch seconds integer** (`SystemTime::now()
+  .duration_since(UNIX_EPOCH)`), informational only. Deliberately not RFC 3339:
+  the workspace has no `chrono`/`time` crate (only `tokio`'s `time` feature for
+  `Duration`/`sleep`), and the README says avoid growing the dependency tree. An
+  epoch integer needs no new crate.
 - `device_name` at the top level is informational (for humans reading the file);
   the authoritative value is inside `settings`.
 
 ### Portable settings fields (exported + applied on restore)
+
+These 27 fields form an **explicit allow-list** (not "everything except the
+excluded set"). Both export and restore iterate this named list. Consequence: a
+field added to `Settings` later is **not** ported until someone deliberately adds
+it here — so a future device-bound field (e.g. a paired-hub id) can't silently
+leak into a backup. A unit test asserts every `Settings` field is either in this
+allow-list or in the excluded set below, so a new field forces a conscious choice.
 
 `device_name`, `room`, `camera_label`, `camera_enabled`,
 `resolution_width`, `resolution_height`, `framerate`, `bitrate_kbps`,
@@ -111,11 +122,37 @@ still applies after restore.
 
 ## Endpoints
 
-Both admin-gated via `require_admin_login` (same guard as `update_settings`).
+### Auth gating — must not rely on `require_admin_login` alone
+
+`require_admin_login` returns `Ok(None)` (i.e. "proceed, no login required")
+whenever `admin_password_hash` is empty **or** `!setup_complete`
+(`main.rs:1543`). That is fine for `/settings` today, but restore can inject
+**root SSH keys** — a much larger blast radius — so it must not be reachable in
+the pre-setup / no-password window.
+
+Both `/backup` and `/restore` therefore do two checks, in order:
+
+1. **Reject when `!setup_complete`** (return 403 / redirect to setup),
+   independent of `require_admin_login`. This is what actually makes "restore is
+   a post-setup action" true.
+2. Then the normal `require_admin_login` guard.
+
+Additionally, `POST /restore` performs the `cross_origin(&headers)` check that
+`ssh_keys_add` / `ssh_keys_revoke` already do (`main.rs:910`, `:932`) and that
+`update_settings` does *not* — because restore touches the same root-key surface
+those handlers protect. Do not model restore's protection on `update_settings`.
+
+### Cargo change (new)
+
+`POST /restore` needs multipart parsing. The current `axum` features are
+`["form","json","macros"]` — add **`"multipart"`**. No existing handler uses
+`Multipart`, so this is a new extraction pattern, not a drop-in reuse.
 
 ### `GET /backup`
 
-- Builds the envelope from current settings (portable fields only) + `ssh_keys::list()`.
+- Builds the envelope from current settings (the 27 portable fields only) +
+  `ssh_keys::list()`.
+- `exported_at` = current Unix epoch seconds.
 - Returns `application/json` with
   `Content-Disposition: attachment; filename="octocam-backup-<device>-<date>.json"`.
 - If SSH keys can't be read (e.g. `sudo -n` unavailable), the backup still
@@ -126,38 +163,73 @@ Both admin-gated via `require_admin_login` (same guard as `update_settings`).
 
 Multipart file upload. Steps:
 
-1. Read the uploaded file (bounded size, e.g. reject > 256 KB — a settings +
-   keys envelope is a few KB).
+1. Read the uploaded field with a **bounded read** — cap at 256 KB and reject
+   larger (a settings + keys envelope is a few KB). `axum`'s `DefaultBodyLimit`
+   is a blunt global cap, so enforce the per-route limit explicitly while reading
+   `Multipart::next_field`.
 2. Parse JSON. Reject if not an object, if `octocam_backup_version` is missing,
    or if it is greater than the supported version (`1`). Unknown extra keys are
    ignored (forward-compatible reads within a version).
-3. Take the `settings` sub-object and run it through `settings::validate_map`,
-   which clamps/sanitizes every field to safe ranges automatically.
-4. Load current settings. Overwrite **only the portable fields** from the
-   validated result onto current; preserve the excluded fields listed above.
-   Run `enforce_matter_requires_admin`.
-5. Save via `save_settings`, then run the shared service-reload sequence
-   (mediamtx / HomeKit / Matter) — see refactor below.
-6. For each entry in `ssh_authorized_keys`, validate via
-   `ssh_keys::validate_new_key` and merge into the existing set (union, dedupe by
-   fingerprint). Invalid keys are skipped and counted; a key-write failure is
-   surfaced but does not roll back the already-applied settings.
+3. **Build the map to validate by seeding from current, not from the upload.**
+   This is the crux, and it mirrors what `update_settings` already does at
+   `main.rs:1245`: start from `settings_to_map(&load_settings(...))` (the current
+   on-disk settings), then overlay **only the 27 portable keys** taken from the
+   backup's `settings` object on top. Then call `settings::validate_map` **once**
+   on the merged map.
+
+   Rationale — do NOT `validate_map(uploaded_settings)` in isolation:
+   `validate_map` starts from `Settings::default()` and treats any absent field
+   as its default, not "keep current" (`settings.rs:247`). Since the backup omits
+   the excluded fields, validating the upload alone would set
+   `admin_password_hash → ""`, `setup_complete → false`, `homekit_paired → false`,
+   `wifi_ssid → ""` — silently clobbering exactly the fields we promised to
+   preserve, and tripping `enforce_matter_requires_admin` via the emptied hash.
+   Seeding from current means the excluded fields are already correct and are
+   never sourced from the upload.
+4. Run `enforce_matter_requires_admin` on the validated result, then
+   `save_settings`.
+5. Run the shared service-reload sequence (mediamtx / HomeKit / Matter) — see
+   refactor below.
+6. Merge SSH keys via a **single batch call** — see SSH key merge below. Result
+   is `(added, skipped_invalid)`.
 7. Redirect back to the system page with a result summary (settings applied,
    N keys added, M skipped).
 
 Malformed input, wrong version, or oversize files produce a user-facing error
 and change nothing.
 
+### SSH key merge — one batched write, not a loop
+
+Do **not** call `ssh_keys::add()` per key. `add()` re-reads the file and does
+~4 `sudo` round-trips each call (`ssh_keys.rs:274`), so N keys = 4N sudo spawns
+under one blocking permit, with nondeterministic partial-failure (a mid-loop
+`sudo` failure leaves some keys written and the rest silently dropped).
+
+Add a batch entry point `ssh_keys::merge(state_dir, &[String]) -> Result<(added,
+skipped), KeyError>` that: reads once (`read_raw`), validates each candidate via
+`validate_new_key`, computes the deduped union against existing keys by
+fingerprint, and does one atomic `write_raw`. This preserves the existing
+"atomic swap, never truncate" guarantee and makes key restore all-or-nothing.
+A key-write failure is surfaced but does not roll back the already-applied
+settings (settings and keys are each individually atomic; `save_settings` has
+already committed by this point).
+
 ## Refactor: shared apply/reload helper
 
-`update_settings` currently, after saving, calls in sequence:
-`mediamtx::configure_rtsp_service`, `configure_homekit_service` (blocking),
-`matter::configure_matter_service` (blocking). Restore needs the identical
-sequence.
+`update_settings`, after saving, calls in sequence:
+`mediamtx::configure_rtsp_service`, `configure_homekit_service` (via
+`run_blocking`), `matter::configure_matter_service` (via `run_blocking`)
+(`main.rs:1266-1271`). Restore needs the identical sequence.
 
-Extract this into one helper (e.g. `apply_settings_side_effects(state, &settings)`)
-and call it from both `update_settings` and `restore`, so the two paths cannot
-drift.
+Extract **only those three post-save reload calls** into one helper (e.g.
+`apply_settings_side_effects(state, &settings)`), called from both
+`update_settings` and `restore`, so the two paths cannot drift.
+
+Keep out of the helper (caller-specific, order-sensitive, pre-save): password
+hashing/confirmation, `validated.setup_complete = current.setup_complete`,
+`enforce_matter_requires_admin`, `merge_settings`, and `save_settings` itself.
+The helper takes an already-saved `&Settings` and the three paths it reads from
+`AppState`, and does nothing but the reloads.
 
 ## UI
 
@@ -182,18 +254,35 @@ Unit tests (Rust, alongside `settings.rs` / a new backup module):
 - **Rejection:** missing/newer `octocam_backup_version`, non-object JSON, and
   oversize payloads are rejected without mutating state.
 - **SSH merge:** duplicate keys dedupe by fingerprint; invalid keys are skipped
-  and counted; existing keys are never removed.
+  and counted; existing keys are never removed; the merge is a single batched
+  write.
 - **Matter guard:** restoring `matter_enabled: true` with an empty admin hash on
   the target leaves Matter disabled (`enforce_matter_requires_admin`).
+- **Field-coverage guard:** a test asserts every `Settings` field name is in
+  either the portable allow-list or the excluded set — a new field fails the
+  test until it is classified.
+- **Encoder boundary round trip:** a source resolution at/above the 1920×1080
+  encoder limit round-trips as the clamped fallback preset, not the original
+  (documents that `clamp_to_encoder_limits` snaps both axes).
+- **Pre-setup lockout:** `/backup` and `/restore` are rejected when
+  `!setup_complete`, even with no admin password set.
+- **Path-collision note (not a hard test):** a hand-edited backup where
+  `rtsp_path == sub_rtsp_path` is not rejected by `validate_map` (no cross-field
+  uniqueness check). Accepted risk for hand-edited files; documented, not
+  guarded. Normal full backups carry a consistent pair from the source.
 
 ## Files touched (anticipated)
 
-- `rust/octocam-web/src/settings.rs` — helpers to select portable fields for
-  export and to merge portable fields on restore; the backup envelope
-  (de)serialization (or a new `backup.rs` module).
-- `rust/octocam-web/src/main.rs` — `/backup` + `/restore` routes and handlers;
-  extract `apply_settings_side_effects` shared with `update_settings`.
-- `rust/octocam-web/src/ssh_keys.rs` — reuse `list`, `validate_new_key`,
-  `fingerprint`, and the safe-write path; add a merge entry point if needed.
+- `rust/octocam-web/Cargo.toml` — add `"multipart"` to the `axum` features.
+- `rust/octocam-web/src/settings.rs` — the 27-field portable allow-list; helper
+  to overlay portable keys onto a current-seeded map; the backup envelope
+  (de)serialization (or a new `backup.rs` module); field-coverage guard test.
+- `rust/octocam-web/src/main.rs` — `/backup` + `/restore` routes and handlers
+  (pre-setup lockout + `require_admin_login` + `cross_origin` on `/restore`;
+  bounded 256 KB multipart read); extract `apply_settings_side_effects` (three
+  reload calls only) shared with `update_settings`.
+- `rust/octocam-web/src/ssh_keys.rs` — add `merge(state_dir, &[String]) ->
+  Result<(added, skipped), KeyError>` (one read, dedupe by fingerprint, one
+  atomic write), reusing `read_raw`/`validate_new_key`/`fingerprint`/`write_raw`.
 - System page template under `static/` (or wherever `/advanced` renders) — the
   Backup & Restore section.
