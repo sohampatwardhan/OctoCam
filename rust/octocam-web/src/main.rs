@@ -13,7 +13,7 @@ mod wifi_setup;
 
 use askama::Template;
 use axum::{
-    extract::{Form, Path as AxumPath, Query, State},
+    extract::{DefaultBodyLimit, Form, Multipart, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -410,6 +410,10 @@ async fn async_main() {
         .route("/advanced", get(system_page))
         .route("/system", get(system_page))
         .route("/backup", get(backup_download))
+        .route(
+            "/restore",
+            post(restore_upload).layer(DefaultBodyLimit::max(MAX_RESTORE_BYTES)),
+        )
         .route("/logs", get(logs))
         .route("/terminal", get(terminal))
         .route("/ssh-keys", get(ssh_keys_page))
@@ -791,6 +795,71 @@ async fn backup_download(
         response.headers_mut().insert(header::CONTENT_DISPOSITION, value);
     }
     Ok(response)
+}
+
+/// Cap the restore upload well under the global body limit — a settings + keys
+/// envelope is a few KB; 256 KB is generous and bounds memory.
+const MAX_RESTORE_BYTES: usize = 256 * 1024;
+
+async fn restore_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    mut multipart: Multipart,
+) -> AppResult {
+    let current = settings::load_settings(&state.config_path);
+    if !current.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    // Restore can inject root SSH keys — match the ssh_keys handlers' CSRF guard,
+    // which update_settings does not have.
+    if cross_origin(&headers) {
+        return Ok(Redirect::to("/system?restore=csrf").into_response());
+    }
+
+    // Read the first uploaded field's bytes. The route-scoped DefaultBodyLimit
+    // (see route registration) rejects an oversize body before we get here.
+    let mut file_bytes: Option<Vec<u8>> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| AppError(error.to_string()))?
+    {
+        let data = field
+            .bytes()
+            .await
+            .map_err(|error| AppError(error.to_string()))?;
+        file_bytes = Some(data.to_vec());
+        break;
+    }
+
+    let Some(bytes) = file_bytes else {
+        return Ok(Redirect::to("/system?restore=empty").into_response());
+    };
+    if bytes.len() > MAX_RESTORE_BYTES {
+        return Ok(Redirect::to("/system?restore=too_large").into_response());
+    }
+
+    let (restored, keys) = match backup::parse_restore(&bytes, &current) {
+        Ok(result) => result,
+        Err(_) => return Ok(Redirect::to("/system?restore=invalid").into_response()),
+    };
+
+    settings::save_settings(&state.config_path, &restored)
+        .map_err(|error| AppError(error.to_string()))?;
+    apply_settings_side_effects(&state, &restored).await?;
+
+    // Best-effort key merge; a key-write failure does not roll back the settings
+    // (both are individually atomic and settings are already committed).
+    let state_dir = ssh_keys_state_dir(&state);
+    let redirect = match run_blocking(move || ssh_keys::merge(&state_dir, &keys)).await? {
+        Ok((added, _skipped)) => format!("/system?restore=ok&keys={added}"),
+        Err(_) => "/system?restore=ok_keys_failed".to_string(),
+    };
+    Ok(Redirect::to(&redirect).into_response())
 }
 
 async fn logs(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
