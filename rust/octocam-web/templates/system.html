@@ -98,7 +98,7 @@
 
             <a class="secondary" href="/backup">Download backup</a>
 
-            <form class="settings-stack" method="post" action="/restore" enctype="multipart/form-data" onsubmit="return confirm('Restore configuration from this file? Current stream, image, and feature settings will be overwritten.');">
+            <form class="settings-stack" method="post" action="/restore" enctype="multipart/form-data" data-confirm-message="Restore configuration from this file? Current stream, image, and feature settings will be overwritten.">
               <label class="field">
                 <span>Backup file</span>
                 <input type="file" name="backup" accept="application/json,.json" required>
