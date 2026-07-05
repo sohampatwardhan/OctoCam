@@ -1264,12 +1264,7 @@ async fn update_settings(
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
-    let _ = mediamtx::configure_rtsp_service(&current, &state.mediamtx_config_path);
-    let homekit_settings = current.clone();
-    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
-    let matter_settings = current.clone();
-    let (matter_env, matter_id) = (state.matter_env_path.clone(), state.matter_identity_path.clone());
-    run_blocking(move || matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)).await?;
+    apply_settings_side_effects(&state, &current).await?;
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
 }
 
@@ -1512,6 +1507,20 @@ fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
         has_error: !error.is_empty(),
         error,
     }
+}
+
+/// Reconfigure the downstream services from the current settings: mediamtx RTSP,
+/// the HomeKit accessory daemon, and the Matter sidecar. Shared by
+/// `update_settings` and `restore_upload` so the two paths cannot drift. Assumes
+/// settings have already been persisted with `save_settings`.
+async fn apply_settings_side_effects(state: &Arc<AppState>, settings: &Settings) -> Result<(), AppError> {
+    let _ = mediamtx::configure_rtsp_service(settings, &state.mediamtx_config_path);
+    let homekit_settings = settings.clone();
+    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
+    let matter_settings = settings.clone();
+    let (matter_env, matter_id) = (state.matter_env_path.clone(), state.matter_identity_path.clone());
+    run_blocking(move || matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)).await?;
+    Ok(())
 }
 
 fn configure_homekit_service(settings: &Settings) {
