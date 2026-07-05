@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 askama = "0.12"
-axum = { version = "0.8", features = ["form", "json", "macros"] }
+axum = { version = "0.8", features = ["form", "json", "macros", "multipart"] }
 base64 = "0.22"
 constant_time_eq = "0.3"
 hmac = "0.12"
