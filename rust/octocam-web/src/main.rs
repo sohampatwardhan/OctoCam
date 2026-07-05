@@ -1,3 +1,4 @@
+mod backup;
 mod camera;
 mod mediamtx;
 mod matter;
@@ -245,7 +246,6 @@ struct StreamTemplate {
     page_title: String,
     settings: Settings,
     system: system::SystemView,
-    rtsp_urls: StreamUrls,
     browser_stream_urls: StreamUrls,
     active_page: &'static str,
     initial_stream: String, // "main" | "sub"
@@ -1027,7 +1027,6 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
     };
     render(StreamTemplate {
         page_title: "Live stream".to_string(),
-        rtsp_urls: stream_urls_for(&settings, host.clone(), "rtsp"),
         browser_stream_urls: stream_urls_for(&settings, host, "webrtc"),
         system: system::view(&status),
         settings,
