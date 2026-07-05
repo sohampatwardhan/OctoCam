@@ -69,6 +69,13 @@ Passwords must never be stored in plaintext by OctoCam.
   never writes an empty key file except on a confirmed last-key revoke. Adding
   or revoking a key requires an authenticated admin session and a same-origin
   request. Full key material is never placed in a URL or log line.
+- Configuration backups contain no secrets: the admin password hash is never
+  exported, and Wi-Fi credentials are never included (they live in
+  NetworkManager, not OctoCam). Backup and restore both require setup to be
+  complete and an authenticated admin session; restore additionally requires a
+  same-origin request and caps the upload size. A restored file can only set
+  the portable settings — it cannot overwrite the admin password, `setup_complete`,
+  Wi-Fi SSID, or pairing state on the target device.
 
 ## OS Baseline
 
@@ -215,6 +222,16 @@ maintenance from a phone, tablet, or desktop browser.
   lets you revoke a key or authorize a new one. Removing the last remaining key
   requires an explicit confirmation, since it ends root SSH access to the
   device.
+- The System info page also offers Backup & Restore. "Download backup" saves
+  the camera's configuration as a JSON file: the portable settings (camera,
+  stream, RTSP, image, motion, and feature toggles) plus the authorized SSH
+  public keys. The admin password and Wi-Fi credentials are never included.
+  "Restore from backup" imports such a file onto an already set-up device —
+  useful for migrating to a replacement Pi. Restore applies only the portable
+  settings (device-bound values like the admin password, Wi-Fi, and existing
+  HomeKit/Matter pairings are kept), and SSH keys in the backup are added to
+  the existing set rather than replacing it. On a new device you still complete
+  first-boot setup (admin password and Wi-Fi) before restoring.
 
 ## Quick Start On The Pi
 
