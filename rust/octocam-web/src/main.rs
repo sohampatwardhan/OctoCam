@@ -210,6 +210,7 @@ struct SystemTemplate {
     page_title: String,
     settings: Settings,
     system: system::SystemView,
+    saved: bool,
     active_page: &'static str,
     restore_message: String,
     has_restore_message: bool,
@@ -305,8 +306,6 @@ struct HomeKitStatus {
     pincode: Option<String>,
     setup_uri: Option<String>,
     qr_data_url: Option<String>,
-    stream_source: Option<String>,
-    rtsp_url: Option<String>,
     error: Option<String>,
 }
 
@@ -319,8 +318,6 @@ struct HomeKitView {
     setup_uri: String,
     has_qr: bool,
     qr_data_url: String,
-    stream_source: String,
-    rtsp_url: String,
     error: String,
     has_error: bool,
 }
@@ -339,6 +336,7 @@ struct SshKeysQuery {
 
 #[derive(Deserialize)]
 struct SystemQuery {
+    saved: Option<String>,
     restore: Option<String>,
     keys: Option<String>,
 }
@@ -428,6 +426,9 @@ async fn async_main() {
         let _ = run_blocking(move || {
             if let Err(error) = system::configure_time_server(&settings.time_server) {
                 eprintln!("time server reconcile failed: {error}");
+            }
+            if let Err(error) = system::configure_maintenance_timers(&settings) {
+                eprintln!("scheduled maintenance reconcile failed: {error}");
             }
         })
         .await;
@@ -851,6 +852,7 @@ async fn system_page(
         page_title: "System info".to_string(),
         settings,
         system: system::view(&status),
+        saved: query.saved.as_deref() == Some("1"),
         active_page: "system",
         has_restore_message: !restore_message.is_empty(),
         restore_message,
@@ -1760,15 +1762,6 @@ fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
         setup_uri,
         has_qr: !qr_data_url.is_empty(),
         qr_data_url,
-        stream_source: status.stream_source.unwrap_or_else(|| {
-            if settings.sub_stream_enabled {
-                "sub"
-            } else {
-                "main"
-            }
-            .to_string()
-        }),
-        rtsp_url: status.rtsp_url.unwrap_or_default(),
         has_error: !error.is_empty(),
         error,
     }
@@ -1785,6 +1778,10 @@ async fn apply_settings_side_effects(
     let _ = mediamtx::configure_rtsp_service(settings, &state.mediamtx_config_path);
     let time_server = settings.time_server.clone();
     let _ = run_blocking(move || system::configure_time_server(&time_server))
+        .await?
+        .map_err(AppError)?;
+    let maintenance_settings = settings.clone();
+    let _ = run_blocking(move || system::configure_maintenance_timers(&maintenance_settings))
         .await?
         .map_err(AppError)?;
     let homekit_settings = settings.clone();

@@ -51,6 +51,10 @@ pub struct Settings {
     pub matter_enabled: bool,
     pub motion_enabled: bool,
     pub motion_sensitivity: i32,
+    pub scheduled_service_restart_enabled: bool,
+    pub scheduled_service_restart_time: String,
+    pub scheduled_reboot_enabled: bool,
+    pub scheduled_reboot_time: String,
 }
 
 #[derive(Clone, Debug)]
@@ -191,6 +195,10 @@ impl Default for Settings {
             matter_enabled: false,
             motion_enabled: false,
             motion_sensitivity: 50,
+            scheduled_service_restart_enabled: false,
+            scheduled_service_restart_time: "03:00".to_string(),
+            scheduled_reboot_enabled: false,
+            scheduled_reboot_time: "04:00".to_string(),
         }
     }
 }
@@ -370,6 +378,26 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         1,
         100,
     );
+    settings.scheduled_service_restart_enabled = bool_value(
+        &map,
+        "scheduled_service_restart_enabled",
+        settings.scheduled_service_restart_enabled,
+    );
+    settings.scheduled_service_restart_time = time_of_day_value(
+        &map,
+        "scheduled_service_restart_time",
+        &settings.scheduled_service_restart_time,
+    );
+    settings.scheduled_reboot_enabled = bool_value(
+        &map,
+        "scheduled_reboot_enabled",
+        settings.scheduled_reboot_enabled,
+    );
+    settings.scheduled_reboot_time = time_of_day_value(
+        &map,
+        "scheduled_reboot_time",
+        &settings.scheduled_reboot_time,
+    );
     clamp_to_encoder_limits(&mut settings);
     settings
 }
@@ -511,6 +539,20 @@ fn time_server_value(map: &Map<String, Value>, key: &str, default: &str) -> Stri
     } else {
         cleaned
     }
+}
+
+fn time_of_day_value(map: &Map<String, Value>, key: &str, default: &str) -> String {
+    let raw = string_value(map, key, default, 8);
+    let Some((hour, minute)) = raw.split_once(':') else {
+        return default.to_string();
+    };
+    let (Ok(hour), Ok(minute)) = (hour.parse::<u32>(), minute.parse::<u32>()) else {
+        return default.to_string();
+    };
+    if hour > 23 || minute > 59 {
+        return default.to_string();
+    }
+    format!("{hour:02}:{minute:02}")
 }
 
 fn migrate_default_path(value: &str) -> String {
@@ -684,6 +726,44 @@ mod tests {
             Value::String("pool.ntp.org;reboot".into()),
         );
         assert_eq!(validate_map(&map).time_server, "pool.ntp.org");
+    }
+
+    #[test]
+    fn validates_scheduled_maintenance() {
+        let mut map = Map::new();
+        map.insert(
+            "scheduled_service_restart_enabled".into(),
+            Value::String("true".into()),
+        );
+        map.insert(
+            "scheduled_service_restart_time".into(),
+            Value::String("3:05".into()),
+        );
+        map.insert(
+            "scheduled_reboot_enabled".into(),
+            Value::String("on".into()),
+        );
+        map.insert(
+            "scheduled_reboot_time".into(),
+            Value::String("23:59".into()),
+        );
+        let settings = validate_map(&map);
+        assert!(settings.scheduled_service_restart_enabled);
+        assert_eq!(settings.scheduled_service_restart_time, "03:05");
+        assert!(settings.scheduled_reboot_enabled);
+        assert_eq!(settings.scheduled_reboot_time, "23:59");
+
+        map.insert(
+            "scheduled_service_restart_time".into(),
+            Value::String("99:99".into()),
+        );
+        map.insert(
+            "scheduled_reboot_time".into(),
+            Value::String("reboot now".into()),
+        );
+        let settings = validate_map(&map);
+        assert_eq!(settings.scheduled_service_restart_time, "03:00");
+        assert_eq!(settings.scheduled_reboot_time, "04:00");
     }
 
     #[test]

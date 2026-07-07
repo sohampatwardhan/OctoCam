@@ -213,7 +213,7 @@ pub fn view(status: &SystemStatus) -> SystemView {
             .unwrap_or_else(|| "Not available".to_string()),
         cpu_temp: status
             .cpu_temp_c
-            .map(|value| format!("{value:.1} C"))
+            .map(|value| format!("{value:.1} °C"))
             .unwrap_or_else(|| "Not available".to_string()),
         cpu_usage: status
             .resources
@@ -368,6 +368,93 @@ pub fn daemon_reload() -> Result<(), String> {
         return Err(message.trim().to_string());
     }
     Ok(())
+}
+
+fn default_systemd_unit_dir() -> PathBuf {
+    env::var_os("OCTOCAM_SYSTEMD_UNIT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/systemd/system"))
+}
+
+pub fn configure_maintenance_timers(settings: &crate::settings::Settings) -> Result<(), String> {
+    if !command_exists("systemctl") {
+        return Ok(());
+    }
+
+    const SERVICE_RESTART_SERVICE: &str = "octocam-scheduled-web-restart.service";
+    const SERVICE_RESTART_TIMER: &str = "octocam-scheduled-web-restart.timer";
+    const REBOOT_SERVICE: &str = "octocam-scheduled-reboot.service";
+    const REBOOT_TIMER: &str = "octocam-scheduled-reboot.timer";
+
+    let unit_dir = default_systemd_unit_dir();
+    let mut changed = false;
+    changed |= write_if_changed(
+        &unit_dir.join(SERVICE_RESTART_SERVICE),
+        &render_oneshot_unit(
+            "Restart OctoCam web service",
+            "/usr/bin/systemctl restart octocam-web.service",
+        ),
+    )?;
+    changed |= write_if_changed(
+        &unit_dir.join(SERVICE_RESTART_TIMER),
+        &render_daily_timer(
+            "Scheduled OctoCam web service restart",
+            SERVICE_RESTART_SERVICE,
+            &settings.scheduled_service_restart_time,
+        ),
+    )?;
+    changed |= write_if_changed(
+        &unit_dir.join(REBOOT_SERVICE),
+        &render_oneshot_unit("Reboot OctoCam device", "/usr/bin/systemctl reboot"),
+    )?;
+    changed |= write_if_changed(
+        &unit_dir.join(REBOOT_TIMER),
+        &render_daily_timer(
+            "Scheduled OctoCam device reboot",
+            REBOOT_SERVICE,
+            &settings.scheduled_reboot_time,
+        ),
+    )?;
+
+    if changed {
+        daemon_reload()?;
+    }
+    set_timer_enabled(
+        SERVICE_RESTART_TIMER,
+        settings.scheduled_service_restart_enabled,
+    )?;
+    set_timer_enabled(REBOOT_TIMER, settings.scheduled_reboot_enabled)?;
+    Ok(())
+}
+
+fn render_oneshot_unit(description: &str, exec_start: &str) -> String {
+    format!(
+        "[Unit]\nDescription={description}\n\n[Service]\nType=oneshot\nExecStart={exec_start}\n"
+    )
+}
+
+fn render_daily_timer(description: &str, unit: &str, time: &str) -> String {
+    format!(
+        "[Unit]\nDescription={description}\n\n[Timer]\nOnCalendar=*-*-* {time}:00\nPersistent=true\nUnit={unit}\n\n[Install]\nWantedBy=timers.target\n"
+    )
+}
+
+fn write_if_changed(path: &Path, next: &str) -> Result<bool, String> {
+    let current = fs::read_to_string(path).unwrap_or_default();
+    if current == next {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, next).map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+fn set_timer_enabled(unit: &str, enabled: bool) -> Result<(), String> {
+    let action = if enabled { "enable" } else { "disable" };
+    let state = if enabled { "--now" } else { "--now" };
+    run_checked(Command::new("systemctl").args([action, state, unit]))
 }
 
 pub fn default_timesyncd_dropin_path() -> PathBuf {
@@ -1437,6 +1524,22 @@ mod tests {
         assert_eq!(
             render_timesyncd_dropin("time.cloudflare.com"),
             "[Time]\nNTP=time.cloudflare.com\nFallbackNTP=pool.ntp.org time.cloudflare.com time.google.com\n"
+        );
+    }
+
+    #[test]
+    fn renders_maintenance_timer_units() {
+        assert_eq!(
+            render_daily_timer(
+                "Scheduled OctoCam web service restart",
+                "octocam-scheduled-web-restart.service",
+                "03:05"
+            ),
+            "[Unit]\nDescription=Scheduled OctoCam web service restart\n\n[Timer]\nOnCalendar=*-*-* 03:05:00\nPersistent=true\nUnit=octocam-scheduled-web-restart.service\n\n[Install]\nWantedBy=timers.target\n"
+        );
+        assert_eq!(
+            render_oneshot_unit("Reboot OctoCam device", "/usr/bin/systemctl reboot"),
+            "[Unit]\nDescription=Reboot OctoCam device\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/systemctl reboot\n"
         );
     }
 

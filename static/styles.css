@@ -1111,6 +1111,22 @@ input[type="checkbox"] {
   font-weight: 700;
 }
 
+.maintenance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.maintenance-option {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-muted);
+}
+
 .wifi-signal[data-signal-level="high"] .wifi-signal-indicator {
   color: var(--ok);
 }
@@ -1715,7 +1731,8 @@ pre {
   }
 
   .stream-dashboard-grid,
-  .metric-grid {
+  .metric-grid,
+  .maintenance-grid {
     grid-template-columns: 1fr;
   }
 

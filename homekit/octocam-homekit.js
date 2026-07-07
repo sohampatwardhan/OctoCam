@@ -486,8 +486,6 @@ async function writeStatus(accessory, identity, extra = {}) {
   } catch (_) {
   }
   const qrDataUrl = setupUri ? await qrcode.toDataURL(setupUri, { margin: 1, width: 320 }) : "";
-  const settings = loadSettings();
-  const stream = sourceStream(settings);
   writeJson(STATUS_PATH, {
     status: extra.status || "ready",
     paired: Boolean(extra.paired),
@@ -495,8 +493,6 @@ async function writeStatus(accessory, identity, extra = {}) {
     setup_id: identity.setup_id,
     setup_uri: setupUri,
     qr_data_url: qrDataUrl,
-    stream_source: stream,
-    rtsp_url: rtspUrl(settings, stream),
     updated_at: new Date().toISOString(),
   });
 }

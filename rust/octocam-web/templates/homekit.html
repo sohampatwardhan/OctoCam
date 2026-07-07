@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} HomeKit</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-setup-lucide">
-    <script src="/static/app.js?v=20260702-wifi-setup-lucide" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260707-maintenance-schedules">
+    <script src="/static/app.js?v=20260707-maintenance-schedules" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -25,7 +25,6 @@
                 <div><dt>Service</dt><dd data-live-status="homekit_state">{{ system.homekit_state }}</dd></div>
                 <div><dt>Pairing</dt><dd>{% if homekit.paired %}paired{% else %}not paired{% endif %}</dd></div>
                 <div><dt>Accessory</dt><dd>{{ homekit.status }}</dd></div>
-                <div><dt>Stream source</dt><dd>{{ homekit.stream_source }}</dd></div>
               </dl>
               {% if settings.homekit_enabled %}
                 {% if homekit.paired %}
@@ -43,9 +42,6 @@
                         <span>Manual code</span>
                         <strong>{{ homekit.pincode }}</strong>
                         <small>{{ homekit.setup_uri }}</small>
-                        {% if homekit.rtsp_url.len() > 0 %}
-                          <small>Uses {{ homekit.rtsp_url }}</small>
-                        {% endif %}
                       </div>
                     </div>
                   {% else %}

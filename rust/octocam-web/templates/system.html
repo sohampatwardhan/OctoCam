@@ -4,12 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} System Info</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260702-wifi-setup-lucide">
-    <script src="/static/app.js?v=20260702-wifi-setup-lucide" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260707-maintenance-schedules">
+    <script src="/static/app.js?v=20260707-maintenance-schedules" defer></script>
   </head>
   <body>
     <main class="shell">
       {% include "_topbar.html" %}
+      {% include "_settings_toast.html" %}
 
       <div class="app-layout">
         {% include "_sidebar.html" %}
@@ -80,6 +81,39 @@
               </dl>
             {% endif %}
           </section>
+
+          <form class="settings-stack" method="post" action="/settings">
+            <input type="hidden" name="_return_to" value="/system">
+            <input type="hidden" name="_checkboxes" value="scheduled_service_restart_enabled,scheduled_reboot_enabled">
+            <section class="panel settings-card">
+              <div class="section-heading"><h2>Scheduled maintenance</h2></div>
+              <div class="maintenance-grid">
+                <div class="maintenance-option">
+                  <div class="toggle-row">
+                    <span>Restart OctoCam service daily</span>
+                    <label class="switch"><input type="checkbox" name="scheduled_service_restart_enabled" {% if settings.scheduled_service_restart_enabled %}checked{% endif %}><span></span></label>
+                  </div>
+                  <label>
+                    <span>Restart time</span>
+                    <input type="time" name="scheduled_service_restart_time" value="{{ settings.scheduled_service_restart_time }}">
+                  </label>
+                </div>
+                <div class="maintenance-option">
+                  <div class="toggle-row">
+                    <span>Reboot Raspberry Pi daily</span>
+                    <label class="switch"><input type="checkbox" name="scheduled_reboot_enabled" {% if settings.scheduled_reboot_enabled %}checked{% endif %}><span></span></label>
+                  </div>
+                  <label>
+                    <span>Reboot time</span>
+                    <input type="time" name="scheduled_reboot_time" value="{{ settings.scheduled_reboot_time }}">
+                  </label>
+                </div>
+              </div>
+            </section>
+            <section class="panel action-card">
+              <button class="primary" type="submit">Save maintenance schedule</button>
+            </section>
+          </form>
 
           <section class="panel settings-card">
             <div class="section-heading"><h2>Backup &amp; Restore</h2></div>

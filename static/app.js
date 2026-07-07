@@ -241,7 +241,7 @@ function statusValues(status) {
     wifi_ip_addresses: wifiIpAddresses(status),
     ip_addresses: ipAddresses(status),
     uptime: present(status?.uptime),
-    cpu_temp: fixed(status?.cpu_temp_c, " C"),
+    cpu_temp: fixed(status?.cpu_temp_c, " °C"),
     cpu_usage: fixed(status?.resources?.cpu_usage_percent, "%"),
     load_average: present(status?.resources?.load_average),
     memory: present(status?.resources?.memory_summary, memoryText(status?.resources?.memory)),
