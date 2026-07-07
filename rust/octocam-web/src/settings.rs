@@ -41,6 +41,11 @@ pub struct Settings {
     pub vflip: bool,
     pub brightness: i32,
     pub contrast: f64,
+    pub text_overlay_enabled: bool,
+    pub text_overlay_timezone: String,
+    pub text_overlay_clock_format: String,
+    pub text_overlay_date_format: String,
+    pub time_server: String,
     pub homekit_enabled: bool,
     pub homekit_paired: bool,
     pub matter_enabled: bool,
@@ -176,6 +181,11 @@ impl Default for Settings {
             vflip: false,
             brightness: 0,
             contrast: 1.0,
+            text_overlay_enabled: false,
+            text_overlay_timezone: "Etc/UTC".to_string(),
+            text_overlay_clock_format: "24h".to_string(),
+            text_overlay_date_format: "yyyy-mm-dd".to_string(),
+            time_server: "pool.ntp.org".to_string(),
             homekit_enabled: false,
             homekit_paired: false,
             matter_enabled: false,
@@ -331,6 +341,24 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
     settings.vflip = bool_value(&map, "vflip", settings.vflip);
     settings.brightness = int_value(&map, "brightness", settings.brightness, -100, 100);
     settings.contrast = float_value(&map, "contrast", settings.contrast, 0.0, 4.0);
+    settings.text_overlay_enabled =
+        bool_value(&map, "text_overlay_enabled", settings.text_overlay_enabled);
+    settings.text_overlay_timezone = timezone_value(
+        &map,
+        "text_overlay_timezone",
+        &settings.text_overlay_timezone,
+    );
+    settings.text_overlay_clock_format = clock_format_value(
+        &map,
+        "text_overlay_clock_format",
+        &settings.text_overlay_clock_format,
+    );
+    settings.text_overlay_date_format = date_format_value(
+        &map,
+        "text_overlay_date_format",
+        &settings.text_overlay_date_format,
+    );
+    settings.time_server = time_server_value(&map, "time_server", &settings.time_server);
     settings.homekit_enabled = bool_value(&map, "homekit_enabled", settings.homekit_enabled);
     settings.homekit_paired = bool_value(&map, "homekit_paired", settings.homekit_paired);
     settings.matter_enabled = bool_value(&map, "matter_enabled", settings.matter_enabled);
@@ -425,6 +453,60 @@ fn path_value(map: &Map<String, Value>, key: &str, default: &str) -> String {
         .take(80)
         .collect();
     if cleaned.is_empty() {
+        default.to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn timezone_value(map: &Map<String, Value>, key: &str, default: &str) -> String {
+    let raw = string_value(map, key, default, 80);
+    let cleaned: String = raw
+        .chars()
+        .filter(|char| char.is_ascii_alphanumeric() || matches!(char, '/' | '_' | '-' | '+'))
+        .take(80)
+        .collect();
+    if cleaned.is_empty()
+        || cleaned.starts_with('/')
+        || cleaned.contains("//")
+        || cleaned.contains("..")
+    {
+        default.to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn clock_format_value(map: &Map<String, Value>, key: &str, default: &str) -> String {
+    match string_value(map, key, default, 8).as_str() {
+        "12h" => "12h".to_string(),
+        "24h" => "24h".to_string(),
+        _ => default.to_string(),
+    }
+}
+
+fn date_format_value(map: &Map<String, Value>, key: &str, default: &str) -> String {
+    match string_value(map, key, default, 16).as_str() {
+        "dd/mm/yyyy" => "dd/mm/yyyy".to_string(),
+        "mm/dd/yyyy" => "mm/dd/yyyy".to_string(),
+        "yyyy-mm-dd" => "yyyy-mm-dd".to_string(),
+        _ => default.to_string(),
+    }
+}
+
+fn time_server_value(map: &Map<String, Value>, key: &str, default: &str) -> String {
+    let raw = string_value(map, key, default, 120);
+    let cleaned: String = raw
+        .chars()
+        .filter(|char| char.is_ascii_alphanumeric() || matches!(char, '.' | '-' | ':'))
+        .take(120)
+        .collect();
+    if cleaned.is_empty()
+        || cleaned != raw
+        || cleaned.starts_with(['.', '-', ':'])
+        || cleaned.ends_with(['.', '-', ':'])
+        || cleaned.contains("..")
+    {
         default.to_string()
     } else {
         cleaned
@@ -551,6 +633,60 @@ mod tests {
     }
 
     #[test]
+    fn validates_overlay_time_settings() {
+        let mut map = Map::new();
+        map.insert(
+            "text_overlay_timezone".into(),
+            Value::String("America/New_York".into()),
+        );
+        map.insert(
+            "text_overlay_clock_format".into(),
+            Value::String("12h".into()),
+        );
+        map.insert(
+            "text_overlay_date_format".into(),
+            Value::String("dd/mm/yyyy".into()),
+        );
+        let settings = validate_map(&map);
+        assert_eq!(settings.text_overlay_timezone, "America/New_York");
+        assert_eq!(settings.text_overlay_clock_format, "12h");
+        assert_eq!(settings.text_overlay_date_format, "dd/mm/yyyy");
+
+        map.insert(
+            "text_overlay_timezone".into(),
+            Value::String("../../etc/passwd".into()),
+        );
+        map.insert(
+            "text_overlay_clock_format".into(),
+            Value::String("metric".into()),
+        );
+        map.insert(
+            "text_overlay_date_format".into(),
+            Value::String("julian".into()),
+        );
+        let settings = validate_map(&map);
+        assert_eq!(settings.text_overlay_timezone, "Etc/UTC");
+        assert_eq!(settings.text_overlay_clock_format, "24h");
+        assert_eq!(settings.text_overlay_date_format, "yyyy-mm-dd");
+    }
+
+    #[test]
+    fn validates_time_server() {
+        let mut map = Map::new();
+        map.insert(
+            "time_server".into(),
+            Value::String("time.cloudflare.com".into()),
+        );
+        assert_eq!(validate_map(&map).time_server, "time.cloudflare.com");
+
+        map.insert(
+            "time_server".into(),
+            Value::String("pool.ntp.org;reboot".into()),
+        );
+        assert_eq!(validate_map(&map).time_server, "pool.ntp.org");
+    }
+
+    #[test]
     fn matter_defaults_off_and_parses() {
         assert!(!Settings::default().matter_enabled);
         let mut map = Map::new();
@@ -566,7 +702,10 @@ mod tests {
         let mut s = validate_map(&map);
         assert!(s.admin_password_hash.is_empty());
         enforce_matter_requires_admin(&mut s);
-        assert!(!s.matter_enabled, "matter must not enable without an admin password");
+        assert!(
+            !s.matter_enabled,
+            "matter must not enable without an admin password"
+        );
         s.admin_password_hash = "hash".into();
         s.matter_enabled = true;
         enforce_matter_requires_admin(&mut s);

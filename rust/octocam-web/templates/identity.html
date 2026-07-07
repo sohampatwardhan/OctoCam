@@ -16,7 +16,7 @@
         {% include "_sidebar.html" %}
         <section class="content-stack">
           <form class="settings-stack" method="post" action="/settings">
-            <input type="hidden" name="_return_to" value="/identity">
+            <input type="hidden" name="_return_to" value="{{ return_path }}">
             <section class="panel settings-card">
               <div class="section-heading"><h2>Identity</h2></div>
               <div class="grid-two">

@@ -1,4 +1,4 @@
-const OCTOCAM_CACHE = "octocam-ui-v20260702-wifi-setup-lucide";
+const OCTOCAM_CACHE = "octocam-ui-v20260705-preview-toggle-icons-v2";
 const STATIC_ASSETS = [
   "/static/styles.css",
   "/static/app.js",

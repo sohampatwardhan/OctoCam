@@ -692,6 +692,9 @@ if (streamPreview) {
   const frame = streamPreview.querySelector("[data-stream-frame]");
   const placeholder = streamPreview.querySelector("[data-stream-placeholder]");
   const toggle = streamPreview.querySelector("[data-stream-toggle]");
+  const toggleLabel = streamPreview.querySelector("[data-stream-toggle-label]");
+  const playIcon = streamPreview.querySelector('[data-stream-toggle-icon="play"]');
+  const stopIcon = streamPreview.querySelector('[data-stream-toggle-icon="stop"]');
   const choices = streamPreview.querySelectorAll("[data-stream-choice]");
   const sources = {
     main: streamPreview.dataset.mainSrc || "",
@@ -713,16 +716,100 @@ if (streamPreview) {
     if (note) note.hidden = !show;
   }
 
+  function clientValue(value) {
+    if (!value || value === "Not available") {
+      return "Not available";
+    }
+    return String(value);
+  }
+
+  function connectedAtText(value) {
+    const raw = clientValue(value);
+    if (raw === "Not available") {
+      return raw;
+    }
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? raw : date.toLocaleString();
+  }
+
+  function appendClientMeta(list, label, value) {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = label;
+    detail.textContent = value;
+    item.append(term, detail);
+    list.append(item);
+  }
+
+  function renderClientList(stream, pathViewers) {
+    const list = document.querySelector(`[data-client-list="${stream}"]`);
+    if (!list) return;
+    list.replaceChildren();
+
+    const clients = Array.isArray(pathViewers?.clients) ? pathViewers.clients : null;
+    if (!clients || clients.length === 0) {
+      const empty = document.createElement("p");
+      empty.textContent = clients ? "No clients connected." : "Client details unavailable.";
+      list.append(empty);
+      return;
+    }
+
+    clients.forEach((client) => {
+      const row = document.createElement("article");
+      row.className = "client-row";
+
+      const head = document.createElement("div");
+      const title = document.createElement("strong");
+      const type = document.createElement("span");
+      title.textContent = client.label || "Stream reader";
+      type.textContent = client.client_type || "Client";
+      head.append(title, type);
+
+      const meta = document.createElement("dl");
+      appendClientMeta(meta, "Address", clientValue(client.remote_addr));
+      appendClientMeta(meta, "Connected", connectedAtText(client.connected_at));
+      appendClientMeta(meta, "Agent", clientValue(client.user_agent));
+
+      row.append(head, meta);
+      list.append(row);
+    });
+  }
+
+  document.querySelectorAll("[data-client-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const stream = button.dataset.clientToggle;
+      const details = document.querySelector(`[data-client-details="${stream}"]`);
+      const list = document.querySelector(`[data-client-list="${stream}"]`);
+      const open = button.getAttribute("aria-expanded") !== "true";
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+      details?.classList.toggle("is-open", open);
+      if (list) list.hidden = !open;
+    });
+  });
+
   updateViewerCells = (status) => {
     latestViewers = (status && status.viewers) || null;
-    const mainCell = document.querySelector("[data-viewers-main]");
-    const subCell = document.querySelector("[data-viewers-sub]");
+    const mainCells = document.querySelectorAll("[data-viewers-main]");
+    const subCells = document.querySelectorAll("[data-viewers-sub]");
     if (latestViewers) {
-      if (mainCell) mainCell.textContent = `${latestViewers.main.total} / ${latestViewers.main.capacity}`;
-      if (subCell) subCell.textContent = `${latestViewers.sub.total} / ${latestViewers.sub.capacity}`;
+      mainCells.forEach((cell) => {
+        cell.textContent = `${latestViewers.main.total} / ${latestViewers.main.capacity}`;
+      });
+      subCells.forEach((cell) => {
+        cell.textContent = `${latestViewers.sub.total} / ${latestViewers.sub.capacity}`;
+      });
+      renderClientList("main", latestViewers.main);
+      renderClientList("sub", latestViewers.sub);
     } else {
-      if (mainCell) mainCell.textContent = "unavailable";
-      if (subCell) subCell.textContent = "unavailable";
+      mainCells.forEach((cell) => {
+        cell.textContent = "unavailable";
+      });
+      subCells.forEach((cell) => {
+        cell.textContent = "unavailable";
+      });
+      renderClientList("main", null);
+      renderClientList("sub", null);
     }
   };
 
@@ -762,8 +849,20 @@ if (streamPreview) {
     });
 
     if (toggle) {
-      toggle.textContent = playing ? "Stop" : "Start";
       toggle.setAttribute("aria-pressed", playing ? "true" : "false");
+      toggle.setAttribute("aria-label", playing ? "Stop preview" : "Start preview");
+    }
+
+    if (toggleLabel) {
+      toggleLabel.textContent = playing ? "Stop" : "Start";
+    }
+
+    if (playIcon) {
+      playIcon.toggleAttribute("hidden", playing);
+    }
+
+    if (stopIcon) {
+      stopIcon.toggleAttribute("hidden", !playing);
     }
 
     if (placeholder) {
@@ -800,7 +899,6 @@ if (streamPreview) {
         showBusyNote(false);
       }
       activeStream = requested;
-      playing = true;
       syncPreview();
     });
   });

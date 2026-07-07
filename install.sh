@@ -6,6 +6,9 @@ RUST_WEB_DIR="$PROJECT_DIR/rust/octocam-web"
 HOMEKIT_DIR="$PROJECT_DIR/homekit"
 SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-web.service"
 SERVICE_FILE="/etc/systemd/system/octocam-web.service"
+NGINX_TEMPLATE="$PROJECT_DIR/nginx/octocam-web.conf"
+NGINX_SITE_FILE="/etc/nginx/sites-available/octocam-web"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/octocam-web"
 HOMEKIT_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-homekit.service"
 HOMEKIT_SERVICE_FILE="/etc/systemd/system/octocam-homekit.service"
 WIFI_SERVICE_TEMPLATE="$PROJECT_DIR/systemd/octocam-wifi-setup.service"
@@ -19,6 +22,9 @@ STATE_DIR="/var/lib/octocam"
 LOG_DIR="/var/log/octocam"
 MATTER_STORAGE_DIR="$STATE_DIR/matter-storage"
 SECRET_KEY_FILE="$STATE_DIR/secret-key"
+TLS_DIR="/etc/octocam/tls"
+TLS_CERT="$TLS_DIR/octocam.crt"
+TLS_KEY="$TLS_DIR/octocam.key"
 WEB_BINARY="/usr/local/bin/octocam-web"
 MINIMAL_OS=0
 
@@ -49,6 +55,11 @@ if [[ ! -f "$SERVICE_TEMPLATE" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$NGINX_TEMPLATE" ]]; then
+  echo "Missing nginx template: $NGINX_TEMPLATE"
+  exit 1
+fi
+
 if [[ ! -f "$WIFI_SERVICE_TEMPLATE" ]]; then
   echo "Missing Wi-Fi service template: $WIFI_SERVICE_TEMPLATE"
   exit 1
@@ -71,7 +82,7 @@ fi
 echo "Installing OctoCam dependencies..."
 apt-get update
 # octocam-matter runtime deps (GStreamer/avahi) land with the Plan-2 daemon build; see docs/matter.md
-apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config network-manager nodejs npm ffmpeg
+apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config network-manager nodejs npm ffmpeg nginx openssl
 
 if ! apt-get install -y --no-install-recommends rpicam-apps; then
   echo "rpicam-apps was unavailable; trying the older libcamera-apps package..."
@@ -189,6 +200,23 @@ sed \
   "$MATTER_SERVICE_TEMPLATE" > "$MATTER_SERVICE_FILE"
 chmod 0644 "$MATTER_SERVICE_FILE"
 
+echo "Installing OctoCam HTTP/HTTPS proxy..."
+install -d -m 0755 /etc/octocam
+install -d -m 0750 "$TLS_DIR"
+if [[ ! -f "$TLS_CERT" || ! -f "$TLS_KEY" ]]; then
+  openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -nodes \
+    -keyout "$TLS_KEY" \
+    -out "$TLS_CERT" \
+    -subj "/CN=$(hostname).local" \
+    -addext "subjectAltName=DNS:$(hostname).local,DNS:octocam.local,IP:127.0.0.1"
+fi
+chmod 0644 "$TLS_CERT"
+chmod 0600 "$TLS_KEY"
+install -m 0644 "$NGINX_TEMPLATE" "$NGINX_SITE_FILE"
+rm -f /etc/nginx/sites-enabled/default
+ln -sfn "$NGINX_SITE_FILE" "$NGINX_SITE_LINK"
+nginx -t
+
 for group in video gpio i2c; do
   if getent group "$group" >/dev/null; then
     usermod -aG "$group" "$SERVICE_USER"
@@ -202,6 +230,8 @@ if ! systemctl start octocam-wifi-setup.service; then
   echo "Run 'journalctl -xeu octocam-wifi-setup.service' on the Pi for details."
 fi
 systemctl enable --now octocam-web.service
+systemctl enable --now nginx.service
+systemctl reload nginx.service
 if grep -q '"homekit_enabled": true' "$STATE_DIR/settings.json"; then
   systemctl enable --now octocam-homekit.service
 else
@@ -213,4 +243,4 @@ if grep -q '"matter_enabled": true' /var/lib/octocam/settings.json 2>/dev/null; 
 fi
 
 echo "OctoCam web UI is installed."
-echo "Open http://$(hostname).local:8080 or http://<device-ip>:8080"
+echo "Open http://$(hostname).local or https://$(hostname).local"

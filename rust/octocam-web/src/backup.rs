@@ -40,6 +40,11 @@ pub const PORTABLE_FIELDS: &[&str] = &[
     "vflip",
     "brightness",
     "contrast",
+    "text_overlay_enabled",
+    "text_overlay_timezone",
+    "text_overlay_clock_format",
+    "text_overlay_date_format",
+    "time_server",
     "homekit_enabled",
     "matter_enabled",
     "motion_enabled",
@@ -80,7 +85,11 @@ pub struct Backup {
 }
 
 /// Build a backup envelope from the current settings and authorized key lines.
-pub fn build_backup(settings: &Settings, exported_at: u64, ssh_authorized_keys: Vec<String>) -> Backup {
+pub fn build_backup(
+    settings: &Settings,
+    exported_at: u64,
+    ssh_authorized_keys: Vec<String>,
+) -> Backup {
     let full = settings_map(settings);
     let mut portable = Map::new();
     for &field in PORTABLE_FIELDS {
@@ -103,7 +112,13 @@ pub fn build_backup(settings: &Settings, exported_at: u64, ssh_authorized_keys: 
 pub fn backup_filename(device_name: &str, exported_at: u64) -> String {
     let mapped: String = device_name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     let slug: String = mapped
         .split('-')
@@ -111,7 +126,11 @@ pub fn backup_filename(device_name: &str, exported_at: u64) -> String {
         .collect::<Vec<_>>()
         .join("-");
     let slug: String = slug.chars().take(40).collect();
-    let slug = if slug.is_empty() { "octocam".to_string() } else { slug };
+    let slug = if slug.is_empty() {
+        "octocam".to_string()
+    } else {
+        slug
+    };
     format!("octocam-backup-{slug}-{exported_at}.json")
 }
 
@@ -137,7 +156,10 @@ pub enum RestoreError {
 /// `Settings::default()` for any absent field, so validating the upload alone
 /// would reset the excluded fields (empty admin hash, etc.). Seeding from current
 /// keeps the excluded fields correct and makes them unreachable from the upload.
-pub fn parse_restore(bytes: &[u8], current: &Settings) -> Result<(Settings, Vec<String>), RestoreError> {
+pub fn parse_restore(
+    bytes: &[u8],
+    current: &Settings,
+) -> Result<(Settings, Vec<String>), RestoreError> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| RestoreError::BadJson)?;
     let Value::Object(root) = value else {
         return Err(RestoreError::BadJson);
@@ -181,10 +203,7 @@ mod tests {
 
     #[test]
     fn field_lists_cover_all_settings() {
-        let all: BTreeSet<String> = settings_map(&Settings::default())
-            .keys()
-            .cloned()
-            .collect();
+        let all: BTreeSet<String> = settings_map(&Settings::default()).keys().cloned().collect();
         let classified: BTreeSet<String> = PORTABLE_FIELDS
             .iter()
             .chain(EXCLUDED_FIELDS.iter())
@@ -206,17 +225,27 @@ mod tests {
             ..Settings::default()
         };
 
-        let backup = build_backup(&settings, 1_751_716_800, vec!["ssh-ed25519 AAAA test".to_string()]);
+        let backup = build_backup(
+            &settings,
+            1_751_716_800,
+            vec!["ssh-ed25519 AAAA test".to_string()],
+        );
 
         assert_eq!(backup.octocam_backup_version, BACKUP_VERSION);
         assert_eq!(backup.exported_at, 1_751_716_800);
         assert_eq!(backup.device_name, "Nursery Cam");
-        assert_eq!(backup.settings.get("device_name").and_then(|v| v.as_str()), Some("Nursery Cam"));
+        assert_eq!(
+            backup.settings.get("device_name").and_then(|v| v.as_str()),
+            Some("Nursery Cam")
+        );
         assert!(backup.settings.get("admin_password_hash").is_none());
         assert!(backup.settings.get("homekit_paired").is_none());
         assert!(backup.settings.get("wifi_ssid").is_none());
         assert!(backup.settings.get("setup_complete").is_none());
-        assert_eq!(backup.ssh_authorized_keys, vec!["ssh-ed25519 AAAA test".to_string()]);
+        assert_eq!(
+            backup.ssh_authorized_keys,
+            vec!["ssh-ed25519 AAAA test".to_string()]
+        );
     }
 
     #[test]
@@ -225,10 +254,7 @@ mod tests {
             backup_filename("Nursery Cam!", 1_751_716_800),
             "octocam-backup-nursery-cam-1751716800.json"
         );
-        assert_eq!(
-            backup_filename("", 42),
-            "octocam-backup-octocam-42.json"
-        );
+        assert_eq!(backup_filename("", 42), "octocam-backup-octocam-42.json");
     }
 
     fn envelope(settings_json: Value, keys: Value, version: Value) -> Vec<u8> {
@@ -283,24 +309,49 @@ mod tests {
     #[test]
     fn parse_restore_reads_ssh_keys_array() {
         let current = Settings::default();
-        let keys = Value::Array(vec![Value::from("ssh-ed25519 AAAA a"), Value::from("ssh-rsa BBBB b")]);
+        let keys = Value::Array(vec![
+            Value::from("ssh-ed25519 AAAA a"),
+            Value::from("ssh-rsa BBBB b"),
+        ]);
         let bytes = envelope(Value::Object(Map::new()), keys, Value::from(1));
         let (_restored, keys) = parse_restore(&bytes, &current).unwrap();
-        assert_eq!(keys, vec!["ssh-ed25519 AAAA a".to_string(), "ssh-rsa BBBB b".to_string()]);
+        assert_eq!(
+            keys,
+            vec![
+                "ssh-ed25519 AAAA a".to_string(),
+                "ssh-rsa BBBB b".to_string()
+            ]
+        );
     }
 
     #[test]
     fn parse_restore_rejects_bad_version_and_shape() {
         let current = Settings::default();
-        let bytes = envelope(Value::Object(Map::new()), Value::Array(vec![]), Value::from(2));
-        assert!(matches!(parse_restore(&bytes, &current), Err(RestoreError::BadVersion)));
+        let bytes = envelope(
+            Value::Object(Map::new()),
+            Value::Array(vec![]),
+            Value::from(2),
+        );
+        assert!(matches!(
+            parse_restore(&bytes, &current),
+            Err(RestoreError::BadVersion)
+        ));
         let mut root = Map::new();
         root.insert("settings".to_string(), Value::Object(Map::new()));
         let bytes = serde_json::to_vec(&Value::Object(root)).unwrap();
-        assert!(matches!(parse_restore(&bytes, &current), Err(RestoreError::BadVersion)));
+        assert!(matches!(
+            parse_restore(&bytes, &current),
+            Err(RestoreError::BadVersion)
+        ));
         let bytes = serde_json::to_vec(&Value::from("nope")).unwrap();
-        assert!(matches!(parse_restore(&bytes, &current), Err(RestoreError::BadJson)));
-        assert!(matches!(parse_restore(b"{not json", &current), Err(RestoreError::BadJson)));
+        assert!(matches!(
+            parse_restore(&bytes, &current),
+            Err(RestoreError::BadJson)
+        ));
+        assert!(matches!(
+            parse_restore(b"{not json", &current),
+            Err(RestoreError::BadJson)
+        ));
     }
 
     #[test]

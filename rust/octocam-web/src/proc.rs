@@ -108,8 +108,11 @@ mod tests {
 
     #[test]
     fn returns_stdout_for_fast_command() {
-        let out = run(Command::new("sh").args(["-c", "printf hello"]), DEFAULT_TIMEOUT)
-            .expect("command should run");
+        let out = run(
+            Command::new("sh").args(["-c", "printf hello"]),
+            DEFAULT_TIMEOUT,
+        )
+        .expect("command should run");
         assert!(out.status.success());
         assert_eq!(out.stdout, b"hello");
     }
@@ -124,8 +127,11 @@ mod tests {
     #[test]
     fn kills_and_errors_on_timeout() {
         let start = Instant::now();
-        let err = run(Command::new("sh").args(["-c", "sleep 30"]), Duration::from_millis(300))
-            .expect_err("command should time out");
+        let err = run(
+            Command::new("sh").args(["-c", "sleep 30"]),
+            Duration::from_millis(300),
+        )
+        .expect_err("command should time out");
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
         // Must return promptly, not after the full 30s sleep.
         assert!(start.elapsed() < Duration::from_secs(5));

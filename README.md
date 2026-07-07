@@ -176,13 +176,13 @@ Expected first-boot behavior:
    OctoCam's JSON settings.
 11. After a successful join, the setup AP autoconnect is disabled.
 
-The current setup AP serves the portal on the OctoCam web UI port. Full
-captive-portal auto-popup behavior may need a tiny port-80 redirect or DNS/HTTP
-intercept layer after we test on iOS, macOS, Android, and Windows.
+The setup AP serves captive probes and the setup portal through the same
+HTTP/HTTPS proxy used by the normal web UI.
 
 ## What This Installs
 
-- A Rust-based settings UI on port `8080`
+- A Rust-based settings UI exposed on HTTP port `80` and HTTPS port `443`
+  through nginx, with the app itself bound to loopback port `8080`
 - A first-run setup flow at `/setup`
 - A systemd service named `octocam-web`
 - A first-boot Wi-Fi setup service named `octocam-wifi-setup`, backed by
@@ -244,9 +244,15 @@ sudo ./install.sh
 After installation, open one of these from a browser on the same network:
 
 ```text
-http://octocam.local:8080
-http://<device-ip>:8080
+http://octocam.local
+https://octocam.local
+http://<device-ip>
+https://<device-ip>
 ```
+
+The installer generates a local self-signed HTTPS certificate in
+`/etc/octocam/tls`, so browsers will warn until you trust or replace that
+certificate.
 
 Useful service commands:
 

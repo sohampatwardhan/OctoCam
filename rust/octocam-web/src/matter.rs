@@ -8,8 +8,8 @@ pub const PRODUCT_ID: u16 = 0x8001;
 
 /// Matter spec 5.1.7.1: these passcodes are invalid and must never be used.
 const INVALID_PASSCODES: [u32; 12] = [
-    0, 11111111, 22222222, 33333333, 44444444, 55555555, 66666666, 77777777,
-    88888888, 99999999, 12345678, 87654321,
+    0, 11111111, 22222222, 33333333, 44444444, 55555555, 66666666, 77777777, 88888888, 99999999,
+    12345678, 87654321,
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -117,7 +117,10 @@ fn base38_encode(bytes: &[u8]) -> String {
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
         let (mut value, chars) = match chunk.len() {
-            3 => (u32::from(chunk[0]) | u32::from(chunk[1]) << 8 | u32::from(chunk[2]) << 16, 5),
+            3 => (
+                u32::from(chunk[0]) | u32::from(chunk[1]) << 8 | u32::from(chunk[2]) << 16,
+                5,
+            ),
             2 => (u32::from(chunk[0]) | u32::from(chunk[1]) << 8, 4),
             _ => (u32::from(chunk[0]), 2),
         };
@@ -266,7 +269,11 @@ pub fn render_matter_env(settings: &Settings, identity: &MatterIdentity) -> Stri
 
 /// Writes the daemon env file; Ok(true) when content changed (mirrors
 /// write_mediamtx_config so callers restart only on real changes).
-pub fn write_matter_env(settings: &Settings, identity: &MatterIdentity, path: &Path) -> Result<bool, String> {
+pub fn write_matter_env(
+    settings: &Settings,
+    identity: &MatterIdentity,
+    path: &Path,
+) -> Result<bool, String> {
     let next = render_matter_env(settings, identity);
     let current = fs::read_to_string(path).unwrap_or_default();
     if current == next {
@@ -321,7 +328,11 @@ pub struct MatterView {
     pub snapshot_endpoint_down: bool,
 }
 
-pub fn view(settings: &Settings, identity: Option<&MatterIdentity>, status: &MatterStatus) -> MatterView {
+pub fn view(
+    settings: &Settings,
+    identity: Option<&MatterIdentity>,
+    status: &MatterStatus,
+) -> MatterView {
     let status_label = if !status.status.is_empty() {
         status.status.clone()
     } else if settings.matter_enabled {
@@ -348,7 +359,12 @@ pub fn view(settings: &Settings, identity: Option<&MatterIdentity>, status: &Mat
         manual_code,
         qr_svg: qr_svg_text,
         qr_payload: payload,
-        stream_source: if settings.sub_stream_enabled { "sub" } else { "main" }.to_string(),
+        stream_source: if settings.sub_stream_enabled {
+            "sub"
+        } else {
+            "main"
+        }
+        .to_string(),
         has_error: !status.error.is_empty(),
         error: status.error.clone(),
         ipv6_ok: ipv6_preflight_ok(),
@@ -404,7 +420,12 @@ fn clear_dir_contents(dir: &Path) -> io::Result<()> {
 /// Reset pairing: stop → wipe KVS → rotate passcode → restart if enabled.
 /// Wiping under a live daemon is racy (it holds fabric state in memory and
 /// rewrites the KVS), hence the strict ordering.
-pub fn reset_pairing(settings: &Settings, storage_dir: &Path, env_path: &Path, identity_path: &Path) {
+pub fn reset_pairing(
+    settings: &Settings,
+    storage_dir: &Path,
+    env_path: &Path,
+    identity_path: &Path,
+) {
     const UNIT: &str = "octocam-matter";
     if let Err(error) = crate::system::set_service_enabled(UNIT, false) {
         tracing::error!("matter reset: failed to stop daemon: {error}");
@@ -416,11 +437,17 @@ pub fn reset_pairing(settings: &Settings, storage_dir: &Path, env_path: &Path, i
             // daemon has somewhere to write; ownership fixup is install.sh's
             // job and the daemon isn't running yet in this state anyway.
             if let Err(error) = fs::create_dir_all(storage_dir) {
-                tracing::error!("matter reset: failed to create {}: {error}", storage_dir.display());
+                tracing::error!(
+                    "matter reset: failed to create {}: {error}",
+                    storage_dir.display()
+                );
             }
         }
         Err(error) => {
-            tracing::error!("matter reset: failed to wipe {}: {error}", storage_dir.display());
+            tracing::error!(
+                "matter reset: failed to wipe {}: {error}",
+                storage_dir.display()
+            );
         }
     }
     match rotate_identity(identity_path) {
@@ -489,7 +516,10 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
         let rotated = rotate_identity(&path).unwrap();
-        assert_ne!(first.passcode, rotated.passcode, "reset must rotate the passcode");
+        assert_ne!(
+            first.passcode, rotated.passcode,
+            "reset must rotate the passcode"
+        );
     }
 
     #[test]
@@ -522,12 +552,19 @@ mod tests {
         };
         let payload = qr_payload(&id);
         assert!(payload.starts_with("MT:"));
-        assert_eq!(payload.len(), 3 + 19, "88 bits → 11 bytes → 19 base38 chars");
+        assert_eq!(
+            payload.len(),
+            3 + 19,
+            "88 bits → 11 bytes → 19 base38 chars"
+        );
         let bytes = pack_payload_bits(&id);
         let decoded = base38_decode(&payload[3..]);
         assert_eq!(decoded, bytes, "base38 must round-trip");
         // Field-level checks against the packed bits (LSB-first layout).
-        let acc = bytes.iter().rev().fold(0u128, |acc, b| (acc << 8) | u128::from(*b));
+        let acc = bytes
+            .iter()
+            .rev()
+            .fold(0u128, |acc, b| (acc << 8) | u128::from(*b));
         assert_eq!(acc & 0x7, 0, "version");
         assert_eq!((acc >> 3) & 0xFFFF, 0xFFF1, "vid");
         assert_eq!((acc >> 19) & 0xFFFF, 0x8001, "pid");
@@ -547,7 +584,12 @@ mod tests {
 
     #[test]
     fn env_render_selects_sub_stream_and_contains_contract_keys() {
-        let id = MatterIdentity { passcode: 20202021, discriminator: 3840, vendor_id: 0xFFF1, product_id: 0x8001 };
+        let id = MatterIdentity {
+            passcode: 20202021,
+            discriminator: 3840,
+            vendor_id: 0xFFF1,
+            product_id: 0x8001,
+        };
         let settings = Settings::default(); // sub_stream_enabled: true
         let env = render_matter_env(&settings, &id);
         assert!(env.contains("OCTOCAM_MATTER_DISCRIMINATOR=3840\n"));
@@ -555,9 +597,14 @@ mod tests {
         assert!(env.contains("OCTOCAM_MATTER_VENDOR_ID=65521\n"));
         assert!(env.contains("OCTOCAM_MATTER_PRODUCT_ID=32769\n"));
         assert!(env.contains("OCTOCAM_MATTER_RTSP_URL=rtsp://127.0.0.1:8554/sub\n"));
-        assert!(env.contains("OCTOCAM_MATTER_SNAPSHOT_URL=http://127.0.0.1:8081/internal/snapshot.jpg\n"));
-        let main_only = Settings { sub_stream_enabled: false, ..Settings::default() };
-        assert!(render_matter_env(&main_only, &id).contains("OCTOCAM_MATTER_RTSP_URL=rtsp://127.0.0.1:8554/main\n"));
+        assert!(env
+            .contains("OCTOCAM_MATTER_SNAPSHOT_URL=http://127.0.0.1:8081/internal/snapshot.jpg\n"));
+        let main_only = Settings {
+            sub_stream_enabled: false,
+            ..Settings::default()
+        };
+        assert!(render_matter_env(&main_only, &id)
+            .contains("OCTOCAM_MATTER_RTSP_URL=rtsp://127.0.0.1:8554/main\n"));
     }
 
     #[test]
@@ -566,21 +613,38 @@ mod tests {
         let path = dir.path().join("matter-env");
         let id = generate_identity();
         let settings = Settings::default();
-        assert!(write_matter_env(&settings, &id, &path).unwrap(), "first write changes");
+        assert!(
+            write_matter_env(&settings, &id, &path).unwrap(),
+            "first write changes"
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "env file duplicates the passcode; must be 0600");
+            assert_eq!(
+                mode, 0o600,
+                "env file duplicates the passcode; must be 0600"
+            );
         }
-        assert!(!write_matter_env(&settings, &id, &path).unwrap(), "identical write is a no-op");
-        let changed = Settings { sub_stream_enabled: false, ..settings };
-        assert!(write_matter_env(&changed, &id, &path).unwrap(), "config change must be detected");
+        assert!(
+            !write_matter_env(&settings, &id, &path).unwrap(),
+            "identical write is a no-op"
+        );
+        let changed = Settings {
+            sub_stream_enabled: false,
+            ..settings
+        };
+        assert!(
+            write_matter_env(&changed, &id, &path).unwrap(),
+            "config change must be detected"
+        );
     }
 
     #[test]
     fn status_parses_and_defaults() {
-        let view = status_view(r#"{"status":"running","commissioned":true,"fabric_count":2,"stream_state":"streaming","error":""}"#);
+        let view = status_view(
+            r#"{"status":"running","commissioned":true,"fabric_count":2,"stream_state":"streaming","error":""}"#,
+        );
         assert_eq!(view.status, "running");
         assert!(view.commissioned);
         assert_eq!(view.fabric_count, 2);

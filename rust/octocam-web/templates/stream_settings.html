@@ -17,7 +17,7 @@
         <section class="content-stack">
           <form class="settings-stack" method="post" action="/settings">
             <input type="hidden" name="_return_to" value="/stream-settings">
-            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip">
+            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled">
             <section class="panel settings-card">
               <div class="section-heading"><h2>Stream</h2></div>
               <div class="toggle-row">
@@ -25,7 +25,7 @@
                 <label class="switch"><input type="checkbox" name="camera_enabled" {% if settings.camera_enabled %}checked{% endif %}><span></span></label>
               </div>
 
-              <div class="subsection-heading"><h3>Main stream</h3></div>
+              <div class="subsection-heading"><h3>HD stream</h3></div>
               <label>
                 <span>Resolution</span>
                 <select name="resolution">
@@ -39,7 +39,7 @@
                 <label><span>Bitrate kbps</span><input type="number" name="bitrate_kbps" min="250" max="25000" step="250" value="{{ settings.bitrate_kbps }}"></label>
               </div>
 
-              <div class="subsection-heading"><h3>Sub stream</h3></div>
+              <div class="subsection-heading"><h3>SD stream</h3></div>
               <div class="toggle-row">
                 <span>Enabled</span>
                 <label class="switch"><input type="checkbox" name="sub_stream_enabled" {% if settings.sub_stream_enabled %}checked{% endif %}><span></span></label>
@@ -74,6 +74,53 @@
                 <label><input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}><span>Horizontal flip</span></label>
                 <label><input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}><span>Vertical flip</span></label>
               </div>
+
+              <div class="subsection-heading"><h3>Overlay</h3></div>
+              <div class="toggle-row">
+                <span>Date/time + camera name</span>
+                <label class="switch"><input type="checkbox" name="text_overlay_enabled" {% if settings.text_overlay_enabled %}checked{% endif %}><span></span></label>
+              </div>
+              <div class="grid-two">
+                <label>
+                  <span>Time zone</span>
+                  <select name="text_overlay_timezone">
+                    {% for time_zone in time_zones %}
+                      <option value="{{ time_zone.value }}" {% if time_zone.selected %}selected{% endif %}>{{ time_zone.value }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  <span>Date</span>
+                  <select name="text_overlay_date_format">
+                    <option value="dd/mm/yyyy" {% if settings.text_overlay_date_format == "dd/mm/yyyy" %}selected{% endif %}>DD/MM/YYYY</option>
+                    <option value="mm/dd/yyyy" {% if settings.text_overlay_date_format == "mm/dd/yyyy" %}selected{% endif %}>MM/DD/YYYY</option>
+                    <option value="yyyy-mm-dd" {% if settings.text_overlay_date_format == "yyyy-mm-dd" %}selected{% endif %}>YYYY-MM-DD</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid-two">
+                <label>
+                  <span>Clock</span>
+                  <select name="text_overlay_clock_format">
+                    <option value="24h" {% if settings.text_overlay_clock_format == "24h" %}selected{% endif %}>24 hour</option>
+                    <option value="12h" {% if settings.text_overlay_clock_format == "12h" %}selected{% endif %}>12 hour</option>
+                  </select>
+                </label>
+              </div>
+              <div class="field-row with-action">
+                <label>
+                  <span>Time server</span>
+                  <input name="time_server" value="{{ settings.time_server }}" maxlength="120" list="time-servers">
+                </label>
+                <button class="secondary compact" type="submit" formaction="/time/sync" formmethod="post">Sync now</button>
+              </div>
+              <datalist id="time-servers">
+                <option value="pool.ntp.org">
+                <option value="time.cloudflare.com">
+                <option value="time.google.com">
+                <option value="time.apple.com">
+                <option value="time.windows.com">
+              </datalist>
             </section>
             <section class="panel action-card">
               <button class="primary" type="submit">Save stream settings</button>

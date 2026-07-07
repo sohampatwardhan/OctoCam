@@ -12,8 +12,9 @@ Environment=OCTOCAM_WIFI_CACHE_PATH=/var/lib/octocam/wifi-networks.json
 Environment=OCTOCAM_SECRET_KEY_FILE=/var/lib/octocam/secret-key
 Environment=OCTOCAM_HOMEKIT_STATUS_PATH=/var/lib/octocam/homekit-status.json
 Environment=OCTOCAM_PROJECT_DIR=__PROJECT_DIR__
-Environment=OCTOCAM_HOST=0.0.0.0
+Environment=OCTOCAM_HOST=127.0.0.1
 Environment=OCTOCAM_PORT=8080
+Environment=OCTOCAM_ENABLE_CAPTIVE_PORTAL_LISTENER=0
 ExecStart=/usr/local/bin/octocam-web
 Restart=on-failure
 RestartSec=3

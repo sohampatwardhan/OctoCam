@@ -205,20 +205,20 @@ pub fn list() -> Result<Vec<AuthorizedKey>, KeyError> {
 /// lines. Fails closed like `read_raw`.
 pub fn export_lines() -> Result<Vec<String>, KeyError> {
     let raw = read_raw()?;
-    Ok(raw.lines().filter_map(|line| validate_new_key(line).ok()).collect())
+    Ok(raw
+        .lines()
+        .filter_map(|line| validate_new_key(line).ok())
+        .collect())
 }
 
 fn sudo(args: &[&str]) -> Result<(), KeyError> {
     let mut full = vec!["-n"];
     full.extend_from_slice(args);
-    let output = proc::run(
-        Command::new("sudo").args(&full),
-        proc::SERVICE_TIMEOUT,
-    )
-    .map_err(|error| {
-        eprintln!("ssh_keys: `sudo {}` failed to run: {error}", args.join(" "));
-        KeyError::WriteFailed
-    })?;
+    let output =
+        proc::run(Command::new("sudo").args(&full), proc::SERVICE_TIMEOUT).map_err(|error| {
+            eprintln!("ssh_keys: `sudo {}` failed to run: {error}", args.join(" "));
+            KeyError::WriteFailed
+        })?;
     if output.status.success() {
         Ok(())
     } else {
@@ -265,7 +265,9 @@ fn write_raw(
     })?;
 
     let result = (|| {
-        sudo(&["install", "-d", "-m", "700", "-o", "root", "-g", "root", SSH_DIR])?;
+        sudo(&[
+            "install", "-d", "-m", "700", "-o", "root", "-g", "root", SSH_DIR,
+        ])?;
         // Partial writes land on STAGE_DEST, never the live file.
         sudo(&[
             "install", "-m", "600", "-o", "root", "-g", "root", tmp_str, STAGE_DEST,
@@ -406,9 +408,7 @@ mod tests {
 
     #[test]
     fn parses_keys_skipping_blank_and_comment_lines() {
-        let file = format!(
-            "# a comment\n\nssh-ed25519 {ED25519_BODY} alice@laptop\n\n",
-        );
+        let file = format!("# a comment\n\nssh-ed25519 {ED25519_BODY} alice@laptop\n\n",);
         let keys = parse_authorized_keys(&file);
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key_type, "ssh-ed25519");
@@ -418,9 +418,7 @@ mod tests {
 
     #[test]
     fn parse_skips_options_prefixed_and_unknown() {
-        let file = format!(
-            "no-pty ssh-ed25519 {ED25519_BODY} restricted\ngibberish here\n",
-        );
+        let file = format!("no-pty ssh-ed25519 {ED25519_BODY} restricted\ngibberish here\n",);
         // The options-prefixed and gibberish lines are not displayed...
         assert_eq!(parse_authorized_keys(&file).len(), 0);
     }

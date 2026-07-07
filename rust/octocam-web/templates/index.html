@@ -61,7 +61,7 @@
                 <label class="switch"><input type="checkbox" name="camera_enabled" {% if settings.camera_enabled %}checked{% endif %}><span></span></label>
               </div>
 
-              <div class="subsection-heading"><h3>Main stream</h3></div>
+              <div class="subsection-heading"><h3>HD stream</h3></div>
               <label>
                 <span>Resolution</span>
                 <select name="resolution">
@@ -75,7 +75,7 @@
                 <label><span>Bitrate kbps</span><input type="number" name="bitrate_kbps" min="250" max="25000" step="250" value="{{ settings.bitrate_kbps }}"></label>
               </div>
 
-              <div class="subsection-heading"><h3>Sub stream</h3></div>
+              <div class="subsection-heading"><h3>SD stream</h3></div>
               <div class="toggle-row">
                 <span>Enabled</span>
                 <label class="switch"><input type="checkbox" name="sub_stream_enabled" {% if settings.sub_stream_enabled %}checked{% endif %}><span></span></label>
@@ -109,6 +109,11 @@
                 <label><input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}><span>Horizontal flip</span></label>
                 <label><input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}><span>Vertical flip</span></label>
               </div>
+              <div class="subsection-heading"><h3>Overlay</h3></div>
+              <div class="toggle-row">
+                <span>Date/time + camera name</span>
+                <label class="switch"><input type="checkbox" name="text_overlay_enabled" {% if settings.text_overlay_enabled %}checked{% endif %}><span></span></label>
+              </div>
             </section>
 
             <section id="rtsp" class="panel settings-card">
@@ -118,16 +123,16 @@
                 <label class="switch"><input type="checkbox" name="rtsp_enabled" {% if settings.rtsp_enabled %}checked{% endif %}><span></span></label>
               </div>
               <div class="grid-two">
-                <label><span>Main path</span><input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80"></label>
-                <label><span>Main max clients</span><input type="number" name="rtsp_max_clients" min="1" max="4" value="{{ settings.rtsp_max_clients }}"></label>
+                <label><span>HD path</span><input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80"></label>
+                <label><span>HD max clients</span><input type="number" name="rtsp_max_clients" min="1" max="4" value="{{ settings.rtsp_max_clients }}"></label>
               </div>
               <div class="grid-two">
-                <label><span>Sub path</span><input name="sub_rtsp_path" value="{{ settings.sub_rtsp_path }}" maxlength="80"></label>
-                <label><span>Sub max clients</span><input type="number" name="sub_rtsp_max_clients" min="1" max="4" value="{{ settings.sub_rtsp_max_clients }}"></label>
+                <label><span>SD path</span><input name="sub_rtsp_path" value="{{ settings.sub_rtsp_path }}" maxlength="80"></label>
+                <label><span>SD max clients</span><input type="number" name="sub_rtsp_max_clients" min="1" max="4" value="{{ settings.sub_rtsp_max_clients }}"></label>
               </div>
               {% if settings.rtsp_enabled %}
                 <label>
-                  <span>Main URL</span>
+                  <span>HD URL</span>
                   <span class="copy-row">
                     <input id="rtspUrl" class="url-field" value="{{ rtsp_urls.main }}" readonly>
                     <button class="icon-button copy-button" type="button" data-copy-target="rtspUrl" aria-label="Copy RTSP stream URL" title="Copy RTSP stream URL"></button>
@@ -135,10 +140,10 @@
                 </label>
                 {% if rtsp_urls.has_sub %}
                   <label>
-                    <span>Sub URL</span>
+                    <span>SD URL</span>
                     <span class="copy-row">
                       <input id="subRtspUrl" class="url-field" value="{{ rtsp_urls.sub }}" readonly>
-                      <button class="icon-button copy-button" type="button" data-copy-target="subRtspUrl" aria-label="Copy RTSP sub stream URL" title="Copy RTSP sub stream URL"></button>
+                      <button class="icon-button copy-button" type="button" data-copy-target="subRtspUrl" aria-label="Copy RTSP SD stream URL" title="Copy RTSP SD stream URL"></button>
                     </span>
                   </label>
                 {% endif %}

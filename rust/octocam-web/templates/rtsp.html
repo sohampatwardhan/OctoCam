@@ -25,16 +25,16 @@
                 <label class="switch"><input type="checkbox" name="rtsp_enabled" {% if settings.rtsp_enabled %}checked{% endif %}><span></span></label>
               </div>
               <div class="grid-two">
-                <label><span>Main path</span><input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80"></label>
-                <label><span>Main max clients</span><input type="number" name="rtsp_max_clients" min="1" max="4" value="{{ settings.rtsp_max_clients }}"></label>
+                <label><span>HD path</span><input name="rtsp_path" value="{{ settings.rtsp_path }}" maxlength="80"></label>
+                <label><span>HD max clients</span><input type="number" name="rtsp_max_clients" min="1" max="4" value="{{ settings.rtsp_max_clients }}"></label>
               </div>
               <div class="grid-two">
-                <label><span>Sub path</span><input name="sub_rtsp_path" value="{{ settings.sub_rtsp_path }}" maxlength="80"></label>
-                <label><span>Sub max clients</span><input type="number" name="sub_rtsp_max_clients" min="1" max="4" value="{{ settings.sub_rtsp_max_clients }}"></label>
+                <label><span>SD path</span><input name="sub_rtsp_path" value="{{ settings.sub_rtsp_path }}" maxlength="80"></label>
+                <label><span>SD max clients</span><input type="number" name="sub_rtsp_max_clients" min="1" max="4" value="{{ settings.sub_rtsp_max_clients }}"></label>
               </div>
               {% if settings.rtsp_enabled %}
                 <label>
-                  <span>Main URL</span>
+                  <span>HD URL</span>
                   <span class="copy-row">
                     <input id="rtspUrl" class="url-field" value="{{ rtsp_urls.main }}" readonly>
                     <button class="icon-button copy-button" type="button" data-copy-target="rtspUrl" aria-label="Copy RTSP stream URL" title="Copy RTSP stream URL"></button>
@@ -42,10 +42,10 @@
                 </label>
                 {% if rtsp_urls.has_sub %}
                   <label>
-                    <span>Sub URL</span>
+                    <span>SD URL</span>
                     <span class="copy-row">
                       <input id="subRtspUrl" class="url-field" value="{{ rtsp_urls.sub }}" readonly>
-                      <button class="icon-button copy-button" type="button" data-copy-target="subRtspUrl" aria-label="Copy RTSP sub stream URL" title="Copy RTSP sub stream URL"></button>
+                      <button class="icon-button copy-button" type="button" data-copy-target="subRtspUrl" aria-label="Copy RTSP SD stream URL" title="Copy RTSP SD stream URL"></button>
                     </span>
                   </label>
                 {% endif %}

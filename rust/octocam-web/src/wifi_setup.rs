@@ -72,7 +72,13 @@ fn try_saved_wifi_profiles(config: &SetupConfig) -> Result<SavedProfileResult, S
         ]);
 
         let output = crate::proc::run(
-            Command::new("nmcli").args(["connection", "up", &profile, "ifname", &config.wifi_iface]),
+            Command::new("nmcli").args([
+                "connection",
+                "up",
+                &profile,
+                "ifname",
+                &config.wifi_iface,
+            ]),
             crate::proc::CONNECT_TIMEOUT,
         )
         .map_err(|error| error.to_string())?;
@@ -200,8 +206,11 @@ fn active_connection_for_iface(output: &str, iface: &str) -> Option<String> {
 }
 
 fn nmcli<const N: usize>(args: [&str; N]) -> Result<Output, String> {
-    let output = crate::proc::run(Command::new("nmcli").args(args), crate::proc::CONNECT_TIMEOUT)
-        .map_err(|error| error.to_string())?;
+    let output = crate::proc::run(
+        Command::new("nmcli").args(args),
+        crate::proc::CONNECT_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())?;
     if output.status.success() {
         Ok(output)
     } else {

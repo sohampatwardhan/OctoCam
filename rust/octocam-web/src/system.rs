@@ -1,8 +1,8 @@
 use serde::Serialize;
 use std::{
     collections::HashMap,
-    fs,
-    path::Path,
+    env, fs,
+    path::{Path, PathBuf},
     process::Command,
     sync::{Mutex, OnceLock},
     thread,
@@ -313,8 +313,11 @@ pub fn set_service_enabled(unit: &str, enabled: bool) -> Result<(), String> {
     let action = if enabled { "enable" } else { "disable" };
     let state_action = if enabled { "start" } else { "stop" };
     for args in [[action, unit], [state_action, unit]] {
-        let output = crate::proc::run(Command::new("systemctl").args(args), crate::proc::SERVICE_TIMEOUT)
-            .map_err(|error| error.to_string())?;
+        let output = crate::proc::run(
+            Command::new("systemctl").args(args),
+            crate::proc::SERVICE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())?;
         if !output.status.success() {
             let message = String::from_utf8_lossy(if output.stderr.is_empty() {
                 &output.stdout
@@ -336,6 +339,135 @@ pub fn restart_service(unit: &str) -> Result<(), String> {
         crate::proc::SERVICE_TIMEOUT,
     )
     .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        });
+        return Err(message.trim().to_string());
+    }
+    Ok(())
+}
+
+pub fn daemon_reload() -> Result<(), String> {
+    if !command_exists("systemctl") {
+        return Err("systemctl not found".to_string());
+    }
+    let output = crate::proc::run(
+        Command::new("systemctl").args(["daemon-reload"]),
+        crate::proc::SERVICE_TIMEOUT,
+    )
+    .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        });
+        return Err(message.trim().to_string());
+    }
+    Ok(())
+}
+
+pub fn default_timesyncd_dropin_path() -> PathBuf {
+    env::var_os("OCTOCAM_TIMESYNCD_DROPIN_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/systemd/timesyncd.conf.d/octocam.conf"))
+}
+
+pub fn configure_time_server(server: &str) -> Result<bool, String> {
+    let path = default_timesyncd_dropin_path();
+    let next = render_timesyncd_dropin(server);
+    let current = fs::read_to_string(&path).unwrap_or_default();
+    let changed = current != next;
+    if changed {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(&path, next).map_err(|error| error.to_string())?;
+    }
+    Ok(changed)
+}
+
+pub fn sync_clock(server: &str) -> Result<(), String> {
+    configure_time_server(server)?;
+    if command_exists("timedatectl") {
+        run_checked(Command::new("timedatectl").args(["set-ntp", "true"]))?;
+    }
+    if command_exists("systemctl") {
+        run_checked(Command::new("systemctl").args(["restart", "systemd-timesyncd"]))?;
+    } else if !command_exists("timedatectl") {
+        return Err("No time sync tool found.".to_string());
+    }
+    Ok(())
+}
+
+pub fn available_time_zones() -> Vec<String> {
+    let mut zones = if command_exists("timedatectl") {
+        run_output("timedatectl", &["list-timezones"])
+            .map(|output| time_zone_lines(&output))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if zones.is_empty() {
+        zones = zoneinfo_tab_time_zones();
+    }
+    for zone in ["Etc/UTC", "UTC"] {
+        if !zones.iter().any(|existing| existing == zone) {
+            zones.push(zone.to_string());
+        }
+    }
+    zones.sort();
+    zones.dedup();
+    zones
+}
+
+fn time_zone_lines(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| is_valid_time_zone_id(line))
+        .map(str::to_string)
+        .collect()
+}
+
+fn zoneinfo_tab_time_zones() -> Vec<String> {
+    [
+        "/usr/share/zoneinfo/zone1970.tab",
+        "/usr/share/zoneinfo/zone.tab",
+    ]
+    .into_iter()
+    .find_map(|path| fs::read_to_string(path).ok())
+    .map(|content| {
+        content
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split('\t').nth(2))
+            .filter(|value| is_valid_time_zone_id(value))
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn is_valid_time_zone_id(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('/')
+        && !value.contains("..")
+        && value
+            .chars()
+            .all(|char| char.is_ascii_alphanumeric() || matches!(char, '/' | '_' | '-' | '+'))
+}
+
+fn render_timesyncd_dropin(server: &str) -> String {
+    format!("[Time]\nNTP={server}\nFallbackNTP=pool.ntp.org time.cloudflare.com time.google.com\n")
+}
+
+fn run_checked(command: &mut Command) -> Result<(), String> {
+    let output = crate::proc::run(command, crate::proc::SERVICE_TIMEOUT)
+        .map_err(|error| error.to_string())?;
     if !output.status.success() {
         let message = String::from_utf8_lossy(if output.stderr.is_empty() {
             &output.stdout
@@ -408,7 +540,10 @@ pub fn run_output(command: &str, args: &[&str]) -> Option<String> {
     if command_recently_timed_out(command) {
         return None;
     }
-    match crate::proc::run(Command::new(command).args(args), crate::proc::DEFAULT_TIMEOUT) {
+    match crate::proc::run(
+        Command::new(command).args(args),
+        crate::proc::DEFAULT_TIMEOUT,
+    ) {
         Ok(output) => Some(
             String::from_utf8_lossy(if output.stdout.is_empty() {
                 &output.stderr
@@ -1174,7 +1309,10 @@ fn camera_status() -> CameraStatus {
             message: "No rpicam/libcamera command found.".to_string(),
         };
     };
-    let output = crate::proc::run(Command::new(&command).arg("--list-cameras"), crate::proc::SCAN_TIMEOUT);
+    let output = crate::proc::run(
+        Command::new(&command).arg("--list-cameras"),
+        crate::proc::SCAN_TIMEOUT,
+    );
     match output {
         Ok(output) => {
             let message = format!(
@@ -1292,5 +1430,19 @@ mod tests {
     fn maps_wifi_channels() {
         assert_eq!(frequency_to_channel(2412), Some(1));
         assert_eq!(frequency_band(2412), "2.4 GHz");
+    }
+
+    #[test]
+    fn renders_timesyncd_dropin() {
+        assert_eq!(
+            render_timesyncd_dropin("time.cloudflare.com"),
+            "[Time]\nNTP=time.cloudflare.com\nFallbackNTP=pool.ntp.org time.cloudflare.com time.google.com\n"
+        );
+    }
+
+    #[test]
+    fn parses_time_zone_lines() {
+        let zones = time_zone_lines("America/New_York\nbad zone\n../etc/passwd\nEtc/UTC\n");
+        assert_eq!(zones, vec!["America/New_York", "Etc/UTC"]);
     }
 }

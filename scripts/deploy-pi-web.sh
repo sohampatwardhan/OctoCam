@@ -8,6 +8,8 @@ ARTIFACT="$DIST_DIR/octocam-web"
 SSH_TARGET="${OCTOCAM_PI_SSH:-dietpi@192.168.2.211}"
 REMOTE_DIR="${OCTOCAM_REMOTE_DIR:-/root/OctoCam}"
 SERVICE_USER="${OCTOCAM_SERVICE_USER:-root}"
+NGINX_SITE_FILE="/etc/nginx/sites-available/octocam-web"
+NGINX_SITE_LINK="/etc/nginx/sites-enabled/octocam-web"
 REMOTE_TMP="/tmp/octocam-web-deploy-$$"
 SKIP_BUILD=0
 LOCAL_TMP=""
@@ -80,13 +82,14 @@ sed \
   -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
   "$PROJECT_DIR/systemd/octocam-web.service" > "$LOCAL_TMP/octocam-web.service"
 cp "$PROJECT_DIR/systemd/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-wifi-setup.service"
+cp "$PROJECT_DIR/nginx/octocam-web.conf" "$LOCAL_TMP/octocam-web.nginx.conf"
 sed \
   -e "s|__PROJECT_DIR__|$REMOTE_DIR|g" \
   "$PROJECT_DIR/systemd/octocam-matter.service" > "$LOCAL_TMP/octocam-matter.service"
 
 ssh "$SSH_TARGET" "mkdir -p '$REMOTE_TMP'"
 rsync -az "$ARTIFACT" "$SSH_TARGET:$REMOTE_TMP/octocam-web"
-rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-matter.service" "$SSH_TARGET:$REMOTE_TMP/"
+rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-matter.service" "$LOCAL_TMP/octocam-web.nginx.conf" "$SSH_TARGET:$REMOTE_TMP/"
 
 ssh "$SSH_TARGET" "sudo -n mkdir -p '$REMOTE_DIR/static'"
 rsync -az --delete \
@@ -105,6 +108,25 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-web.service' /etc/systemd/system/octocam-web.service
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-wifi-setup.service' /etc/systemd/system/octocam-wifi-setup.service
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-matter.service' /etc/systemd/system/octocam-matter.service
+  if ! command -v nginx >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+    sudo -n apt-get update
+    sudo -n apt-get install -y --no-install-recommends nginx openssl
+  fi
+  sudo -n install -d -m 0755 /etc/octocam
+  sudo -n install -d -m 0750 /etc/octocam/tls
+  if [ ! -f /etc/octocam/tls/octocam.crt ] || [ ! -f /etc/octocam/tls/octocam.key ]; then
+    sudo -n openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -nodes \
+      -keyout /etc/octocam/tls/octocam.key \
+      -out /etc/octocam/tls/octocam.crt \
+      -subj \"/CN=\$(hostname).local\" \
+      -addext \"subjectAltName=DNS:\$(hostname).local,DNS:octocam.local,IP:127.0.0.1\"
+  fi
+  sudo -n chmod 0644 /etc/octocam/tls/octocam.crt
+  sudo -n chmod 0600 /etc/octocam/tls/octocam.key
+  sudo -n install -m 0644 '$REMOTE_TMP/octocam-web.nginx.conf' '$NGINX_SITE_FILE'
+  sudo -n rm -f /etc/nginx/sites-enabled/default
+  sudo -n ln -sfn '$NGINX_SITE_FILE' '$NGINX_SITE_LINK'
+  sudo -n nginx -t
   # Matter daemon runs sandboxed as its own user (never root: parses untrusted
   # LAN traffic). Storage dir owns the CHIP KVS + status file.
   if ! id -u octocam-matter >/dev/null 2>&1; then
@@ -119,6 +141,8 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable octocam-wifi-setup.service >/dev/null
   sudo -n systemctl restart octocam-web.service
+  sudo -n systemctl enable --now nginx.service >/dev/null
+  sudo -n systemctl reload nginx.service
   rm -rf '$REMOTE_TMP'
   # Health gate: the UI must actually serve, not just be \"active\". Roll back on failure.
   # Poll up to ~30s: on the first boot after an upgrade the startup mediamtx
@@ -139,6 +163,8 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
     fi
     exit 1
   fi
+  curl -fsS -m 4 -o /dev/null http://127.0.0.1/login
+  curl -kfsS -m 4 -o /dev/null https://127.0.0.1/login
   systemctl is-active octocam-web.service
   echo \"health check OK\"
 '"

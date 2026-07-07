@@ -1,7 +1,7 @@
 mod backup;
 mod camera;
-mod mediamtx;
 mod matter;
+mod mediamtx;
 mod proc;
 mod security;
 mod settings;
@@ -114,6 +114,12 @@ struct RotationView {
     selected: bool,
 }
 
+#[derive(Clone, Debug)]
+struct TimeZoneView {
+    value: String,
+    selected: bool,
+}
+
 #[derive(Template)]
 #[template(path = "identity.html")]
 struct IdentityTemplate {
@@ -122,6 +128,7 @@ struct IdentityTemplate {
     system: system::SystemView,
     saved: bool,
     active_page: &'static str,
+    return_path: &'static str,
 }
 
 #[derive(Template)]
@@ -148,6 +155,7 @@ struct StreamSettingsTemplate {
     system: system::SystemView,
     resolution_presets: Vec<settings::PresetView>,
     sub_resolution_presets: Vec<settings::PresetView>,
+    time_zones: Vec<TimeZoneView>,
     saved: bool,
     rotations: Vec<RotationView>,
     active_page: &'static str,
@@ -382,16 +390,34 @@ async fn async_main() {
         let settings = settings::load_settings(&state.config_path);
         let config_path = state.mediamtx_config_path.clone();
         let _ = run_blocking(move || {
-            match mediamtx::write_mediamtx_config(&settings, &config_path) {
-                Ok(true) => {
-                    let marker = std::path::Path::new("/run/octocam-rtsp-reconciled");
-                    if !marker.exists() {
-                        let _ = std::fs::write(marker, b"1");
-                        let _ = system::restart_service("octocam-rtsp");
-                    }
+            let config_changed = match mediamtx::write_mediamtx_config(&settings, &config_path) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    eprintln!("mediamtx config reconcile failed: {error}");
+                    false
                 }
-                Ok(false) => {}
-                Err(error) => eprintln!("mediamtx config reconcile failed: {error}"),
+            };
+            let timezone_changed = match mediamtx::write_timezone_dropin(
+                &settings,
+                &mediamtx::default_timezone_dropin_path(),
+            ) {
+                Ok(changed) => {
+                    if changed {
+                        let _ = system::daemon_reload();
+                    }
+                    changed
+                }
+                Err(error) => {
+                    eprintln!("rtsp timezone reconcile failed: {error}");
+                    false
+                }
+            };
+            if config_changed || timezone_changed {
+                let marker = std::path::Path::new("/run/octocam-rtsp-reconciled");
+                if !marker.exists() {
+                    let _ = std::fs::write(marker, b"1");
+                    let _ = system::restart_service("octocam-rtsp");
+                }
             }
         })
         .await;
@@ -399,7 +425,17 @@ async fn async_main() {
 
     {
         let settings = settings::load_settings(&state.config_path);
-        if !settings.setup_complete {
+        let _ = run_blocking(move || {
+            if let Err(error) = system::configure_time_server(&settings.time_server) {
+                eprintln!("time server reconcile failed: {error}");
+            }
+        })
+        .await;
+    }
+
+    {
+        let settings = settings::load_settings(&state.config_path);
+        if !settings.setup_complete && captive_portal_listener_enabled() {
             spawn_captive_portal_listener();
         }
     }
@@ -407,7 +443,7 @@ async fn async_main() {
     spawn_internal_listener(state.clone());
 
     let app = Router::new()
-        .route("/", get(identity))
+        .route("/", get(dashboard_redirect))
         .route("/identity", get(identity))
         .route("/wifi", get(wifi_page))
         .route("/stream-settings", get(stream_settings))
@@ -428,15 +464,19 @@ async fn async_main() {
         .route("/ssh-keys", get(ssh_keys_page))
         .route("/ssh-keys/add", post(ssh_keys_add))
         .route("/ssh-keys/revoke", post(ssh_keys_revoke))
-        .route("/stream", get(stream))
+        .route("/dashboard", get(stream))
+        .route("/stream", get(dashboard_redirect))
         .route("/setup", get(setup).post(complete_setup))
         .route("/wifi/scan", post(scan_wifi))
         .route("/wifi/connect", post(connect_wifi))
         .route("/wifi/delete", post(delete_wifi_profile))
-        .route("/settings", post(update_settings))
+        .route("/settings", get(settings_page).post(update_settings))
+        .route("/time/sync", post(sync_time))
         .route("/power", post(power_action))
         .route("/login", get(login).post(authenticate))
         .route("/logout", post(logout))
+        .route("/hotspot-detect.html", get(captive_probe))
+        .route("/generate_204", get(captive_probe))
         .route("/api/settings", get(api_settings))
         .route("/api/status", get(api_status))
         .route("/api/wifi/networks", get(api_wifi_networks))
@@ -536,6 +576,25 @@ async fn identity(
     uri: Uri,
     Query(query): Query<SavedQuery>,
 ) -> AppResult {
+    render_identity_page(state, headers, uri, query, "/identity").await
+}
+
+async fn settings_page(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Query(query): Query<SavedQuery>,
+) -> AppResult {
+    render_identity_page(state, headers, uri, query, "/settings").await
+}
+
+async fn render_identity_page(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    uri: Uri,
+    query: SavedQuery,
+    return_path: &'static str,
+) -> AppResult {
     if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
         return Ok(response);
     }
@@ -550,7 +609,12 @@ async fn identity(
         system: system::view(&status),
         settings,
         active_page: "identity",
+        return_path,
     })
+}
+
+async fn dashboard_redirect() -> Redirect {
+    Redirect::to("/dashboard")
 }
 
 async fn wifi_page(
@@ -604,7 +668,9 @@ async fn stream_settings(
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
-    let status = run_blocking(system::status).await?;
+    let (status, time_zone_values) =
+        run_blocking(|| (system::status(), system::available_time_zones())).await?;
+    let time_zones = time_zone_views(time_zone_values, &settings.text_overlay_timezone);
     render(StreamSettingsTemplate {
         page_title: "Stream".to_string(),
         resolution_presets: preset_views(RESOLUTION_PRESETS, &settings.current_resolution()),
@@ -612,6 +678,7 @@ async fn stream_settings(
             SUB_RESOLUTION_PRESETS,
             &settings.current_sub_resolution(),
         ),
+        time_zones,
         rotations: rotation_views(settings.rotation),
         saved: query.saved.as_deref() == Some("1"),
         system: system::view(&status),
@@ -762,7 +829,10 @@ async fn system_page(
     let (restore_message, restore_is_error) = match query.restore.as_deref() {
         Some("ok") => {
             let added = query.keys.as_deref().unwrap_or("0");
-            (format!("Configuration restored. {added} SSH key(s) added."), false)
+            (
+                format!("Configuration restored. {added} SSH key(s) added."),
+                false,
+            )
         }
         Some("ok_keys_failed") => (
             "Configuration restored, but SSH keys could not be written.".to_string(),
@@ -771,7 +841,10 @@ async fn system_page(
         Some("invalid") => ("That file is not a valid OctoCam backup.".to_string(), true),
         Some("too_large") => ("That backup file is too large.".to_string(), true),
         Some("empty") => ("No backup file was uploaded.".to_string(), true),
-        Some("csrf") => ("Restore blocked: request came from another origin.".to_string(), true),
+        Some("csrf") => (
+            "Restore blocked: request came from another origin.".to_string(),
+            true,
+        ),
         _ => (String::new(), false),
     };
     render(SystemTemplate {
@@ -811,7 +884,8 @@ async fn backup_download(
         .unwrap_or(0);
 
     let backup = backup::build_backup(&settings, exported_at, ssh_keys);
-    let body = serde_json::to_string_pretty(&backup).map_err(|error| AppError(error.to_string()))?;
+    let body =
+        serde_json::to_string_pretty(&backup).map_err(|error| AppError(error.to_string()))?;
     let filename = backup::backup_filename(&settings.device_name, exported_at);
 
     let mut response = (StatusCode::OK, body).into_response();
@@ -820,7 +894,9 @@ async fn backup_download(
         HeaderValue::from_static("application/json; charset=utf-8"),
     );
     if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
-        response.headers_mut().insert(header::CONTENT_DISPOSITION, value);
+        response
+            .headers_mut()
+            .insert(header::CONTENT_DISPOSITION, value);
     }
     Ok(response)
 }
@@ -939,7 +1015,10 @@ fn ssh_keys_state_dir(state: &AppState) -> PathBuf {
 /// submissions. This is contained defense-in-depth for the root-key surface,
 /// not an app-wide CSRF-token scheme.
 fn cross_origin(headers: &HeaderMap) -> bool {
-    let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
         return false;
     };
     let source = headers
@@ -1074,7 +1153,8 @@ async fn ssh_keys_revoke(
     let confirm = form.confirm.as_deref() == Some("1");
     let target = form.fingerprint;
     let warn_target = target.clone();
-    let redirect = match run_blocking(move || ssh_keys::revoke(&state_dir, &target, confirm)).await {
+    let redirect = match run_blocking(move || ssh_keys::revoke(&state_dir, &target, confirm)).await
+    {
         Ok(Ok(ssh_keys::RevokeOutcome::Revoked)) => "/ssh-keys?status=revoked".to_string(),
         Ok(Ok(ssh_keys::RevokeOutcome::Warn)) => {
             format!("/ssh-keys?warn={}", urlencoding::encode(&warn_target))
@@ -1153,7 +1233,12 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
     // on sub so a forgotten kiosk tab never pins main's only slot. Main is opt-in via
     // the Main button; app.js reroutes that click to sub (with a note) when main is
     // full. `main_busy` therefore starts false — the note is client-toggled.
-    let initial_stream = if settings.sub_stream_enabled { "sub" } else { "main" }.to_string();
+    let initial_stream = if settings.sub_stream_enabled {
+        "sub"
+    } else {
+        "main"
+    }
+    .to_string();
     let main_busy = false;
     let (viewers_main_text, viewers_sub_text) = match &viewers {
         Some(report) => (
@@ -1163,11 +1248,11 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
         None => ("unavailable".to_string(), "unavailable".to_string()),
     };
     render(StreamTemplate {
-        page_title: "Live stream".to_string(),
+        page_title: "Dashboard".to_string(),
         browser_stream_urls: stream_urls_for(&settings, host, "webrtc"),
         system: system::view(&status),
         settings,
-        active_page: "stream",
+        active_page: "dashboard",
         initial_stream,
         main_busy,
         viewers_main_text,
@@ -1223,8 +1308,11 @@ async fn complete_setup(
         );
     }
     if !wifi_ssid.trim().is_empty() {
-        let (ssid, password, security) =
-            (wifi_ssid.clone(), wifi_password.clone(), wifi_security.clone());
+        let (ssid, password, security) = (
+            wifi_ssid.clone(),
+            wifi_password.clone(),
+            wifi_security.clone(),
+        );
         let (connected, message) =
             run_blocking(move || wifi::connect_to_network(&ssid, &password, &security)).await?;
         if !connected {
@@ -1303,7 +1391,11 @@ async fn connect_wifi(
         .remove("wifi_security")
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| wifi::cached_security_for(&cache, &wifi_ssid));
-    let (ssid, password, security) = (wifi_ssid.clone(), wifi_password.clone(), wifi_security.clone());
+    let (ssid, password, security) = (
+        wifi_ssid.clone(),
+        wifi_password.clone(),
+        wifi_security.clone(),
+    );
     let (connected, message) =
         run_blocking(move || wifi::connect_to_network(&ssid, &password, &security)).await?;
     if connected {
@@ -1405,6 +1497,39 @@ async fn update_settings(
     Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
 }
 
+async fn sync_time(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(mut form): Form<HashMap<String, String>>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+
+    let return_to = clean_return_path(
+        &form
+            .remove("_return_to")
+            .unwrap_or_else(|| "/stream-settings".to_string()),
+    );
+    let mut current = settings::load_settings(&state.config_path);
+    if let Some(time_server) = form.remove("time_server") {
+        let mut next_map = settings_to_map(&current)?;
+        next_map.insert("time_server".to_string(), Value::String(time_server));
+        let mut validated = settings::validate_map(&next_map);
+        validated.setup_complete = current.setup_complete;
+        settings::enforce_matter_requires_admin(&mut validated);
+        merge_settings(&mut current, validated);
+        settings::save_settings(&state.config_path, &current)
+            .map_err(|error| AppError(error.to_string()))?;
+    }
+    let time_server = current.time_server.clone();
+    run_blocking(move || system::sync_clock(&time_server))
+        .await?
+        .map_err(AppError)?;
+    Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
+}
+
 async fn power_action(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1451,7 +1576,10 @@ fn schedule_systemctl(args: &[&str]) -> Result<(), AppError> {
     tokio::spawn(async move {
         sleep(Duration::from_millis(900)).await;
         let _ = tokio::task::spawn_blocking(move || {
-            let _ = proc::run(Command::new(command).args(command_args), proc::SERVICE_TIMEOUT);
+            let _ = proc::run(
+                Command::new(command).args(command_args),
+                proc::SERVICE_TIMEOUT,
+            );
         })
         .await;
     });
@@ -1650,13 +1778,26 @@ fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
 /// the HomeKit accessory daemon, and the Matter sidecar. Shared by
 /// `update_settings` and `restore_upload` so the two paths cannot drift. Assumes
 /// settings have already been persisted with `save_settings`.
-async fn apply_settings_side_effects(state: &Arc<AppState>, settings: &Settings) -> Result<(), AppError> {
+async fn apply_settings_side_effects(
+    state: &Arc<AppState>,
+    settings: &Settings,
+) -> Result<(), AppError> {
     let _ = mediamtx::configure_rtsp_service(settings, &state.mediamtx_config_path);
+    let time_server = settings.time_server.clone();
+    let _ = run_blocking(move || system::configure_time_server(&time_server))
+        .await?
+        .map_err(AppError)?;
     let homekit_settings = settings.clone();
     run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
     let matter_settings = settings.clone();
-    let (matter_env, matter_id) = (state.matter_env_path.clone(), state.matter_identity_path.clone());
-    run_blocking(move || matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)).await?;
+    let (matter_env, matter_id) = (
+        state.matter_env_path.clone(),
+        state.matter_identity_path.clone(),
+    );
+    run_blocking(move || {
+        matter::configure_matter_service(&matter_settings, &matter_env, &matter_id)
+    })
+    .await?;
     Ok(())
 }
 
@@ -1804,6 +1945,21 @@ fn rotation_views(current: i32) -> Vec<RotationView> {
         .collect()
 }
 
+fn time_zone_views(mut values: Vec<String>, current: &str) -> Vec<TimeZoneView> {
+    if !values.iter().any(|value| value == current) {
+        values.push(current.to_string());
+    }
+    values.sort();
+    values.dedup();
+    values
+        .into_iter()
+        .map(|value| TimeZoneView {
+            selected: value == current,
+            value,
+        })
+        .collect()
+}
+
 fn merge_settings(current: &mut Settings, next: Settings) {
     *current = next;
 }
@@ -1815,7 +1971,7 @@ const SETUP_AP_GATEWAY: &str = "10.42.0.1";
 /// client CANNOT resolve on our uplink-less AP — echoing the Host would produce a
 /// dead redirect. Always send clients to the AP gateway IP literal.
 fn captive_redirect_target() -> String {
-    format!("http://{SETUP_AP_GATEWAY}:8080/setup")
+    format!("http://{SETUP_AP_GATEWAY}/setup")
 }
 
 async fn captive_probe() -> Response {
@@ -1892,6 +2048,15 @@ fn spawn_captive_portal_listener() {
     });
 }
 
+fn captive_portal_listener_enabled() -> bool {
+    env::var("OCTOCAM_ENABLE_CAPTIVE_PORTAL_LISTENER")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        })
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1900,6 +2065,6 @@ mod tests {
     fn captive_redirect_targets_the_ap_gateway() {
         // Never echo the probe's Host header (captive.apple.com etc.) — the client
         // cannot resolve it on the uplink-less AP. Always the gateway IP literal.
-        assert_eq!(captive_redirect_target(), "http://10.42.0.1:8080/setup");
+        assert_eq!(captive_redirect_target(), "http://10.42.0.1/setup");
     }
 }
