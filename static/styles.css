@@ -884,6 +884,11 @@ input[type="checkbox"] {
   grid-template-columns: 150px 1fr;
 }
 
+.matter-status-list div {
+  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+  gap: 18px;
+}
+
 .status-list dt {
   color: var(--muted);
   font-weight: 800;
@@ -1801,6 +1806,11 @@ pre {
   .metric-grid,
   .maintenance-grid {
     grid-template-columns: 1fr;
+  }
+
+  .matter-status-list div {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .stream-command-rail {

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} Matter</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260707-maintenance-weekdays">
-    <script src="/static/app.js?v=20260707-maintenance-weekdays" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260707-matter-status-layout">
+    <script src="/static/app.js?v=20260707-matter-status-layout" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -24,7 +24,7 @@
                 <div class="pairing-box error-pairing"><span>Set an admin password first (Admin page). The Matter pairing code is a durable credential for this camera's feed, and without a password anyone on your network could read it.</span></div>
               {% endif %}
               <div class="toggle-row"><span>Matter camera enabled</span><label class="switch"><input type="checkbox" name="matter_enabled" {% if settings.matter_enabled %}checked{% endif %} {% if !matter.admin_password_set %}disabled{% endif %}><span></span></label></div>
-              <dl class="status-list compact-list">
+              <dl class="status-list compact-list matter-status-list">
                 <div><dt>Accessory</dt><dd>{{ matter.status }}</dd></div>
                 <div><dt>Commissioned</dt><dd>{% if matter.commissioned %}yes ({{ matter.fabric_count }} fabric{% if matter.fabric_count != 1 %}s{% endif %}){% else %}not commissioned{% endif %}</dd></div>
                 <div><dt>Stream source</dt><dd>{{ matter.stream_source }}</dd></div>

@@ -1,4 +1,4 @@
-const OCTOCAM_CACHE = "octocam-ui-v20260707-maintenance-weekdays";
+const OCTOCAM_CACHE = "octocam-ui-v20260707-matter-status-layout";
 const STATIC_ASSETS = [
   "/static/styles.css",
   "/static/app.js",
