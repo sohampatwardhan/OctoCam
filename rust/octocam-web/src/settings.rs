@@ -53,8 +53,10 @@ pub struct Settings {
     pub motion_sensitivity: i32,
     pub scheduled_service_restart_enabled: bool,
     pub scheduled_service_restart_time: String,
+    pub scheduled_service_restart_days: String,
     pub scheduled_reboot_enabled: bool,
     pub scheduled_reboot_time: String,
+    pub scheduled_reboot_days: String,
 }
 
 #[derive(Clone, Debug)]
@@ -197,8 +199,10 @@ impl Default for Settings {
             motion_sensitivity: 50,
             scheduled_service_restart_enabled: false,
             scheduled_service_restart_time: "03:00".to_string(),
+            scheduled_service_restart_days: default_weekdays(),
             scheduled_reboot_enabled: false,
             scheduled_reboot_time: "04:00".to_string(),
+            scheduled_reboot_days: default_weekdays(),
         }
     }
 }
@@ -388,6 +392,12 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         "scheduled_service_restart_time",
         &settings.scheduled_service_restart_time,
     );
+    settings.scheduled_service_restart_days = weekdays_value(
+        &map,
+        "scheduled_service_restart_days",
+        "scheduled_service_restart_day_",
+        &settings.scheduled_service_restart_days,
+    );
     settings.scheduled_reboot_enabled = bool_value(
         &map,
         "scheduled_reboot_enabled",
@@ -397,6 +407,12 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         &map,
         "scheduled_reboot_time",
         &settings.scheduled_reboot_time,
+    );
+    settings.scheduled_reboot_days = weekdays_value(
+        &map,
+        "scheduled_reboot_days",
+        "scheduled_reboot_day_",
+        &settings.scheduled_reboot_days,
     );
     clamp_to_encoder_limits(&mut settings);
     settings
@@ -553,6 +569,59 @@ fn time_of_day_value(map: &Map<String, Value>, key: &str, default: &str) -> Stri
         return default.to_string();
     }
     format!("{hour:02}:{minute:02}")
+}
+
+pub const WEEKDAYS: &[(&str, &str, &str)] = &[
+    ("mon", "Mon", "Mon"),
+    ("tue", "Tue", "Tue"),
+    ("wed", "Wed", "Wed"),
+    ("thu", "Thu", "Thu"),
+    ("fri", "Fri", "Fri"),
+    ("sat", "Sat", "Sat"),
+    ("sun", "Sun", "Sun"),
+];
+
+fn default_weekdays() -> String {
+    WEEKDAYS
+        .iter()
+        .map(|(_, systemd, _)| *systemd)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn weekdays_value(
+    map: &Map<String, Value>,
+    key: &str,
+    checkbox_prefix: &str,
+    default: &str,
+) -> String {
+    let has_checkbox_values = WEEKDAYS
+        .iter()
+        .any(|(slug, _, _)| map.contains_key(&format!("{checkbox_prefix}{slug}")));
+    let selected = if has_checkbox_values {
+        WEEKDAYS
+            .iter()
+            .filter_map(|(slug, systemd, _)| {
+                bool_value(map, &format!("{checkbox_prefix}{slug}"), false).then_some(*systemd)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        let raw = string_value(map, key, default, 80);
+        WEEKDAYS
+            .iter()
+            .filter_map(|(_, systemd, _)| {
+                raw.split(',')
+                    .map(str::trim)
+                    .any(|part| part.eq_ignore_ascii_case(systemd))
+                    .then_some(*systemd)
+            })
+            .collect::<Vec<_>>()
+    };
+    if selected.is_empty() {
+        default.to_string()
+    } else {
+        selected.join(",")
+    }
 }
 
 fn migrate_default_path(value: &str) -> String {
@@ -750,8 +819,36 @@ mod tests {
         let settings = validate_map(&map);
         assert!(settings.scheduled_service_restart_enabled);
         assert_eq!(settings.scheduled_service_restart_time, "03:05");
+        assert_eq!(
+            settings.scheduled_service_restart_days,
+            "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+        );
         assert!(settings.scheduled_reboot_enabled);
         assert_eq!(settings.scheduled_reboot_time, "23:59");
+        assert_eq!(
+            settings.scheduled_reboot_days,
+            "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+        );
+
+        map.insert(
+            "scheduled_service_restart_day_mon".into(),
+            Value::String("true".into()),
+        );
+        map.insert(
+            "scheduled_service_restart_day_tue".into(),
+            Value::String("false".into()),
+        );
+        map.insert(
+            "scheduled_service_restart_day_fri".into(),
+            Value::String("on".into()),
+        );
+        map.insert(
+            "scheduled_reboot_days".into(),
+            Value::String("Sun,Wed,nope,Mon".into()),
+        );
+        let settings = validate_map(&map);
+        assert_eq!(settings.scheduled_service_restart_days, "Mon,Fri");
+        assert_eq!(settings.scheduled_reboot_days, "Mon,Wed,Sun");
 
         map.insert(
             "scheduled_service_restart_time".into(),

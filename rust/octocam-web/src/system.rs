@@ -401,6 +401,7 @@ pub fn configure_maintenance_timers(settings: &crate::settings::Settings) -> Res
             "Scheduled OctoCam web service restart",
             SERVICE_RESTART_SERVICE,
             &settings.scheduled_service_restart_time,
+            &settings.scheduled_service_restart_days,
         ),
     )?;
     changed |= write_if_changed(
@@ -413,6 +414,7 @@ pub fn configure_maintenance_timers(settings: &crate::settings::Settings) -> Res
             "Scheduled OctoCam device reboot",
             REBOOT_SERVICE,
             &settings.scheduled_reboot_time,
+            &settings.scheduled_reboot_days,
         ),
     )?;
 
@@ -433,9 +435,14 @@ fn render_oneshot_unit(description: &str, exec_start: &str) -> String {
     )
 }
 
-fn render_daily_timer(description: &str, unit: &str, time: &str) -> String {
+fn render_daily_timer(description: &str, unit: &str, time: &str, days: &str) -> String {
+    let days = if days.trim().is_empty() {
+        "Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+    } else {
+        days.trim()
+    };
     format!(
-        "[Unit]\nDescription={description}\n\n[Timer]\nOnCalendar=*-*-* {time}:00\nPersistent=true\nUnit={unit}\n\n[Install]\nWantedBy=timers.target\n"
+        "[Unit]\nDescription={description}\n\n[Timer]\nOnCalendar={days} *-*-* {time}:00\nPersistent=true\nUnit={unit}\n\n[Install]\nWantedBy=timers.target\n"
     )
 }
 
@@ -1533,9 +1540,10 @@ mod tests {
             render_daily_timer(
                 "Scheduled OctoCam web service restart",
                 "octocam-scheduled-web-restart.service",
-                "03:05"
+                "03:05",
+                "Mon,Fri"
             ),
-            "[Unit]\nDescription=Scheduled OctoCam web service restart\n\n[Timer]\nOnCalendar=*-*-* 03:05:00\nPersistent=true\nUnit=octocam-scheduled-web-restart.service\n\n[Install]\nWantedBy=timers.target\n"
+            "[Unit]\nDescription=Scheduled OctoCam web service restart\n\n[Timer]\nOnCalendar=Mon,Fri *-*-* 03:05:00\nPersistent=true\nUnit=octocam-scheduled-web-restart.service\n\n[Install]\nWantedBy=timers.target\n"
         );
         assert_eq!(
             render_oneshot_unit("Reboot OctoCam device", "/usr/bin/systemctl reboot"),

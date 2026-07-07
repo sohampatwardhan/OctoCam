@@ -210,11 +210,20 @@ struct SystemTemplate {
     page_title: String,
     settings: Settings,
     system: system::SystemView,
+    restart_days: Vec<WeekdayOption>,
+    reboot_days: Vec<WeekdayOption>,
     saved: bool,
     active_page: &'static str,
     restore_message: String,
     has_restore_message: bool,
     restore_is_error: bool,
+}
+
+struct WeekdayOption {
+    slug: &'static str,
+    label: &'static str,
+    short_label: &'static str,
+    checked: bool,
 }
 
 #[derive(Template)]
@@ -848,16 +857,35 @@ async fn system_page(
         ),
         _ => (String::new(), false),
     };
+    let restart_days = weekday_options(&settings.scheduled_service_restart_days);
+    let reboot_days = weekday_options(&settings.scheduled_reboot_days);
     render(SystemTemplate {
         page_title: "System info".to_string(),
         settings,
         system: system::view(&status),
+        restart_days,
+        reboot_days,
         saved: query.saved.as_deref() == Some("1"),
         active_page: "system",
         has_restore_message: !restore_message.is_empty(),
         restore_message,
         restore_is_error,
     })
+}
+
+fn weekday_options(selected_days: &str) -> Vec<WeekdayOption> {
+    settings::WEEKDAYS
+        .iter()
+        .map(|(slug, label, short_label)| WeekdayOption {
+            slug: *slug,
+            label: *label,
+            short_label: *short_label,
+            checked: selected_days
+                .split(',')
+                .map(str::trim)
+                .any(|selected| selected.eq_ignore_ascii_case(*label)),
+        })
+        .collect()
 }
 
 async fn backup_download(

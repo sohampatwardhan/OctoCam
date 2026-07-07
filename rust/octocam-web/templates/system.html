@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} System Info</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260707-maintenance-schedules">
-    <script src="/static/app.js?v=20260707-maintenance-schedules" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260707-maintenance-weekdays">
+    <script src="/static/app.js?v=20260707-maintenance-weekdays" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -84,34 +84,54 @@
 
           <form class="settings-stack" method="post" action="/settings">
             <input type="hidden" name="_return_to" value="/system">
-            <input type="hidden" name="_checkboxes" value="scheduled_service_restart_enabled,scheduled_reboot_enabled">
+            <input type="hidden" name="_checkboxes" value="scheduled_service_restart_enabled,scheduled_reboot_enabled,scheduled_service_restart_day_mon,scheduled_service_restart_day_tue,scheduled_service_restart_day_wed,scheduled_service_restart_day_thu,scheduled_service_restart_day_fri,scheduled_service_restart_day_sat,scheduled_service_restart_day_sun,scheduled_reboot_day_mon,scheduled_reboot_day_tue,scheduled_reboot_day_wed,scheduled_reboot_day_thu,scheduled_reboot_day_fri,scheduled_reboot_day_sat,scheduled_reboot_day_sun">
             <section class="panel settings-card">
               <div class="section-heading"><h2>Scheduled maintenance</h2></div>
               <div class="maintenance-grid">
                 <div class="maintenance-option">
                   <div class="toggle-row">
-                    <span>Restart OctoCam service daily</span>
+                    <span>Restart OctoCam service</span>
                     <label class="switch"><input type="checkbox" name="scheduled_service_restart_enabled" {% if settings.scheduled_service_restart_enabled %}checked{% endif %}><span></span></label>
                   </div>
                   <label>
                     <span>Restart time</span>
                     <input type="time" name="scheduled_service_restart_time" value="{{ settings.scheduled_service_restart_time }}">
                   </label>
+                  <fieldset class="weekday-picker">
+                    <legend>Restart days</legend>
+                    <div class="weekday-grid">
+                      {% for day in restart_days %}
+                        <label class="weekday-chip" title="{{ day.label }}">
+                          <input type="checkbox" name="scheduled_service_restart_day_{{ day.slug }}" aria-label="Restart on {{ day.label }}" {% if day.checked %}checked{% endif %}>
+                          <span>{{ day.short_label }}</span>
+                        </label>
+                      {% endfor %}
+                    </div>
+                  </fieldset>
                 </div>
                 <div class="maintenance-option">
                   <div class="toggle-row">
-                    <span>Reboot Raspberry Pi daily</span>
+                    <span>Reboot Raspberry Pi</span>
                     <label class="switch"><input type="checkbox" name="scheduled_reboot_enabled" {% if settings.scheduled_reboot_enabled %}checked{% endif %}><span></span></label>
                   </div>
                   <label>
                     <span>Reboot time</span>
                     <input type="time" name="scheduled_reboot_time" value="{{ settings.scheduled_reboot_time }}">
                   </label>
+                  <fieldset class="weekday-picker">
+                    <legend>Reboot days</legend>
+                    <div class="weekday-grid">
+                      {% for day in reboot_days %}
+                        <label class="weekday-chip" title="{{ day.label }}">
+                          <input type="checkbox" name="scheduled_reboot_day_{{ day.slug }}" aria-label="Reboot on {{ day.label }}" {% if day.checked %}checked{% endif %}>
+                          <span>{{ day.short_label }}</span>
+                        </label>
+                      {% endfor %}
+                    </div>
+                  </fieldset>
                 </div>
               </div>
-            </section>
-            <section class="panel action-card">
-              <button class="primary" type="submit">Save maintenance schedule</button>
+              <button class="primary maintenance-submit" type="submit">Save maintenance schedule</button>
             </section>
           </form>
 

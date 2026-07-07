@@ -51,8 +51,10 @@ pub const PORTABLE_FIELDS: &[&str] = &[
     "motion_sensitivity",
     "scheduled_service_restart_enabled",
     "scheduled_service_restart_time",
+    "scheduled_service_restart_days",
     "scheduled_reboot_enabled",
     "scheduled_reboot_time",
+    "scheduled_reboot_days",
 ];
 
 /// Fields deliberately NOT ported — preserved from the target device on restore.

@@ -1127,6 +1127,73 @@ input[type="checkbox"] {
   background: var(--panel-muted);
 }
 
+.weekday-picker {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.weekday-picker legend {
+  margin: 0 0 8px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.weekday-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.weekday-chip {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 34px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.weekday-chip input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.weekday-chip span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.weekday-chip input:checked + span {
+  border-color: color-mix(in srgb, var(--ok) 70%, var(--line));
+  background: color-mix(in srgb, var(--ok) 14%, var(--field));
+  color: var(--ok);
+}
+
+.weekday-chip input:focus-visible + span {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 15%, transparent);
+}
+
+.maintenance-submit {
+  margin-top: 18px;
+}
+
 .wifi-signal[data-signal-level="high"] .wifi-signal-indicator {
   color: var(--ok);
 }
