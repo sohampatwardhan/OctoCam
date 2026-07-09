@@ -58,6 +58,8 @@ pub struct Settings {
     pub scheduled_reboot_time: String,
     pub scheduled_reboot_days: String,
     pub noir_mode: bool,
+    pub motion_zones: u64,
+    pub hksv_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +207,8 @@ impl Default for Settings {
             scheduled_reboot_time: "04:00".to_string(),
             scheduled_reboot_days: default_weekdays(),
             noir_mode: false,
+            motion_zones: u64::MAX,
+            hksv_enabled: false,
         }
     }
 }
@@ -384,6 +388,7 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         1,
         100,
     );
+    settings.motion_zones = u64_value(&map, "motion_zones", settings.motion_zones);
     settings.scheduled_service_restart_enabled = bool_value(
         &map,
         "scheduled_service_restart_enabled",
@@ -417,6 +422,7 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         &settings.scheduled_reboot_days,
     );
     settings.noir_mode = bool_value(&map, "noir_mode", settings.noir_mode);
+    settings.hksv_enabled = bool_value(&map, "hksv_enabled", settings.hksv_enabled);
     clamp_to_encoder_limits(&mut settings);
     settings
 }
@@ -427,6 +433,15 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
 pub fn enforce_matter_requires_admin(settings: &mut Settings) {
     if settings.admin_password_hash.is_empty() {
         settings.matter_enabled = false;
+    }
+}
+
+/// HKSV recording is triggered by the motion sensor; without motion detection
+/// there is nothing to start a recording. Force HKSV off when motion is off so
+/// the bridge never advertises a recording capability it can't trigger.
+pub fn enforce_hksv_requires_motion(settings: &mut Settings) {
+    if !settings.motion_enabled {
+        settings.hksv_enabled = false;
     }
 }
 
@@ -674,6 +689,23 @@ fn float_value(map: &Map<String, Value>, key: &str, default: f64, min: f64, max:
     value.unwrap_or(default).clamp(min, max)
 }
 
+fn u64_value(map: &Map<String, Value>, key: &str, default: u64) -> u64 {
+    match map.get(key) {
+        Some(Value::Number(value)) => value.as_u64().unwrap_or(default),
+        Some(Value::String(value)) => {
+            let val_str = value.trim();
+            if let Some(hex_str) = val_str.strip_prefix("0x") {
+                u64::from_str_radix(hex_str, 16).unwrap_or(default)
+            } else if let Ok(val) = val_str.parse::<u64>() {
+                val
+            } else {
+                u64::from_str_radix(val_str, 16).unwrap_or(default)
+            }
+        }
+        _ => default,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -890,5 +922,38 @@ mod tests {
         s.matter_enabled = true;
         enforce_matter_requires_admin(&mut s);
         assert!(s.matter_enabled);
+    }
+
+    #[test]
+    fn hksv_requires_motion() {
+        // HKSV on + motion off  -> HKSV forced off.
+        let mut s = Settings {
+            hksv_enabled: true,
+            motion_enabled: false,
+            ..Settings::default()
+        };
+        enforce_hksv_requires_motion(&mut s);
+        assert!(!s.hksv_enabled, "HKSV must not stay enabled without motion");
+
+        // HKSV on + motion on -> stays on.
+        let mut s2 = Settings {
+            hksv_enabled: true,
+            motion_enabled: true,
+            ..Settings::default()
+        };
+        enforce_hksv_requires_motion(&mut s2);
+        assert!(s2.hksv_enabled);
+    }
+
+    #[test]
+    fn parses_hksv_enabled() {
+        let mut map = Map::new();
+        map.insert("hksv_enabled".into(), Value::String("true".into()));
+        let s = validate_map(&map);
+        assert!(s.hksv_enabled, "hksv_enabled should parse from the form map");
+
+        // Absent key keeps the default (false).
+        let s_default = validate_map(&Map::new());
+        assert!(!s_default.hksv_enabled);
     }
 }

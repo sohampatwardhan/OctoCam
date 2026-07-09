@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -8,11 +9,17 @@ const { spawn } = require("child_process");
 const qrcode = require("qrcode");
 const {
   Accessory,
+  AudioRecordingCodecType,
+  AudioRecordingSamplerate,
   CameraController,
   Categories,
   Characteristic,
+  H264Level,
+  H264Profile,
   HAPStorage,
+  MediaContainerType,
   Service,
+  VideoCodecType,
   uuid,
 } = require("hap-nodejs");
 
@@ -231,6 +238,81 @@ function runProcess(command, args, timeoutMs, stdin) {
     }
   });
 }
+
+// Read a stream of MP4 boxes. Each box is a 4-byte big-endian size + 4-byte type
+// + payload. Yields { type, data } where data is the complete box buffer.
+async function* readMp4Boxes(stream) {
+  const queue = [];
+  let waiting = null;
+  let ended = false;
+  let streamError = null;
+
+  stream.on("data", (chunk) => {
+    queue.push(chunk);
+    if (waiting) { const w = waiting; waiting = null; w(); }
+  });
+  stream.on("end", () => { ended = true; if (waiting) { const w = waiting; waiting = null; w(); } });
+  stream.on("error", (err) => { streamError = err; if (waiting) { const w = waiting; waiting = null; w(); } });
+
+  let pending = Buffer.alloc(0);
+  const pull = () => new Promise((resolve) => { waiting = resolve; });
+
+  const ensure = async (n) => {
+    while (pending.length < n) {
+      if (queue.length) {
+        pending = Buffer.concat([pending, ...queue.splice(0)]);
+      } else if (streamError) {
+        throw streamError;
+      } else if (ended) {
+        return false;
+      } else {
+        await pull();
+      }
+    }
+    return true;
+  };
+
+  while (true) {
+    if (!(await ensure(8))) return;
+    const size = pending.readUInt32BE(0);
+    const type = pending.toString("ascii", 4, 8);
+    if (size < 8) throw new Error(`invalid mp4 box size ${size} for type ${type}`);
+    if (!(await ensure(size))) return;
+    const data = pending.subarray(0, size);
+    pending = pending.subarray(size);
+    yield { type, data };
+  }
+}
+
+// Group MP4 boxes into HKSV packets: the init segment (everything up to and
+// including moov) first, then each moof+mdat pair as one fragment.
+// Yields { kind: "init" | "fragment", data: Buffer }.
+async function* readMp4Fragments(stream) {
+  let initBoxes = [];
+  let sentInit = false;
+  let fragmentBoxes = [];
+
+  for await (const box of readMp4Boxes(stream)) {
+    if (!sentInit) {
+      initBoxes.push(box.data);
+      if (box.type === "moov") {
+        yield { kind: "init", data: Buffer.concat(initBoxes) };
+        sentInit = true;
+        initBoxes = [];
+      }
+      continue;
+    }
+    fragmentBoxes.push(box.data);
+    if (box.type === "mdat") {
+      yield { kind: "fragment", data: Buffer.concat(fragmentBoxes) };
+      fragmentBoxes = [];
+    }
+  }
+}
+
+module.exports = module.exports || {};
+module.exports.readMp4Boxes = readMp4Boxes;
+module.exports.readMp4Fragments = readMp4Fragments;
 
 class OctoCamStreamingDelegate {
   constructor() {
@@ -501,6 +583,215 @@ async function writeStatus(accessory, identity, extra = {}) {
   });
 }
 
+function startMotionListener(accessory) {
+  const port = process.env.OCTOCAM_PORT || 8080;
+  const url = `http://127.0.0.1:${port}/api/motion/events`;
+
+  console.log(`Connecting to motion events stream at ${url}...`);
+
+  let buffer = "";
+
+  const req = http.get(url, (res) => {
+    if (res.statusCode !== 200) {
+      console.error(`Failed to connect to motion stream: HTTP ${res.statusCode}`);
+      res.resume();
+      scheduleReconnect();
+      return;
+    }
+
+    res.setEncoding("utf8");
+    res.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data:")) {
+          try {
+            const jsonStr = trimmed.slice(5).trim();
+            const event = JSON.parse(jsonStr);
+            const motionDetected = Boolean(event.motion_detected);
+
+            const motionService = accessory.getService(Service.MotionSensor);
+            if (motionService) {
+              motionService.getCharacteristic(Characteristic.MotionDetected).updateValue(motionDetected);
+              console.log(`HomeKit motion state updated: ${motionDetected}`);
+            }
+          } catch (err) {
+            console.error("Failed to parse motion event:", err.message);
+          }
+        }
+      }
+    });
+
+    res.on("end", () => {
+      console.log("Motion stream connection ended by server.");
+      scheduleReconnect();
+    });
+  });
+
+  req.on("error", (err) => {
+    console.error(`Motion stream error: ${err.message}`);
+    scheduleReconnect();
+  });
+
+  let reconnectTimeout = null;
+  function scheduleReconnect() {
+    if (reconnectTimeout) return;
+    console.log("Reconnecting to motion stream in 5 seconds...");
+    reconnectTimeout = setTimeout(() => {
+      reconnectTimeout = null;
+      startMotionListener(accessory);
+    }, 5000);
+  }
+}
+
+// H264Profile/H264Level enum -> ffmpeg strings. Indices match hap-nodejs enums
+// (BASELINE=0/MAIN=1/HIGH=2; LEVEL3_1=0/LEVEL3_2=1/LEVEL4_0=2).
+const RECORDING_PROFILES = ["baseline", "main", "high"];
+const RECORDING_LEVELS = ["3.1", "3.2", "4.0"];
+
+// Advertised HKSV recording configs. HKSV requires 1920x1080 and 1280x720 to be
+// offered, but the Pi Zero 2 W cannot software-encode HD at 30fps concurrently
+// with live view + motion, so HD is capped to low frame rates here. This is a
+// conservative default — revisit upward after on-device measurement (Task 8).
+const RECORDING_RESOLUTIONS = [
+  [1280, 720, 15],
+  [1280, 720, 24],
+  [1920, 1080, 15],
+  [640, 480, 30],
+  [640, 480, 24],
+  [640, 360, 30],
+  [640, 360, 24],
+];
+
+class OctoCamRecordingDelegate {
+  constructor() {
+    this.selectedConfig = undefined;
+    this.processes = new Map(); // streamId -> ChildProcess
+  }
+
+  updateRecordingActive(active) {
+    console.log(`HKSV recording active: ${active}`);
+  }
+
+  updateRecordingConfiguration(configuration) {
+    this.selectedConfig = configuration;
+    if (configuration) {
+      const v = configuration.videoCodec;
+      console.log(
+        `HKSV config selected: ${v.resolution[0]}x${v.resolution[1]}@${v.resolution[2]}fps ` +
+        `profile=${v.parameters.profile} level=${v.parameters.level} ` +
+        `bitrate=${v.parameters.bitRate}k iFrame=${v.parameters.iFrameInterval}ms ` +
+        `frag=${configuration.mediaContainerConfiguration.fragmentLength}ms`
+      );
+    } else {
+      console.log("HKSV config cleared");
+    }
+  }
+
+  buildRecordingArgs(settings, config) {
+    const v = config.videoCodec;
+    const [width, height, fps] = v.resolution;
+    const profile = RECORDING_PROFILES[v.parameters.profile] || "high";
+    const level = RECORDING_LEVELS[v.parameters.level] || "4.0";
+    const bitrate = Math.max(64, v.parameters.bitRate); // kbps
+    const fragSec = Math.max(1, config.mediaContainerConfiguration.fragmentLength / 1000);
+    // GOP aligned to fragment length so every fragment starts with a keyframe.
+    return [
+      "-hide_banner", "-nostdin",
+      "-rtsp_transport", "tcp",
+      "-fflags", "nobuffer", "-flags", "low_delay",
+      "-i", rtspUrl(settings, "main"),
+      "-an", "-sn", "-dn",
+      "-map", "0:v:0",
+      "-vf", `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+      "-c:v", "libx264",
+      "-preset", "ultrafast",
+      "-tune", "zerolatency",
+      "-pix_fmt", "yuv420p",
+      "-profile:v", profile,
+      "-level:v", level,
+      "-r", String(fps),
+      "-b:v", `${bitrate}k`,
+      "-maxrate", `${bitrate}k`,
+      "-bufsize", `${bitrate * 2}k`,
+      "-force_key_frames", `expr:gte(t,n_forced*${fragSec})`,
+      "-f", "mp4",
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+      "-",
+    ];
+  }
+
+  killRecording(streamId) {
+    const child = this.processes.get(streamId);
+    if (child) {
+      this.processes.delete(streamId);
+      try { child.kill("SIGKILL"); } catch (_) {}
+    }
+  }
+
+  async *handleRecordingStreamRequest(streamId) {
+    const settings = loadSettings();
+    const config = this.selectedConfig;
+    if (!config) {
+      console.error(`HKSV stream ${streamId} requested with no selected configuration`);
+      return;
+    }
+
+    const args = this.buildRecordingArgs(settings, config);
+    if (DEBUG_FFMPEG) console.log(`HKSV ffmpeg ${args.join(" ")}`);
+
+    const child = spawn("ffmpeg", args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    this.processes.set(streamId, child);
+
+    const stderrLines = [];
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderrLines.push(text);
+      if (stderrLines.length > 40) stderrLines.shift();
+    });
+    child.on("error", (err) => {
+      console.error(`HKSV ffmpeg spawn error (stream ${streamId}): ${err.message}`);
+    });
+    child.on("close", (code, signal) => {
+      if (code && code !== 0) {
+        console.error(`HKSV ffmpeg (stream ${streamId}) exited code=${code} signal=${signal}: ${stderrLines.join(" | ")}`);
+      }
+    });
+
+    try {
+      let prevFragment = null;
+      let sentInit = false;
+      for await (const seg of readMp4Fragments(child.stdout)) {
+        if (seg.kind === "init") {
+          yield { data: seg.data, isLast: false };
+          sentInit = true;
+          continue;
+        }
+        // One-fragment lookahead so the final fragment can be marked isLast.
+        if (prevFragment !== null) {
+          yield { data: prevFragment, isLast: false };
+        }
+        prevFragment = seg.data;
+      }
+      if (prevFragment !== null) {
+        yield { data: prevFragment, isLast: true };
+      } else if (!sentInit) {
+        console.error(`HKSV stream ${streamId} produced no init segment`);
+      }
+    } finally {
+      this.killRecording(streamId);
+    }
+  }
+
+  closeRecordingStream(streamId, reason) {
+    console.log(`HKSV stream ${streamId} closed (reason=${reason})`);
+    this.killRecording(streamId);
+  }
+}
+
 async function main() {
   ensureDir(STATE_DIR);
   ensureDir(STORAGE_DIR);
@@ -510,8 +801,12 @@ async function main() {
   const identity = loadIdentity();
   const displayName = settings.camera_label || settings.device_name || "OctoCam";
   const accessory = new Accessory(displayName, uuid.generate(`octocam:camera:${identity.username}`));
+
+  // Add paired MotionSensor service
+  const motionService = accessory.getService(Service.MotionSensor) || accessory.addService(Service.MotionSensor, displayName);
+
   const delegate = new OctoCamStreamingDelegate();
-  const cameraController = new CameraController({
+  const controllerOptions = {
     cameraStreamCount: 2,
     delegate,
     streamingOptions: {
@@ -524,7 +819,44 @@ async function main() {
         resolutions: supportedResolutions(settings),
       },
     },
-  });
+  };
+  if (settings.hksv_enabled) {
+    // Only advertise HKSV recording when enabled in OctoCam. This keeps it in
+    // sync with the mediamtx reader reservation (which also keys on hksv_enabled)
+    // so a recording pull is never refused for lack of a reserved slot. The bridge
+    // is restarted by octocam-web whenever settings change, so toggling this takes
+    // effect on save.
+    const recordingDelegate = new OctoCamRecordingDelegate();
+    controllerOptions.sensors = { motion: motionService };
+    controllerOptions.recording = {
+      options: {
+        prebufferLength: 0, // no always-on encode; verified against the hub on deploy
+        mediaContainerConfiguration: {
+          type: MediaContainerType.FRAGMENTED_MP4,
+          fragmentLength: 4000,
+        },
+        video: {
+          type: VideoCodecType.H264,
+          parameters: {
+            profiles: [H264Profile.BASELINE, H264Profile.MAIN, H264Profile.HIGH],
+            levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0],
+          },
+          resolutions: RECORDING_RESOLUTIONS,
+        },
+        audio: {
+          codecs: [
+            {
+              type: AudioRecordingCodecType.AAC_LC,
+              samplerate: [AudioRecordingSamplerate.KHZ_32],
+              audioChannels: 1,
+            },
+          ],
+        },
+      },
+      delegate: recordingDelegate,
+    };
+  }
+  const cameraController = new CameraController(controllerOptions);
   delegate.controller = cameraController;
 
   accessory
@@ -551,6 +883,8 @@ async function main() {
   await writeStatus(accessory, identity, { status: paired ? "paired" : "ready", paired });
   console.log(`OctoCam HomeKit camera published as ${displayName} on port ${HAP_PORT}`);
 
+  startMotionListener(accessory);
+
   const shutdown = async () => {
     try {
       await accessory.unpublish();
@@ -562,13 +896,15 @@ async function main() {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((error) => {
-  console.error(error);
-  writeJson(STATUS_PATH, {
-    status: "error",
-    paired: false,
-    error: error.message,
-    updated_at: new Date().toISOString(),
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    writeJson(STATUS_PATH, {
+      status: "error",
+      paired: false,
+      error: error.message,
+      updated_at: new Date().toISOString(),
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}

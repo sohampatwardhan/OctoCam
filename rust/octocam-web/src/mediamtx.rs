@@ -119,6 +119,11 @@ pub fn rtsp_service_should_run(settings: &Settings) -> bool {
     settings.rtsp_enabled || settings.homekit_enabled || settings.matter_enabled
 }
 
+/// Must match `cameraStreamCount` advertised by the HomeKit bridge
+/// (homekit/octocam-homekit.js). The bridge can open this many concurrent
+/// live-view RTSP readers.
+const HOMEKIT_STREAM_COUNT: i32 = 2;
+
 pub fn render_mediamtx_config(settings: &Settings) -> String {
     let tuning_file = if settings.noir_mode {
         crate::camera::detect_camera_sensor()
@@ -127,10 +132,21 @@ pub fn render_mediamtx_config(settings: &Settings) -> String {
         None
     };
 
-    // Each enabled local daemon (HomeKit, Matter) reads via its own local RTSP
-    // session, so reserve one slot per daemon per path — user-facing capacity
-    // must not shrink when a bridge is watching. Soft reservation: see the spec.
-    let reserve = i32::from(settings.homekit_enabled) + i32::from(settings.matter_enabled);
+    // Reserve RTSP reader slots for the local daemons so their readers never eat
+    // user-facing capacity. Be generous — over-reserving only raises the cap
+    // (harmless), while under-reserving makes mediamtx refuse a daemon connection.
+    // HomeKit may hold up to HOMEKIT_STREAM_COUNT live-view readers plus one HKSV
+    // recording reader; motion.rs holds one persistent reader; Matter holds one.
+    // A single scalar `reserve` is applied to every path; a path that doesn't need
+    // all of it is simply capped a little higher, which is fine.
+    let homekit_readers = if settings.homekit_enabled {
+        HOMEKIT_STREAM_COUNT + i32::from(settings.hksv_enabled)
+    } else {
+        0
+    };
+    let reserve = homekit_readers
+        + i32::from(settings.matter_enabled)
+        + i32::from(settings.motion_enabled);
     let mut path_sections = vec![mediamtx_camera_path(
         &settings.rtsp_path,
         false,
@@ -441,7 +457,30 @@ mod tests {
     }
 
     #[test]
-    fn homekit_reserve_adds_one_reader() {
+    fn reserve_covers_worst_case_all_on_main() {
+        // sub disabled => motion, HomeKit live-view (x cameraStreamCount), and the
+        // HKSV recording pull all share the MAIN path. Budget must fit them on top
+        // of the user-facing rtsp_max_clients.
+        let s = Settings {
+            homekit_enabled: true,
+            hksv_enabled: true,
+            motion_enabled: true,
+            matter_enabled: false,
+            sub_stream_enabled: false,
+            rtsp_max_clients: 1,
+            ..Default::default()
+        };
+        let content = render_mediamtx_config(&s);
+        let main_max: i32 = content
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("maxReaders: ").map(|v| v.parse().unwrap()))
+            .expect("a maxReaders line");
+        // Need: rtsp_max_clients(1) + motion(1) + live-view(2) + recording(1) = 5.
+        assert!(main_max >= 5, "main path budget {main_max} must fit all concurrent readers (>=5)");
+    }
+
+    #[test]
+    fn homekit_reserve_adds_stream_count_readers() {
         let mut settings = Settings {
             homekit_enabled: false,
             ..Default::default()
@@ -462,8 +501,8 @@ mod tests {
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(
                 y - x,
-                1,
-                "homekit reserve must add exactly one reader per path"
+                HOMEKIT_STREAM_COUNT,
+                "homekit reserve must add cameraStreamCount readers per path"
             );
         }
     }
@@ -513,10 +552,63 @@ mod tests {
                 .parse()
                 .unwrap()
         };
+        // matter adds 1, homekit adds HOMEKIT_STREAM_COUNT (defaults: motion off,
+        // hksv off), so enabling both raises the budget by 1 + cameraStreamCount.
         assert_eq!(
             first_max(&render_mediamtx_config(&both)) - first_max(&render_mediamtx_config(&base)),
-            2
+            1 + HOMEKIT_STREAM_COUNT
         );
+    }
+
+    #[test]
+    fn hksv_reserves_an_extra_reader_when_homekit_enabled() {
+        let max_readers = |content: &str| -> Vec<i32> {
+            content
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .map(|v| v.parse().unwrap())
+                .collect()
+        };
+        let base = Settings {
+            homekit_enabled: true,
+            hksv_enabled: false,
+            ..Default::default()
+        };
+        let with_hksv = Settings {
+            hksv_enabled: true,
+            ..base.clone()
+        };
+        let a = max_readers(&render_mediamtx_config(&base));
+        let b = max_readers(&render_mediamtx_config(&with_hksv));
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(y - x, 1, "enabling HKSV must reserve one more reader per path");
+        }
+    }
+
+    #[test]
+    fn hksv_reserves_nothing_without_homekit() {
+        let max_readers = |content: &str| -> Vec<i32> {
+            content
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .map(|v| v.parse().unwrap())
+                .collect()
+        };
+        let base = Settings {
+            homekit_enabled: false,
+            hksv_enabled: false,
+            ..Default::default()
+        };
+        let hksv_no_homekit = Settings {
+            hksv_enabled: true,
+            ..base.clone()
+        };
+        let a = max_readers(&render_mediamtx_config(&base));
+        let b = max_readers(&render_mediamtx_config(&hksv_no_homekit));
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(y - x, 0, "HKSV without HomeKit must not change the reader budget");
+        }
     }
 
     #[test]
