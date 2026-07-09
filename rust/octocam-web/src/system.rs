@@ -497,6 +497,34 @@ pub fn sync_clock(server: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn default_localtime_path() -> PathBuf {
+    env::var_os("OCTOCAM_LOCALTIME_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/localtime"))
+}
+
+pub fn set_timezone(timezone: &str) -> Result<(), String> {
+    if !is_valid_time_zone_id(timezone) {
+        return Err(format!("Invalid time zone identifier: {timezone}"));
+    }
+    if command_exists("timedatectl") {
+        run_checked(Command::new("timedatectl").args(["set-timezone", timezone]))?;
+    } else {
+        // Fallback for systems without timedatectl (or when running tests/non-root)
+        let zoneinfo = PathBuf::from("/usr/share/zoneinfo").join(timezone);
+        if !zoneinfo.exists() {
+            return Err(format!("Time zone data not found for: {timezone}"));
+        }
+        let localtime = default_localtime_path();
+        if localtime.exists() || fs::symlink_metadata(&localtime).is_ok() {
+            fs::remove_file(&localtime).map_err(|error| error.to_string())?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&zoneinfo, &localtime).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 pub fn available_time_zones() -> Vec<String> {
     let mut zones = if command_exists("timedatectl") {
         run_output("timedatectl", &["list-timezones"])
@@ -1555,5 +1583,31 @@ mod tests {
     fn parses_time_zone_lines() {
         let zones = time_zone_lines("America/New_York\nbad zone\n../etc/passwd\nEtc/UTC\n");
         assert_eq!(zones, vec!["America/New_York", "Etc/UTC"]);
+    }
+
+    #[test]
+    fn sets_timezone_fallback() {
+        let test_id = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let localtime_path = std::env::temp_dir().join(format!("localtime_{test_id}"));
+        std::env::set_var("OCTOCAM_LOCALTIME_PATH", &localtime_path);
+
+        let zoneinfo_utc = PathBuf::from("/usr/share/zoneinfo/Etc/UTC");
+        if zoneinfo_utc.exists() {
+            let res = set_timezone("Etc/UTC");
+            if res.is_ok() {
+                assert!(localtime_path.exists());
+                assert_eq!(
+                    fs::read_link(&localtime_path).unwrap(),
+                    zoneinfo_utc
+                );
+                let _ = fs::remove_file(&localtime_path);
+            }
+        }
+
+        assert!(set_timezone("bad/zone; rm -rf /").is_err());
+        std::env::remove_var("OCTOCAM_LOCALTIME_PATH");
     }
 }

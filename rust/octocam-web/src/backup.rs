@@ -38,6 +38,7 @@ pub const PORTABLE_FIELDS: &[&str] = &[
     "rotation",
     "hflip",
     "vflip",
+    "noir_mode",
     "brightness",
     "contrast",
     "text_overlay_enabled",

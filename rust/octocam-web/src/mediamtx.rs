@@ -120,6 +120,13 @@ pub fn rtsp_service_should_run(settings: &Settings) -> bool {
 }
 
 pub fn render_mediamtx_config(settings: &Settings) -> String {
+    let tuning_file = if settings.noir_mode {
+        crate::camera::detect_camera_sensor()
+            .and_then(|sensor| crate::camera::find_noir_tuning_file(&sensor))
+    } else {
+        None
+    };
+
     // Each enabled local daemon (HomeKit, Matter) reads via its own local RTSP
     // session, so reserve one slot per daemon per path — user-facing capacity
     // must not shrink when a bridge is watching. Soft reservation: see the spec.
@@ -136,6 +143,7 @@ pub fn render_mediamtx_config(settings: &Settings) -> String {
         settings.framerate,
         settings.bitrate_kbps,
         settings.rtsp_max_clients + reserve,
+        tuning_file.as_deref(),
     )];
 
     if settings.sub_stream_enabled {
@@ -162,6 +170,7 @@ pub fn render_mediamtx_config(settings: &Settings) -> String {
                 settings.sub_framerate,
                 settings.sub_bitrate_kbps,
                 settings.sub_rtsp_max_clients + reserve,
+                tuning_file.as_deref(),
             ));
         }
     }
@@ -242,8 +251,9 @@ pub fn mediamtx_camera_path(
     fps: i32,
     bitrate_kbps: i32,
     max_readers: i32,
+    tuning_file: Option<&str>,
 ) -> String {
-    format!(
+    let mut config = format!(
         "  {name}:\n    source: rpiCamera\n    rpiCameraSecondary: {secondary}\n    rpiCameraCodec: hardwareH264\n    rpiCameraH264Profile: baseline\n    rpiCameraIDRPeriod: {idr_period}\n    rpiCameraTextOverlayEnable: {text_overlay_enabled}\n    rpiCameraTextOverlay: {text_overlay}\n    rpiCameraWidth: {width}\n    rpiCameraHeight: {height}\n    rpiCameraFPS: {fps}\n    rpiCameraBitrate: {bitrate}\n    maxReaders: {max_readers}",
         name = yaml_quote(name),
         secondary = if secondary { "true" } else { "false" },
@@ -256,7 +266,11 @@ pub fn mediamtx_camera_path(
             text_overlay_enabled
         )),
         bitrate = bitrate_kbps * 1000,
-    )
+    );
+    if let Some(tf) = tuning_file {
+        config.push_str(&format!("\n    rpiCameraTuningFile: {}", yaml_quote(tf)));
+    }
+    config
 }
 
 pub fn mediamtx_scaled_path(
@@ -326,6 +340,7 @@ mod tests {
             15,
             2500,
             1,
+            None,
         );
         assert!(content.contains("\"main\":"));
         assert!(content.contains("rpiCameraWidth: 1296"));
@@ -333,6 +348,26 @@ mod tests {
         assert!(content.contains("rpiCameraTextOverlayEnable: false"));
         assert!(content.contains("rpiCameraH264Profile: baseline"));
         assert!(content.contains("maxReaders: 1"));
+    }
+
+    #[test]
+    fn renders_rpicamera_tuning_file() {
+        let settings = Settings::default();
+        let content = mediamtx_camera_path(
+            &settings.rtsp_path,
+            false,
+            settings.text_overlay_enabled,
+            &settings.camera_label,
+            &settings.text_overlay_clock_format,
+            &settings.text_overlay_date_format,
+            1296,
+            972,
+            15,
+            2500,
+            1,
+            Some("/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json"),
+        );
+        assert!(content.contains("rpiCameraTuningFile: \"/usr/share/libcamera/ipa/rpi/vc4/ov5647_noir.json\""));
     }
 
     #[test]

@@ -98,7 +98,11 @@ function rtspUrl(settings, stream) {
 }
 
 function sourceStream(settings) {
-  return settings.sub_stream_enabled ? "sub" : "main";
+  // Always capture snapshots from the main stream (native rpiCamera source).
+  // Pulling snapshots from the sub stream requires mediamtx to spin up its
+  // runOnDemand transcoder (ffmpeg), which takes too long (>6s) on the Pi Zero 2 W
+  // and causes HomeKit snapshot timeouts while keeping the sub stream active forever.
+  return "main";
 }
 
 const MAIN_QUALITY_MIN_HEIGHT = 720;

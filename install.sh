@@ -155,6 +155,7 @@ if [[ ! -f "$STATE_DIR/settings.json" ]]; then
   "homekit_paired": false,
   "motion_enabled": false,
   "motion_sensitivity": 50,
+  "noir_mode": false,
   "resolution_height": 720,
   "resolution_width": 1280,
   "room": "Living Room",

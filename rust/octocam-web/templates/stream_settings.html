@@ -17,7 +17,7 @@
         <section class="content-stack">
           <form class="settings-stack" method="post" action="/settings">
             <input type="hidden" name="_return_to" value="/stream-settings">
-            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled">
+            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled,noir_mode">
             <section class="panel settings-card">
               <div class="section-heading"><h2>Stream</h2></div>
               <div class="toggle-row">
@@ -73,6 +73,7 @@
               <div class="checks">
                 <label><input type="checkbox" name="hflip" {% if settings.hflip %}checked{% endif %}><span>Horizontal flip</span></label>
                 <label><input type="checkbox" name="vflip" {% if settings.vflip %}checked{% endif %}><span>Vertical flip</span></label>
+                <label><input type="checkbox" name="noir_mode" {% if settings.noir_mode %}checked{% endif %}><span>NoIR correction (infrared white balance)</span></label>
               </div>
 
               <div class="subsection-heading"><h3>Overlay</h3></div>

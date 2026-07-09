@@ -1804,6 +1804,10 @@ async fn apply_settings_side_effects(
     settings: &Settings,
 ) -> Result<(), AppError> {
     let _ = mediamtx::configure_rtsp_service(settings, &state.mediamtx_config_path);
+    let timezone = settings.text_overlay_timezone.clone();
+    let _ = run_blocking(move || system::set_timezone(&timezone))
+        .await?
+        .map_err(AppError)?;
     let time_server = settings.time_server.clone();
     let _ = run_blocking(move || system::configure_time_server(&time_server))
         .await?

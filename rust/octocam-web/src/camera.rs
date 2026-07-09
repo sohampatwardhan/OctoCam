@@ -86,6 +86,14 @@ pub fn capture_jpeg(settings: &Settings) -> Result<Vec<u8>, String> {
         args.push("--rotation".to_string());
         args.push(settings.rotation.to_string());
     }
+    if settings.noir_mode {
+        if let Some(sensor) = detect_camera_sensor() {
+            if let Some(tuning_file) = find_noir_tuning_file(&sensor) {
+                args.push("--tuning-file".to_string());
+                args.push(tuning_file);
+            }
+        }
+    }
 
     let output = crate::proc::run(
         Command::new(&command).args(args),
@@ -102,6 +110,46 @@ pub fn capture_jpeg(settings: &Settings) -> Result<Vec<u8>, String> {
         });
         Err(message.trim().to_string())
     }
+}
+
+pub fn detect_camera_sensor() -> Option<String> {
+    let command = system::first_available_command(&["rpicam-still", "libcamera-still"])?;
+    let output = crate::proc::run(
+        Command::new(&command).arg("--list-cameras"),
+        crate::proc::SCAN_TIMEOUT,
+    ).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let full_output = format!("{}\n{}", stdout, stderr);
+
+    for line in full_output.lines() {
+        if let Some(pos) = line.find(" : ") {
+            let part = &line[pos + 3..];
+            if let Some(sensor) = part.split_whitespace().next() {
+                let sensor_cleaned: String = sensor.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
+                if !sensor_cleaned.is_empty() {
+                    return Some(sensor_cleaned);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn find_noir_tuning_file(sensor: &str) -> Option<String> {
+    let paths = [
+        format!("/usr/share/libcamera/ipa/rpi/vc4/{}_noir.json", sensor),
+        format!("/usr/share/libcamera/ipa/rpi/pisp/{}_noir.json", sensor),
+    ];
+    for path in &paths {
+        if std::path::Path::new(path).exists() {
+            return Some(path.clone());
+        }
+    }
+    None
 }
 
 #[cfg(test)]

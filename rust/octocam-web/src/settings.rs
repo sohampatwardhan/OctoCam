@@ -57,6 +57,7 @@ pub struct Settings {
     pub scheduled_reboot_enabled: bool,
     pub scheduled_reboot_time: String,
     pub scheduled_reboot_days: String,
+    pub noir_mode: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -203,6 +204,7 @@ impl Default for Settings {
             scheduled_reboot_enabled: false,
             scheduled_reboot_time: "04:00".to_string(),
             scheduled_reboot_days: default_weekdays(),
+            noir_mode: false,
         }
     }
 }
@@ -414,6 +416,7 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         "scheduled_reboot_day_",
         &settings.scheduled_reboot_days,
     );
+    settings.noir_mode = bool_value(&map, "noir_mode", settings.noir_mode);
     clamp_to_encoder_limits(&mut settings);
     settings
 }
