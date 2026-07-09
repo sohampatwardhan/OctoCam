@@ -130,7 +130,12 @@ pub fn render_mediamtx_config(settings: &Settings) -> String {
     // Each enabled local daemon (HomeKit, Matter) reads via its own local RTSP
     // session, so reserve one slot per daemon per path — user-facing capacity
     // must not shrink when a bridge is watching. Soft reservation: see the spec.
-    let reserve = i32::from(settings.homekit_enabled) + i32::from(settings.matter_enabled);
+    // Each enabled local daemon reserves one slot. HKSV recording opens a SECOND
+    // concurrent reader (recording pull alongside a live-view session), so reserve
+    // an extra slot when HomeKit + HKSV are both on.
+    let reserve = i32::from(settings.homekit_enabled)
+        + i32::from(settings.matter_enabled)
+        + i32::from(settings.homekit_enabled && settings.hksv_enabled);
     let mut path_sections = vec![mediamtx_camera_path(
         &settings.rtsp_path,
         false,
@@ -517,6 +522,57 @@ mod tests {
             first_max(&render_mediamtx_config(&both)) - first_max(&render_mediamtx_config(&base)),
             2
         );
+    }
+
+    #[test]
+    fn hksv_reserves_an_extra_reader_when_homekit_enabled() {
+        let max_readers = |content: &str| -> Vec<i32> {
+            content
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .map(|v| v.parse().unwrap())
+                .collect()
+        };
+        let base = Settings {
+            homekit_enabled: true,
+            hksv_enabled: false,
+            ..Default::default()
+        };
+        let with_hksv = Settings {
+            hksv_enabled: true,
+            ..base.clone()
+        };
+        let a = max_readers(&render_mediamtx_config(&base));
+        let b = max_readers(&render_mediamtx_config(&with_hksv));
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(y - x, 1, "enabling HKSV must reserve one more reader per path");
+        }
+    }
+
+    #[test]
+    fn hksv_reserves_nothing_without_homekit() {
+        let max_readers = |content: &str| -> Vec<i32> {
+            content
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("maxReaders: "))
+                .map(|v| v.parse().unwrap())
+                .collect()
+        };
+        let base = Settings {
+            homekit_enabled: false,
+            hksv_enabled: false,
+            ..Default::default()
+        };
+        let hksv_no_homekit = Settings {
+            hksv_enabled: true,
+            ..base.clone()
+        };
+        let a = max_readers(&render_mediamtx_config(&base));
+        let b = max_readers(&render_mediamtx_config(&hksv_no_homekit));
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(y - x, 0, "HKSV without HomeKit must not change the reader budget");
+        }
     }
 
     #[test]
