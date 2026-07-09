@@ -1563,6 +1563,7 @@ async fn sync_time(
         let mut validated = settings::validate_map(&next_map);
         validated.setup_complete = current.setup_complete;
         settings::enforce_matter_requires_admin(&mut validated);
+        settings::enforce_hksv_requires_motion(&mut validated);
         merge_settings(&mut current, validated);
         settings::save_settings(&state.config_path, &current)
             .map_err(|error| AppError(error.to_string()))?;
