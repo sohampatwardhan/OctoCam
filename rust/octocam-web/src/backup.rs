@@ -50,6 +50,7 @@ pub const PORTABLE_FIELDS: &[&str] = &[
     "matter_enabled",
     "motion_enabled",
     "motion_sensitivity",
+    "motion_zones",
     "scheduled_service_restart_enabled",
     "scheduled_service_restart_time",
     "scheduled_service_restart_days",

@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -501,6 +502,70 @@ async function writeStatus(accessory, identity, extra = {}) {
   });
 }
 
+function startMotionListener(accessory) {
+  const port = process.env.OCTOCAM_PORT || 8080;
+  const url = `http://127.0.0.1:${port}/api/motion/events`;
+
+  console.log(`Connecting to motion events stream at ${url}...`);
+
+  let buffer = "";
+
+  const req = http.get(url, (res) => {
+    if (res.statusCode !== 200) {
+      console.error(`Failed to connect to motion stream: HTTP ${res.statusCode}`);
+      res.resume();
+      scheduleReconnect();
+      return;
+    }
+
+    res.setEncoding("utf8");
+    res.on("data", (chunk) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data:")) {
+          try {
+            const jsonStr = trimmed.slice(5).trim();
+            const event = JSON.parse(jsonStr);
+            const motionDetected = Boolean(event.motion_detected);
+
+            const motionService = accessory.getService(Service.MotionSensor);
+            if (motionService) {
+              motionService.getCharacteristic(Characteristic.MotionDetected).updateValue(motionDetected);
+              console.log(`HomeKit motion state updated: ${motionDetected}`);
+            }
+          } catch (err) {
+            console.error("Failed to parse motion event:", err.message);
+          }
+        }
+      }
+    });
+
+    res.on("end", () => {
+      console.log("Motion stream connection ended by server.");
+      scheduleReconnect();
+    });
+  });
+
+  req.on("error", (err) => {
+    console.error(`Motion stream error: ${err.message}`);
+    scheduleReconnect();
+  });
+
+  let reconnectTimeout = null;
+  function scheduleReconnect() {
+    if (reconnectTimeout) return;
+    console.log("Reconnecting to motion stream in 5 seconds...");
+    reconnectTimeout = setTimeout(() => {
+      reconnectTimeout = null;
+      startMotionListener(accessory);
+    }, 5000);
+  }
+}
+
 async function main() {
   ensureDir(STATE_DIR);
   ensureDir(STORAGE_DIR);
@@ -510,6 +575,10 @@ async function main() {
   const identity = loadIdentity();
   const displayName = settings.camera_label || settings.device_name || "OctoCam";
   const accessory = new Accessory(displayName, uuid.generate(`octocam:camera:${identity.username}`));
+
+  // Add paired MotionSensor service
+  const motionService = accessory.getService(Service.MotionSensor) || accessory.addService(Service.MotionSensor, displayName);
+
   const delegate = new OctoCamStreamingDelegate();
   const cameraController = new CameraController({
     cameraStreamCount: 2,
@@ -550,6 +619,8 @@ async function main() {
   const paired = Boolean(accessory._accessoryInfo && accessory._accessoryInfo.paired());
   await writeStatus(accessory, identity, { status: paired ? "paired" : "ready", paired });
   console.log(`OctoCam HomeKit camera published as ${displayName} on port ${HAP_PORT}`);
+
+  startMotionListener(accessory);
 
   const shutdown = async () => {
     try {

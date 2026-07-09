@@ -86,17 +86,28 @@ cp "$PROJECT_DIR/nginx/octocam-web.conf" "$LOCAL_TMP/octocam-web.nginx.conf"
 sed \
   -e "s|__PROJECT_DIR__|$REMOTE_DIR|g" \
   "$PROJECT_DIR/systemd/octocam-matter.service" > "$LOCAL_TMP/octocam-matter.service"
+sed \
+  -e "s|__PROJECT_DIR__|$REMOTE_DIR|g" \
+  -e "s|__SERVICE_USER__|$SERVICE_USER|g" \
+  "$PROJECT_DIR/systemd/octocam-homekit.service" > "$LOCAL_TMP/octocam-homekit.service"
 
 ssh "$SSH_TARGET" "mkdir -p '$REMOTE_TMP'"
 rsync -az "$ARTIFACT" "$SSH_TARGET:$REMOTE_TMP/octocam-web"
-rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-matter.service" "$LOCAL_TMP/octocam-web.nginx.conf" "$SSH_TARGET:$REMOTE_TMP/"
+rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-matter.service" "$LOCAL_TMP/octocam-web.nginx.conf" "$LOCAL_TMP/octocam-homekit.service" "$SSH_TARGET:$REMOTE_TMP/"
 
-ssh "$SSH_TARGET" "sudo -n mkdir -p '$REMOTE_DIR/static'"
+ssh "$SSH_TARGET" "sudo -n mkdir -p '$REMOTE_DIR/static' '$REMOTE_DIR/homekit'"
 rsync -az --delete \
   --exclude '._*' \
   --exclude '.DS_Store' \
   --rsync-path='sudo -n rsync' \
   "$PROJECT_DIR/static/" "$SSH_TARGET:$REMOTE_DIR/static/"
+
+rsync -az --delete \
+  --exclude 'node_modules' \
+  --exclude '._*' \
+  --exclude '.DS_Store' \
+  --rsync-path='sudo -n rsync' \
+  "$PROJECT_DIR/homekit/" "$SSH_TARGET:$REMOTE_DIR/homekit/"
 
 HEALTH_PORT="${OCTOCAM_PORT:-8080}"
 ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
@@ -108,6 +119,7 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-web.service' /etc/systemd/system/octocam-web.service
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-wifi-setup.service' /etc/systemd/system/octocam-wifi-setup.service
   sudo -n install -m 0644 '$REMOTE_TMP/octocam-matter.service' /etc/systemd/system/octocam-matter.service
+  sudo -n install -m 0644 '$REMOTE_TMP/octocam-homekit.service' /etc/systemd/system/octocam-homekit.service
   if ! command -v nginx >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
     sudo -n apt-get update
     sudo -n apt-get install -y --no-install-recommends nginx openssl
@@ -141,6 +153,9 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   sudo -n systemctl daemon-reload
   sudo -n systemctl enable octocam-wifi-setup.service >/dev/null
   sudo -n systemctl restart octocam-web.service
+  if sudo -n systemctl is-active octocam-homekit.service >/dev/null 2>&1 || sudo -n systemctl is-enabled octocam-homekit.service >/dev/null 2>&1; then
+    sudo -n systemctl restart octocam-homekit.service
+  fi
   sudo -n systemctl enable --now nginx.service >/dev/null
   sudo -n systemctl reload nginx.service
   rm -rf '$REMOTE_TMP'

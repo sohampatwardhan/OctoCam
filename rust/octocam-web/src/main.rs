@@ -10,6 +10,7 @@ mod streams;
 mod system;
 mod wifi;
 mod wifi_setup;
+mod motion;
 
 use askama::Template;
 use axum::{
@@ -59,6 +60,8 @@ struct AppState {
     /// Set when the loopback snapshot listener could not bind — surfaced on
     /// /matter, since the Matter daemon has no snapshot fallback.
     internal_listener_down: Arc<std::sync::atomic::AtomicBool>,
+    motion_detected: Arc<std::sync::atomic::AtomicBool>,
+    motion_tx: tokio::sync::broadcast::Sender<bool>,
 }
 
 #[derive(Debug)]
@@ -452,6 +455,12 @@ async fn async_main() {
 
     spawn_internal_listener(state.clone());
 
+    motion::spawn_motion_detector(
+        state.config_path.clone(),
+        state.motion_detected.clone(),
+        state.motion_tx.clone(),
+    );
+
     let app = Router::new()
         .route("/", get(dashboard_redirect))
         .route("/identity", get(identity))
@@ -489,6 +498,7 @@ async fn async_main() {
         .route("/generate_204", get(captive_probe))
         .route("/api/settings", get(api_settings))
         .route("/api/status", get(api_status))
+        .route("/api/motion/events", get(api_motion_events))
         .route("/api/wifi/networks", get(api_wifi_networks))
         .route("/api/wifi/scan", post(api_wifi_scan))
         .route("/snapshot.jpg", get(snapshot))
@@ -563,6 +573,7 @@ impl AppState {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/homekit-status.json"));
         let secret_key = load_secret_key();
+        let (motion_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             project_dir,
             config_path,
@@ -576,6 +587,8 @@ impl AppState {
             secret_key,
             snapshot_cache: Arc::new(tokio::sync::Mutex::new(None)),
             internal_listener_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            motion_detected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            motion_tx,
         }
     }
 }
@@ -1680,12 +1693,36 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         #[serde(flatten)]
         status: system::SystemStatus,
         viewers: Option<streams::ViewerReport>,
+        motion_detected: bool,
     }
     Ok(Json(StatusResponse {
         status: status?,
         viewers,
+        motion_detected: state.motion_detected.load(std::sync::atomic::Ordering::Relaxed),
     })
     .into_response())
+}
+
+async fn api_motion_events(
+    State(state): State<Arc<AppState>>,
+) -> axum::response::sse::Sse<impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::wrappers::BroadcastStream;
+    use tokio_stream::StreamExt;
+
+    let rx = state.motion_tx.subscribe();
+    let initial_val = state.motion_detected.load(std::sync::atomic::Ordering::Relaxed);
+    let initial_event = Event::default().data(serde_json::json!({ "motion_detected": initial_val }).to_string());
+
+    let stream = BroadcastStream::new(rx)
+        .map(|msg| match msg {
+            Ok(val) => Ok(Event::default().data(serde_json::json!({ "motion_detected": val }).to_string())),
+            Err(_) => Ok(Event::default().comment("keepalive")),
+        });
+
+    let stream = tokio_stream::once(Ok(initial_event)).chain(stream);
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn api_wifi_networks(

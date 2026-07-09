@@ -17,7 +17,7 @@
         <section class="content-stack">
           <form class="settings-stack" method="post" action="/settings">
             <input type="hidden" name="_return_to" value="/stream-settings">
-            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled,noir_mode">
+            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled,noir_mode,motion_enabled">
             <section class="panel settings-card">
               <div class="section-heading"><h2>Stream</h2></div>
               <div class="toggle-row">
@@ -76,6 +76,23 @@
                 <label><input type="checkbox" name="noir_mode" {% if settings.noir_mode %}checked{% endif %}><span>NoIR correction (infrared white balance)</span></label>
               </div>
 
+              <div class="subsection-heading"><h3>Motion detection</h3></div>
+              <div class="toggle-row">
+                <span>Motion alerts & logging</span>
+                <label class="switch"><input type="checkbox" name="motion_enabled" {% if settings.motion_enabled %}checked{% endif %}><span></span></label>
+              </div>
+              <div class="grid-two">
+                <label><span>Sensitivity (1-100)</span><input type="number" name="motion_sensitivity" min="1" max="100" value="{{ settings.motion_sensitivity }}"></label>
+              </div>
+              <label>
+                <span>Detection zones (tap/drag to toggle active regions; highlighted is ignored)</span>
+                <div class="motion-grid-container">
+                  <img src="/snapshot.jpg" class="motion-snapshot-background" alt="Camera snapshot background">
+                  <div class="motion-grid" id="motion-zones-grid"></div>
+                </div>
+                <input type="hidden" name="motion_zones" id="motion-zones-input" value="{{ settings.motion_zones }}">
+              </label>
+
               <div class="subsection-heading"><h3>Overlay</h3></div>
               <div class="toggle-row">
                 <span>Date/time + camera name</span>
@@ -130,5 +147,110 @@
         </section>
       </div>
     </main>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const grid = document.getElementById("motion-zones-grid");
+        const input = document.getElementById("motion-zones-input");
+        if (!grid || !input) return;
+
+        let mask = BigInt(input.value || "18446744073709551615");
+        let isDrawing = false;
+        let drawMode = true;
+
+        const updateCellUI = (cell, isActive) => {
+          if (isActive) {
+            cell.classList.add("active");
+          } else {
+            cell.classList.remove("active");
+          }
+        };
+
+        const toggleCell = (target) => {
+          const idx = BigInt(target.dataset.index);
+          const bit = 1n << idx;
+          const currentlyActive = target.classList.contains("active");
+
+          if (isDrawing) {
+            if (drawMode) {
+              if (!currentlyActive) {
+                target.classList.add("active");
+                mask |= bit;
+              }
+            } else {
+              if (currentlyActive) {
+                target.classList.remove("active");
+                mask &= ~bit;
+              }
+            }
+          } else {
+            isDrawing = true;
+            drawMode = !currentlyActive;
+            if (drawMode) {
+              target.classList.add("active");
+              mask |= bit;
+            } else {
+              target.classList.remove("active");
+              mask &= ~bit;
+            }
+          }
+          input.value = mask.toString();
+        };
+
+        for (let i = 0; i < 64; i++) {
+          const cell = document.createElement("div");
+          cell.className = "motion-cell";
+          cell.dataset.index = i;
+
+          const bit = 1n << BigInt(i);
+          const isActive = (mask & bit) !== 0n;
+          updateCellUI(cell, isActive);
+
+          cell.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            isDrawing = true;
+            const currentlyActive = cell.classList.contains("active");
+            drawMode = !currentlyActive;
+            toggleCell(cell);
+          });
+
+          cell.addEventListener("mouseenter", () => {
+            if (isDrawing) {
+              toggleCell(cell);
+            }
+          });
+
+          grid.appendChild(cell);
+        }
+
+        window.addEventListener("mouseup", () => {
+          isDrawing = false;
+        });
+
+        grid.addEventListener("touchstart", (e) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const target = document.elementFromPoint(touch.clientX, touch.clientY);
+          if (target && target.classList.contains("motion-cell")) {
+            isDrawing = true;
+            const currentlyActive = target.classList.contains("active");
+            drawMode = !currentlyActive;
+            toggleCell(target);
+          }
+        });
+
+        grid.addEventListener("touchmove", (e) => {
+          e.preventDefault();
+          const touch = e.touches[0];
+          const target = document.elementFromPoint(touch.clientX, touch.clientY);
+          if (target && target.classList.contains("motion-cell") && isDrawing) {
+            toggleCell(target);
+          }
+        });
+
+        grid.addEventListener("touchend", () => {
+          isDrawing = false;
+        });
+      });
+    </script>
   </body>
 </html>

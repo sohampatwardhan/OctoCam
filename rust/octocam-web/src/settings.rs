@@ -58,6 +58,7 @@ pub struct Settings {
     pub scheduled_reboot_time: String,
     pub scheduled_reboot_days: String,
     pub noir_mode: bool,
+    pub motion_zones: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +206,7 @@ impl Default for Settings {
             scheduled_reboot_time: "04:00".to_string(),
             scheduled_reboot_days: default_weekdays(),
             noir_mode: false,
+            motion_zones: u64::MAX,
         }
     }
 }
@@ -384,6 +386,7 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         1,
         100,
     );
+    settings.motion_zones = u64_value(&map, "motion_zones", settings.motion_zones);
     settings.scheduled_service_restart_enabled = bool_value(
         &map,
         "scheduled_service_restart_enabled",
@@ -672,6 +675,23 @@ fn float_value(map: &Map<String, Value>, key: &str, default: f64, min: f64, max:
         _ => None,
     };
     value.unwrap_or(default).clamp(min, max)
+}
+
+fn u64_value(map: &Map<String, Value>, key: &str, default: u64) -> u64 {
+    match map.get(key) {
+        Some(Value::Number(value)) => value.as_u64().unwrap_or(default),
+        Some(Value::String(value)) => {
+            let val_str = value.trim();
+            if let Some(hex_str) = val_str.strip_prefix("0x") {
+                u64::from_str_radix(hex_str, 16).unwrap_or(default)
+            } else if let Ok(val) = val_str.parse::<u64>() {
+                val
+            } else {
+                u64::from_str_radix(val_str, 16).unwrap_or(default)
+            }
+        }
+        _ => default,
+    }
 }
 
 #[cfg(test)]
