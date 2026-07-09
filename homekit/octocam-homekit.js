@@ -233,6 +233,81 @@ function runProcess(command, args, timeoutMs, stdin) {
   });
 }
 
+// Read a stream of MP4 boxes. Each box is a 4-byte big-endian size + 4-byte type
+// + payload. Yields { type, data } where data is the complete box buffer.
+async function* readMp4Boxes(stream) {
+  const queue = [];
+  let waiting = null;
+  let ended = false;
+  let streamError = null;
+
+  stream.on("data", (chunk) => {
+    queue.push(chunk);
+    if (waiting) { const w = waiting; waiting = null; w(); }
+  });
+  stream.on("end", () => { ended = true; if (waiting) { const w = waiting; waiting = null; w(); } });
+  stream.on("error", (err) => { streamError = err; if (waiting) { const w = waiting; waiting = null; w(); } });
+
+  let pending = Buffer.alloc(0);
+  const pull = () => new Promise((resolve) => { waiting = resolve; });
+
+  const ensure = async (n) => {
+    while (pending.length < n) {
+      if (queue.length) {
+        pending = Buffer.concat([pending, ...queue.splice(0)]);
+      } else if (streamError) {
+        throw streamError;
+      } else if (ended) {
+        return false;
+      } else {
+        await pull();
+      }
+    }
+    return true;
+  };
+
+  while (true) {
+    if (!(await ensure(8))) return;
+    const size = pending.readUInt32BE(0);
+    const type = pending.toString("ascii", 4, 8);
+    if (size < 8) throw new Error(`invalid mp4 box size ${size} for type ${type}`);
+    if (!(await ensure(size))) return;
+    const data = pending.subarray(0, size);
+    pending = pending.subarray(size);
+    yield { type, data };
+  }
+}
+
+// Group MP4 boxes into HKSV packets: the init segment (everything up to and
+// including moov) first, then each moof+mdat pair as one fragment.
+// Yields { kind: "init" | "fragment", data: Buffer }.
+async function* readMp4Fragments(stream) {
+  let initBoxes = [];
+  let sentInit = false;
+  let fragmentBoxes = [];
+
+  for await (const box of readMp4Boxes(stream)) {
+    if (!sentInit) {
+      initBoxes.push(box.data);
+      if (box.type === "moov") {
+        yield { kind: "init", data: Buffer.concat(initBoxes) };
+        sentInit = true;
+        initBoxes = [];
+      }
+      continue;
+    }
+    fragmentBoxes.push(box.data);
+    if (box.type === "mdat") {
+      yield { kind: "fragment", data: Buffer.concat(fragmentBoxes) };
+      fragmentBoxes = [];
+    }
+  }
+}
+
+module.exports = module.exports || {};
+module.exports.readMp4Boxes = readMp4Boxes;
+module.exports.readMp4Fragments = readMp4Fragments;
+
 class OctoCamStreamingDelegate {
   constructor() {
     this.pendingSessions = new Map();
@@ -633,13 +708,15 @@ async function main() {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((error) => {
-  console.error(error);
-  writeJson(STATUS_PATH, {
-    status: "error",
-    paired: false,
-    error: error.message,
-    updated_at: new Date().toISOString(),
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    writeJson(STATUS_PATH, {
+      status: "error",
+      paired: false,
+      error: error.message,
+      updated_at: new Date().toISOString(),
+    });
+    process.exit(1);
   });
-  process.exit(1);
-});
+}
