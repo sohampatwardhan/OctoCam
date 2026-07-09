@@ -59,6 +59,7 @@ pub struct Settings {
     pub scheduled_reboot_days: String,
     pub noir_mode: bool,
     pub motion_zones: u64,
+    pub hksv_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -207,6 +208,7 @@ impl Default for Settings {
             scheduled_reboot_days: default_weekdays(),
             noir_mode: false,
             motion_zones: u64::MAX,
+            hksv_enabled: false,
         }
     }
 }
@@ -420,6 +422,7 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         &settings.scheduled_reboot_days,
     );
     settings.noir_mode = bool_value(&map, "noir_mode", settings.noir_mode);
+    settings.hksv_enabled = bool_value(&map, "hksv_enabled", settings.hksv_enabled);
     clamp_to_encoder_limits(&mut settings);
     settings
 }
@@ -910,5 +913,17 @@ mod tests {
         s.matter_enabled = true;
         enforce_matter_requires_admin(&mut s);
         assert!(s.matter_enabled);
+    }
+
+    #[test]
+    fn parses_hksv_enabled() {
+        let mut map = Map::new();
+        map.insert("hksv_enabled".into(), Value::String("true".into()));
+        let s = validate_map(&map);
+        assert!(s.hksv_enabled, "hksv_enabled should parse from the form map");
+
+        // Absent key keeps the default (false).
+        let s_default = validate_map(&Map::new());
+        assert!(!s_default.hksv_enabled);
     }
 }
