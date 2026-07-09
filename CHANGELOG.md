@@ -1,9 +1,28 @@
 # Changelog
 
-## Unreleased - 2026-07-03
+## Unreleased - 2026-07-09
 
 ### Added
 
+- feat(web, homekit): HomeKit Secure Video (HKSV) recording. When motion
+  detection and HKSV are enabled, the Node HomeKit bridge advertises a recording
+  capability paired to the camera's motion sensor; on motion the Apple Home Hub
+  negotiates a configuration and the bridge produces a fragmented-MP4 H.264 clip
+  with ffmpeg at the hub-negotiated resolution/bitrate, streamed back over the
+  HomeKit Data Stream transport (no local storage, no prebuffer, video only).
+  Advertised recording resolutions cap HD frame rate for the Pi Zero 2 W, and the
+  encode preserves the source aspect ratio. `hksv_enabled` gates both the
+  advertised capability and an extra mediamtx reader reservation, and requires
+  motion detection to be on. The bridge runs under systemd memory/CPU limits so a
+  concurrent recording encode cannot starve mediamtx.
+- feat(web, homekit): software motion detection. A zero-dependency Rust detector
+  pipes a low-resolution grayscale stream from mediamtx via ffmpeg and flags
+  motion by frame differencing, with an 8x8 zone-selection grid and
+  global-lighting-change suppression to reduce false triggers. Motion state is
+  published as a Server-Sent Events stream (`/api/motion/events`) and drives a
+  HomeKit MotionSensor service on the camera accessory. Configurable from the
+  stream settings page: enable toggle, sensitivity, and an interactive zone
+  editor.
 - feat(web): configuration backup & restore on the System page. `GET /backup`
   downloads a versioned JSON envelope of the portable settings (camera, stream,
   RTSP, image, motion, feature toggles) plus authorized SSH public keys; the

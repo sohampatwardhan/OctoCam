@@ -222,6 +222,14 @@ maintenance from a phone, tablet, or desktop browser.
   lets you revoke a key or authorize a new one. Removing the last remaining key
   requires an explicit confirmation, since it ends root SSH access to the
   device.
+- The stream settings page includes motion detection and HomeKit Secure Video
+  (HKSV) controls. Motion detection runs a lightweight software detector on a
+  low-resolution grayscale stream, with a sensitivity control and an interactive
+  8x8 zone grid for masking regions; it drives a HomeKit MotionSensor. Enabling
+  "Record clips to HomeKit on motion" advertises HKSV recording so an Apple Home
+  Hub records motion clips to iCloud — recording quality is chosen by the Home
+  app, and the option requires motion detection, a Home Hub, and an iCloud+ plan
+  with HKSV storage.
 - The System info page also offers Backup & Restore. "Download backup" saves
   the camera's configuration as a JSON file: the portable settings (camera,
   stream, RTSP, image, motion, and feature toggles) plus the authorized SSH
@@ -334,8 +342,10 @@ Design rules:
 - Add post-setup network switching through NetworkManager.
 - Tune HomeKit camera streaming compatibility and latency after pairing on Apple Home.
 - Add authenticated admin access if the UI will leave a trusted LAN.
-- Add motion detection and recording controls once the desired camera pipeline is
-  chosen.
+- Verify HKSV clip recording end-to-end on an Apple Home Hub (config negotiation
+  and `prebufferLength: 0` are confirmed; the motion-triggered clip capture still
+  needs a physical-motion test) and tune the advertised recording resolutions to
+  what the Pi Zero 2 W can software-encode reliably under concurrent load.
 - Track the CHIP camera-app fork (`docs/superpowers/plans/2026-07-02-matter-chip-fork.md`)
   to build and deploy the Matter daemon binary, then revisit certification and
   additional ecosystem onboarding as Matter camera viewing support rolls out
