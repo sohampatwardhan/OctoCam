@@ -17,7 +17,7 @@
         <section class="content-stack">
           <form class="settings-stack" method="post" action="/settings">
             <input type="hidden" name="_return_to" value="/stream-settings">
-            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled,noir_mode,motion_enabled">
+            <input type="hidden" name="_checkboxes" value="camera_enabled,sub_stream_enabled,hflip,vflip,text_overlay_enabled,noir_mode,motion_enabled,hksv_enabled">
             <section class="panel settings-card">
               <div class="section-heading"><h2>Stream</h2></div>
               <div class="toggle-row">
@@ -92,6 +92,13 @@
                 </div>
                 <input type="hidden" name="motion_zones" id="motion-zones-input" value="{{ settings.motion_zones }}">
               </label>
+
+              <div class="subsection-heading"><h3>HomeKit Secure Video</h3></div>
+              <div class="toggle-row">
+                <span>Record clips to HomeKit on motion</span>
+                <label class="switch"><input type="checkbox" name="hksv_enabled" {% if settings.hksv_enabled %}checked{% endif %}><span></span></label>
+              </div>
+              <p class="field-note">Requires motion detection (above), a Home Hub (HomePod/Apple TV), and an iCloud+ plan with HomeKit Secure Video storage. Recording quality is chosen by the Home app. If motion detection is off, this turns itself off on save.</p>
 
               <div class="subsection-heading"><h3>Overlay</h3></div>
               <div class="toggle-row">
