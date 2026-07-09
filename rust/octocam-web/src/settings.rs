@@ -436,6 +436,15 @@ pub fn enforce_matter_requires_admin(settings: &mut Settings) {
     }
 }
 
+/// HKSV recording is triggered by the motion sensor; without motion detection
+/// there is nothing to start a recording. Force HKSV off when motion is off so
+/// the bridge never advertises a recording capability it can't trigger.
+pub fn enforce_hksv_requires_motion(settings: &mut Settings) {
+    if !settings.motion_enabled {
+        settings.hksv_enabled = false;
+    }
+}
+
 /// Snap any resolution the hardware encoder cannot handle to a safe fallback.
 /// If either dimension exceeds the limit, BOTH are reset to the fallback preset —
 /// we snap to a known-good mode rather than clamp per-axis into an untested
@@ -913,6 +922,27 @@ mod tests {
         s.matter_enabled = true;
         enforce_matter_requires_admin(&mut s);
         assert!(s.matter_enabled);
+    }
+
+    #[test]
+    fn hksv_requires_motion() {
+        // HKSV on + motion off  -> HKSV forced off.
+        let mut s = Settings {
+            hksv_enabled: true,
+            motion_enabled: false,
+            ..Settings::default()
+        };
+        enforce_hksv_requires_motion(&mut s);
+        assert!(!s.hksv_enabled, "HKSV must not stay enabled without motion");
+
+        // HKSV on + motion on -> stays on.
+        let mut s2 = Settings {
+            hksv_enabled: true,
+            motion_enabled: true,
+            ..Settings::default()
+        };
+        enforce_hksv_requires_motion(&mut s2);
+        assert!(s2.hksv_enabled);
     }
 
     #[test]

@@ -158,7 +158,7 @@ pub enum RestoreError {
 ///
 /// Returns the settings to save (portable fields overlaid on `current`, all
 /// clamped/sanitized by `validate_map`, with `enforce_matter_requires_admin`
-/// applied) and the raw SSH key strings to merge.
+/// and `enforce_hksv_requires_motion` applied) and the raw SSH key strings to merge.
 ///
 /// Crucially: the map handed to `validate_map` is seeded from `current` and only
 /// the portable keys are overlaid from the upload. `validate_map` starts from
@@ -193,6 +193,7 @@ pub fn parse_restore(
 
     let mut restored = settings::validate_map(&seed);
     settings::enforce_matter_requires_admin(&mut restored);
+    settings::enforce_hksv_requires_motion(&mut restored);
 
     let keys = match root.get("ssh_authorized_keys") {
         Some(Value::Array(items)) => items
@@ -371,5 +372,16 @@ mod tests {
         let bytes = envelope(Value::Object(s), Value::Array(vec![]), Value::from(1));
         let (restored, _keys) = parse_restore(&bytes, &current).unwrap();
         assert!(!restored.matter_enabled);
+    }
+
+    #[test]
+    fn parse_restore_hksv_off_when_no_motion() {
+        let current = Settings::default();
+        let mut s = Map::new();
+        s.insert("hksv_enabled".to_string(), Value::from(true));
+        s.insert("motion_enabled".to_string(), Value::from(false));
+        let bytes = envelope(Value::Object(s), Value::Array(vec![]), Value::from(1));
+        let (restored, _keys) = parse_restore(&bytes, &current).unwrap();
+        assert!(!restored.hksv_enabled);
     }
 }
