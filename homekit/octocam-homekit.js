@@ -9,11 +9,17 @@ const { spawn } = require("child_process");
 const qrcode = require("qrcode");
 const {
   Accessory,
+  AudioRecordingCodecType,
+  AudioRecordingSamplerate,
   CameraController,
   Categories,
   Characteristic,
+  H264Level,
+  H264Profile,
   HAPStorage,
+  MediaContainerType,
   Service,
+  VideoCodecType,
   uuid,
 } = require("hap-nodejs");
 
@@ -641,6 +647,137 @@ function startMotionListener(accessory) {
   }
 }
 
+// H264Profile/H264Level enum -> ffmpeg strings. Indices match hap-nodejs enums
+// (BASELINE=0/MAIN=1/HIGH=2; LEVEL3_1=0/LEVEL3_2=1/LEVEL4_0=2).
+const RECORDING_PROFILES = ["baseline", "main", "high"];
+const RECORDING_LEVELS = ["3.1", "3.2", "4.0"];
+
+class OctoCamRecordingDelegate {
+  constructor() {
+    this.selectedConfig = undefined;
+    this.processes = new Map(); // streamId -> ChildProcess
+  }
+
+  updateRecordingActive(active) {
+    console.log(`HKSV recording active: ${active}`);
+  }
+
+  updateRecordingConfiguration(configuration) {
+    this.selectedConfig = configuration;
+    if (configuration) {
+      const v = configuration.videoCodec;
+      console.log(
+        `HKSV config selected: ${v.resolution[0]}x${v.resolution[1]}@${v.resolution[2]}fps ` +
+        `profile=${v.parameters.profile} level=${v.parameters.level} ` +
+        `bitrate=${v.parameters.bitRate}k iFrame=${v.parameters.iFrameInterval}ms ` +
+        `frag=${configuration.mediaContainerConfiguration.fragmentLength}ms`
+      );
+    } else {
+      console.log("HKSV config cleared");
+    }
+  }
+
+  buildRecordingArgs(settings, config) {
+    const v = config.videoCodec;
+    const [width, height, fps] = v.resolution;
+    const profile = RECORDING_PROFILES[v.parameters.profile] || "high";
+    const level = RECORDING_LEVELS[v.parameters.level] || "4.0";
+    const bitrate = Math.max(64, v.parameters.bitRate); // kbps
+    const fragSec = Math.max(1, config.mediaContainerConfiguration.fragmentLength / 1000);
+    // GOP aligned to fragment length so every fragment starts with a keyframe.
+    return [
+      "-hide_banner", "-nostdin",
+      "-rtsp_transport", "tcp",
+      "-fflags", "nobuffer", "-flags", "low_delay",
+      "-i", rtspUrl(settings, "main"),
+      "-an", "-sn", "-dn",
+      "-map", "0:v:0",
+      "-vf", `scale=${width}:${height}`,
+      "-c:v", "libx264",
+      "-preset", "ultrafast",
+      "-tune", "zerolatency",
+      "-pix_fmt", "yuv420p",
+      "-profile:v", profile,
+      "-level:v", level,
+      "-r", String(fps),
+      "-b:v", `${bitrate}k`,
+      "-maxrate", `${bitrate}k`,
+      "-bufsize", `${bitrate * 2}k`,
+      "-force_key_frames", `expr:gte(t,n_forced*${fragSec})`,
+      "-f", "mp4",
+      "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+      "-",
+    ];
+  }
+
+  killRecording(streamId) {
+    const child = this.processes.get(streamId);
+    if (child) {
+      this.processes.delete(streamId);
+      try { child.kill("SIGKILL"); } catch (_) {}
+    }
+  }
+
+  async *handleRecordingStreamRequest(streamId) {
+    const settings = loadSettings();
+    const config = this.selectedConfig;
+    if (!config) {
+      console.error(`HKSV stream ${streamId} requested with no selected configuration`);
+      return;
+    }
+
+    const args = this.buildRecordingArgs(settings, config);
+    if (DEBUG_FFMPEG) console.log(`HKSV ffmpeg ${args.join(" ")}`);
+
+    const child = spawn("ffmpeg", args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    this.processes.set(streamId, child);
+
+    const stderrLines = [];
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderrLines.push(text);
+      if (stderrLines.length > 40) stderrLines.shift();
+    });
+    child.on("error", (err) => {
+      console.error(`HKSV ffmpeg spawn error (stream ${streamId}): ${err.message}`);
+    });
+    child.on("close", (code, signal) => {
+      if (code && code !== 0) {
+        console.error(`HKSV ffmpeg (stream ${streamId}) exited code=${code} signal=${signal}: ${stderrLines.join(" | ")}`);
+      }
+    });
+
+    try {
+      let prevFragment = null;
+      let sentInit = false;
+      for await (const seg of readMp4Fragments(child.stdout)) {
+        if (seg.kind === "init") {
+          yield { data: seg.data, isLast: false };
+          sentInit = true;
+          continue;
+        }
+        // One-fragment lookahead so the final fragment can be marked isLast.
+        if (prevFragment !== null) {
+          yield { data: prevFragment, isLast: false };
+        }
+        prevFragment = seg.data;
+      }
+      if (prevFragment !== null) {
+        yield { data: prevFragment, isLast: true };
+      } else if (!sentInit) {
+        console.error(`HKSV stream ${streamId} produced no init segment`);
+      }
+    } finally {
+      this.killRecording(streamId);
+    }
+  }
+
+  closeRecordingStream(streamId, reason) {
+    console.log(`HKSV stream ${streamId} closed (reason=${reason})`);
+    this.killRecording(streamId);
+  }
+}
+
 async function main() {
   ensureDir(STATE_DIR);
   ensureDir(STORAGE_DIR);
@@ -655,6 +792,7 @@ async function main() {
   const motionService = accessory.getService(Service.MotionSensor) || accessory.addService(Service.MotionSensor, displayName);
 
   const delegate = new OctoCamStreamingDelegate();
+  const recordingDelegate = new OctoCamRecordingDelegate();
   const cameraController = new CameraController({
     cameraStreamCount: 2,
     delegate,
@@ -667,6 +805,49 @@ async function main() {
         },
         resolutions: supportedResolutions(settings),
       },
+    },
+    // HomeKit Secure Video. sensors.motion MUST be the existing Service instance
+    // (passing `true` would create a duplicate internal MotionSensor).
+    sensors: {
+      motion: motionService,
+    },
+    recording: {
+      options: {
+        prebufferLength: 0, // no always-on encode; verified against the hub on deploy
+        mediaContainerConfiguration: {
+          type: MediaContainerType.FRAGMENTED_MP4,
+          fragmentLength: 4000,
+        },
+        video: {
+          type: VideoCodecType.H264,
+          parameters: {
+            profiles: [H264Profile.BASELINE, H264Profile.MAIN, H264Profile.HIGH],
+            levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0],
+          },
+          resolutions: [
+            [1280, 720, 30],
+            [1280, 720, 24],
+            [1280, 720, 15],
+            [1920, 1080, 30],
+            [1920, 1080, 24],
+            [1920, 1080, 15],
+            [640, 480, 30],
+            [640, 360, 30],
+          ],
+        },
+        // No microphone hardware, but hap-nodejs REQUIRES a non-empty audio codec
+        // list or it throws at construction. Advertise AAC-LC; we never emit audio.
+        audio: {
+          codecs: [
+            {
+              type: AudioRecordingCodecType.AAC_LC,
+              samplerate: [AudioRecordingSamplerate.KHZ_32],
+              audioChannels: 1,
+            },
+          ],
+        },
+      },
+      delegate: recordingDelegate,
     },
   });
   delegate.controller = cameraController;
