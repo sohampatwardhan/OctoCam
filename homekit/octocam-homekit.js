@@ -652,6 +652,20 @@ function startMotionListener(accessory) {
 const RECORDING_PROFILES = ["baseline", "main", "high"];
 const RECORDING_LEVELS = ["3.1", "3.2", "4.0"];
 
+// Advertised HKSV recording configs. HKSV requires 1920x1080 and 1280x720 to be
+// offered, but the Pi Zero 2 W cannot software-encode HD at 30fps concurrently
+// with live view + motion, so HD is capped to low frame rates here. This is a
+// conservative default — revisit upward after on-device measurement (Task 8).
+const RECORDING_RESOLUTIONS = [
+  [1280, 720, 15],
+  [1280, 720, 24],
+  [1920, 1080, 15],
+  [640, 480, 30],
+  [640, 480, 24],
+  [640, 360, 30],
+  [640, 360, 24],
+];
+
 class OctoCamRecordingDelegate {
   constructor() {
     this.selectedConfig = undefined;
@@ -692,7 +706,7 @@ class OctoCamRecordingDelegate {
       "-i", rtspUrl(settings, "main"),
       "-an", "-sn", "-dn",
       "-map", "0:v:0",
-      "-vf", `scale=${width}:${height}`,
+      "-vf", `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
@@ -792,8 +806,7 @@ async function main() {
   const motionService = accessory.getService(Service.MotionSensor) || accessory.addService(Service.MotionSensor, displayName);
 
   const delegate = new OctoCamStreamingDelegate();
-  const recordingDelegate = new OctoCamRecordingDelegate();
-  const cameraController = new CameraController({
+  const controllerOptions = {
     cameraStreamCount: 2,
     delegate,
     streamingOptions: {
@@ -806,12 +819,16 @@ async function main() {
         resolutions: supportedResolutions(settings),
       },
     },
-    // HomeKit Secure Video. sensors.motion MUST be the existing Service instance
-    // (passing `true` would create a duplicate internal MotionSensor).
-    sensors: {
-      motion: motionService,
-    },
-    recording: {
+  };
+  if (settings.hksv_enabled) {
+    // Only advertise HKSV recording when enabled in OctoCam. This keeps it in
+    // sync with the mediamtx reader reservation (which also keys on hksv_enabled)
+    // so a recording pull is never refused for lack of a reserved slot. The bridge
+    // is restarted by octocam-web whenever settings change, so toggling this takes
+    // effect on save.
+    const recordingDelegate = new OctoCamRecordingDelegate();
+    controllerOptions.sensors = { motion: motionService };
+    controllerOptions.recording = {
       options: {
         prebufferLength: 0, // no always-on encode; verified against the hub on deploy
         mediaContainerConfiguration: {
@@ -824,19 +841,8 @@ async function main() {
             profiles: [H264Profile.BASELINE, H264Profile.MAIN, H264Profile.HIGH],
             levels: [H264Level.LEVEL3_1, H264Level.LEVEL3_2, H264Level.LEVEL4_0],
           },
-          resolutions: [
-            [1280, 720, 30],
-            [1280, 720, 24],
-            [1280, 720, 15],
-            [1920, 1080, 30],
-            [1920, 1080, 24],
-            [1920, 1080, 15],
-            [640, 480, 30],
-            [640, 360, 30],
-          ],
+          resolutions: RECORDING_RESOLUTIONS,
         },
-        // No microphone hardware, but hap-nodejs REQUIRES a non-empty audio codec
-        // list or it throws at construction. Advertise AAC-LC; we never emit audio.
         audio: {
           codecs: [
             {
@@ -848,8 +854,9 @@ async function main() {
         },
       },
       delegate: recordingDelegate,
-    },
-  });
+    };
+  }
+  const cameraController = new CameraController(controllerOptions);
   delegate.controller = cameraController;
 
   accessory
