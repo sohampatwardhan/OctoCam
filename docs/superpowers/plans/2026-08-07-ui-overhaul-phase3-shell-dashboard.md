@@ -11,7 +11,8 @@
 ## Global Constraints
 
 - **Served under `/app`** (Vite `base: "/app/"`); React Router uses `basename="/app"`. Does not touch the live Askama pages.
-- **Match OctoCam's existing brand, not generic shadcn.** Design tokens (hex, from `static/styles.css:1-58`): `--background:#f5f7f8`, `--foreground:#16212b`, `--card:#ffffff`, `--muted:#f9fbfc`, `--muted-foreground:#60707f`, `--border:#d6dee5`, `--ring:#2f7dd3`, `--primary:#c5462d`, `--primary-foreground:#ffffff`, `--accent:#fff0ec`, `--destructive:#c5462d` (=primary), `--success:#08734f`, `--radius:8px`. Font: system stack `ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` (NO Geist). **Light-only — do not add dark mode** (parity with current UI).
+- **Match OctoCam's existing brand, not generic shadcn.** Design tokens (hex, from `static/styles.css:1-58`): `--background:#f5f7f8`, `--foreground:#16212b`, `--card:#ffffff`, `--muted:#f9fbfc`, `--muted-foreground:#60707f`, `--border:#d6dee5`, `--ring:#2f7dd3`, `--primary:#c5462d`, `--primary-foreground:#ffffff`, `--accent:#fff0ec`, `--destructive:#c5462d` (=primary), `--success:#08734f`, `--radius:8px`. Font: system stack `ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif` (NO Geist). Dark mode is AUTO (see the dark-mode constraint below).
+- **Auto dark mode** via `@media (prefers-color-scheme: dark)` — follows the OS, NO manual toggle. Wire shadcn's `dark:` variant to the media query and provide dark token overrides (base them on the existing `--inverse:#111820`/`--inverse-foreground:#e8eef3` surfaces + a brightened terracotta primary for contrast).
 - **Stream preview stays an `<iframe>`** pointing at mediamtx's player (`http://{host}:8889/{path}`); start/stop and HD/SD are `src` swaps. Do NOT build a native WHEP client in this slice.
 - **Terminal is excluded** — no Terminal nav item, no terminal page.
 - **Auth:** all `/app` routes except `/app/login` require a session (checked via `/api/me`); a `401` from any query routes to `/app/login`. Admin-only nav items gate on `role`/`is_admin` from `/api/me` (server still enforces).
@@ -20,10 +21,10 @@
 
 ## Design decisions baked in (call out on review)
 
-1. **Persistent sidebar shell** for all `/app` pages including the dashboard (the current Askama dashboard is sidebar-less; a persistent responsive sidebar is the standard SPA pattern and better navigation). Sidebar collapses to an off-canvas drawer under 768px.
+1. **Dashboard stays full-width (no sidebar)** — matches today's Askama dashboard (topbar only). The `Sidebar` component is deferred to the first sidebar-bearing page slice; slice-1's shell is topbar + full-width content. (User decision.)
 2. **Keep the iframe** stream preview (faithful, zero new WebRTC code).
-3. **Light-only**, no dark mode (parity).
-4. **Passkey login deferred** to a later slice — this slice does password login via `/api/login`. (Endpoints exist; adding the passkey button later is isolated.)
+3. **Auto dark mode** via `prefers-color-scheme` (no toggle). (User decision — reverses the earlier light-only default.)
+4. **Passkey login included** in this slice — the `/app` login page ports the passkey login flow (`/api/passkey/login/start`+`/finish`) alongside password login. (User decision.)
 5. **Cross-links to not-yet-migrated pages** (e.g. the dashboard's "RTSP" button, sidebar items for pages not built in this slice) point at the existing Askama routes (`/rtsp`, `/wifi`, …) so navigation works during migration. They'll be repointed to `/app/*` as those pages land.
 
 ---
@@ -40,8 +41,8 @@
 - `frontend/src/hooks/useAuth.ts` — `useMe()` query + helpers.
 - `frontend/src/components/AuthGate.tsx` — redirect-to-login wrapper.
 - `frontend/src/components/AppShell.tsx` — topbar + sidebar layout + `<Outlet/>`.
-- `frontend/src/components/Sidebar.tsx`, `frontend/src/components/Topbar.tsx`, `frontend/src/components/PowerDialog.tsx`.
-- `frontend/src/routes/Login.tsx`, `frontend/src/routes/Dashboard.tsx`.
+- `frontend/src/components/Topbar.tsx`, `frontend/src/components/PowerDialog.tsx`. (Sidebar deferred — dashboard is full-width.)
+- `frontend/src/routes/Login.tsx`, `frontend/src/routes/Dashboard.tsx`; `frontend/src/lib/webauthn.ts` (base64url helpers for passkey login).
 - `frontend/src/components/dashboard/StreamPreview.tsx`, `StreamHealthCard.tsx`, `ClientsCard.tsx`.
 - shadcn components as needed: `dialog`, `separator`, `input`, `label`, `skeleton` (add via CLI).
 
@@ -77,7 +78,9 @@
   --radius: 0.5rem; /* 8px */
 }
 ```
-Set the sans font var to the system stack (remove Geist): `--font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;` and drop the `@fontsource` Geist import line. Delete the `.dark { … }` block entirely (light-only).
+Set the sans font var to the system stack (remove Geist): `--font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;` and drop the `@fontsource` Geist import line.
+
+**Auto dark mode (no toggle):** wire shadcn's dark variant to the OS preference and provide dark tokens via media query. (a) Redefine the custom variant so `dark:` utilities key off the media query: `@custom-variant dark (@media (prefers-color-scheme: dark));`. (b) Add a `@media (prefers-color-scheme: dark) { :root { … } }` block overriding the tokens for dark surfaces — base them on OctoCam's existing inverse surfaces and a brightened primary, e.g. `--background:#111820; --foreground:#e8eef3; --card:#16212b; --card-foreground:#e8eef3; --popover:#16212b; --muted:#1c2732; --muted-foreground:#9fb0bd; --accent:#2a1a15; --accent-foreground:#e8eef3; --secondary:#1c2732; --border:#2a3742; --input:#1c2732; --primary:#e0674c; --primary-foreground:#ffffff; --destructive:#e0674c; --ring:#4a9de8;` (tune for legibility). This gives fully automatic light/dark with no JS and no toggle.
 
 - [ ] **Step 2: Add the shadcn components this slice needs.**
 ```bash
@@ -152,16 +155,16 @@ export function useMe() {
 
 - [ ] **Step 4: `components/AuthGate.tsx`.** Renders a `<Skeleton>`/spinner while `isLoading`; if error or `!data.authenticated` → `<Navigate to="/login" replace />`; else render `children`. If `data.setup_required` → `<Navigate to="/login" />` too (setup handled by Askama `/setup` for now — the login page can link there).
 
-- [ ] **Step 5: `components/Sidebar.tsx`.** Render the nav from a static list (label, path, `adminOnly`, lucide icon), EXCLUDING Terminal:
-  Dashboard `/`(all); then adminOnly: Identity `/identity`, Wi-Fi `/wifi`, Stream Config `/stream-settings`, RTSP `/rtsp`, HomeKit `/homekit`, Matter `/matter`, System info `/system`, System logs `/logs`, SSH keys `/ssh-keys`, Admin `/admin`; Account Settings `/settings` (shown to non-admins). Only Dashboard resolves to an `/app` route this slice; the rest are `<a href>` to the Askama pages (absolute paths, leaving the SPA) — mark them so they render as plain links, and the active-highlight only applies to in-SPA routes. Gate adminOnly items on `useMe().data?.is_admin`. Active state via `NavLink`. Collapsible off-canvas under 768px (a `<Sheet>`-like drawer or a CSS toggle; keep it simple).
+- [ ] **Step 5: (Sidebar DEFERRED.)** The dashboard is full-width (no sidebar) per the user decision, so this slice does NOT build `Sidebar.tsx`. Skip it — the `AppShell` renders topbar + full-width `<Outlet/>` only. The sidebar (nav list, admin-gating, active highlighting, mobile drawer) will be built in the first slice that adds a sidebar-bearing page. Do not create `Sidebar.tsx` now.
 
 - [ ] **Step 6: `components/PowerDialog.tsx`.** shadcn `<Dialog>` with three actions (`restart_service`, `restart_device`, `shutdown_device`) each calling `apiPost("/api/power", { action })`; show a toast/confirmation. Admin-only (only mounted when `is_admin`).
 
 - [ ] **Step 7: `components/Topbar.tsx`.** Brand "OctoCam" (links `/`), a live status chip (from `useStatus()` — the `services.rtsp.state`, added in Task 4's hook; for this task a placeholder that fills in once Dashboard's query exists is fine, or fetch `/api/status` here too), a settings gear link (`/settings` Askama for now), the `<PowerDialog>` trigger (admin), and a Logout button → `apiPost("/api/logout", {})` then `queryClient.clear()` + navigate to `/login`.
 
-- [ ] **Step 8: `components/AppShell.tsx`.** Grid layout: sidebar (fixed width ~228px, drawer on mobile) + main column with `<Topbar>` and `<Outlet/>`. Uses the brand tokens (bg `--background`, cards `--card`).
+- [ ] **Step 8: `components/AppShell.tsx`.** Topbar-only full-width layout (NO sidebar this slice): a column with `<Topbar>` at top and `<Outlet/>` filling the width below, on `--background`. (When the first sidebar-bearing page lands in a later slice, AppShell grows a sidebar column conditionally.)
 
-- [ ] **Step 9: `routes/Login.tsx`.** Centered `<Card>` with username (default "admin") + password inputs, submit → `apiPost("/api/login", {username, password})`; on success `queryClient.invalidateQueries({queryKey:["me"]})` + navigate to `/`; on error show the message. Link to Askama `/setup` if setup needed. (No passkey button this slice.)
+- [ ] **Step 9: `routes/Login.tsx` (with passkey).** Centered `<Card>` with username (default "admin") + password inputs, submit → `apiPost("/api/login", {username, password})`; on success `queryClient.invalidateQueries({queryKey:["me"]})` + navigate to `/`; on error show the message. Link to Askama `/setup` if setup needed.
+  **Passkey login (included this slice):** port the flow from `login.html`'s inline script (read it). Add a "Sign in with a passkey" button (hidden if `!window.PublicKeyCredential`): `POST /api/passkey/login/start` → decode base64url `publicKey.challenge`/`allowCredentials[].id` → `navigator.credentials.get({publicKey})` → re-encode binary fields to base64url → `POST /api/passkey/login/finish` with `{challenge_id, id, rawId, response:{clientDataJSON, authenticatorData, signature, userHandle}}` → on `{success}` invalidate `["me"]` + navigate to `/`. Also run conditional-mediation autofill on mount (`mediation:"conditional"`, silently no-op if unsupported). Swallow `NotAllowedError`/`AbortError`; surface other errors. Put the base64url helpers in `lib/webauthn.ts`.
 
 - [ ] **Step 10: `App.tsx` route table + `main.tsx`.**
 ```tsx
