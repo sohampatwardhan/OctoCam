@@ -530,6 +530,7 @@ async fn async_main() {
         .route("/api/wifi/scan", post(api_wifi_scan))
         .route("/api/wifi/connect", post(api_wifi_connect))
         .route("/api/wifi/delete", delete(api_wifi_delete))
+        .route("/api/wifi/saved", get(api_wifi_saved))
         .route("/api/passkey/register/start", post(api_passkey_register_start))
         .route("/api/passkey/register/finish", post(api_passkey_register_finish))
         .route("/api/passkey/login/start", post(api_passkey_login_start))
@@ -2638,6 +2639,25 @@ async fn api_wifi_delete(
     } else {
         Err(api::ApiError::bad_request(message))
     }
+}
+
+async fn api_wifi_saved(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let status = run_blocking(system::status)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    let profiles = run_blocking(move || system::stored_wifi_profiles(&status.wifi))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    Ok(api::ok_json(profiles))
 }
 
 use base64::{engine::general_purpose::URL_SAFE, Engine};

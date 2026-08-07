@@ -96,7 +96,7 @@ pub struct LabelValue {
     pub value: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct StoredWifiProfile {
     pub name: String,
     pub security: String,
@@ -1550,6 +1550,30 @@ fn shell_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stored_wifi_profile_serializes_expected_fields() {
+        let profile = StoredWifiProfile {
+            name: "HomeNet".to_string(),
+            security: "WPA2".to_string(),
+            source: "NetworkManager".to_string(),
+            active: true,
+            can_delete: true,
+            delete_source: "nmcli".to_string(),
+        };
+        let json = serde_json::to_value(&profile).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "name": "HomeNet",
+                "security": "WPA2",
+                "source": "NetworkManager",
+                "active": true,
+                "can_delete": true,
+                "delete_source": "nmcli",
+            })
+        );
+    }
 
     #[test]
     fn maps_wifi_channels() {
