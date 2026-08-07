@@ -33,8 +33,9 @@
 **Modify:**
 - `rust/octocam-web/Cargo.toml` — add `rust-embed`
 - `rust/octocam-web/Cargo.lock` — regenerated (via `cargo build`)
-- `rust/octocam-web/src/main.rs` — `mod spa;`, mount `/app` + `/app/{*path}` routes
-- `scripts/build-pi-web.sh` — run host-side `npm ci` + `npm run build` in `frontend/` before the Docker cargo build
+- `rust/octocam-web/src/main.rs` — `mod spa;`, mount `/app`, `/app/`, `/app/{*path}` routes
+- `scripts/build-pi-web.sh` — run host-side `npm ci` + `npm run build` in `frontend/` before the Docker cargo build; force re-embed
+- `scripts/deploy-pi-web.sh` — add `/app` to the rollback health gate
 
 ---
 
@@ -134,7 +135,9 @@ Expected: `components.json` created, `src/lib/utils.ts` created, `src/components
 
 - [ ] **Step 8: Write the typed API helper**
 
-Create `frontend/src/lib/api.ts`:
+Create `frontend/src/lib/api.ts`. The `Status` shape MUST match the real
+`/api/status` response (a flattened `system::SystemStatus` — there is no
+top-level `service` field, and `camera` is an object, not a string):
 ```typescript
 // Minimal typed fetch wrapper. Credentialed so the octocam_session cookie rides along.
 export async function apiGet<T>(path: string): Promise<T> {
@@ -143,10 +146,19 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+export interface CameraStatus {
+  available: boolean
+  message: string
+}
+
+// Subset of the flattened SystemStatus we render in the pilot. `/api/status`
+// returns many more fields (hostname, ip_addresses, uptime, cpu_temp_c,
+// resources, wifi, camera, services, logs) plus viewers + motion_detected.
 export interface Status {
-  service: string
-  camera: string
-  uptime: string
+  hostname: string
+  uptime: string | null
+  camera: CameraStatus
+  motion_detected: boolean
 }
 ```
 
@@ -181,9 +193,17 @@ function StatusCard() {
         {isError && <Badge variant="destructive">device unreachable</Badge>}
         {data && (
           <>
-            <div>Service: <Badge>{data.service}</Badge></div>
-            <div>Camera: <Badge>{data.camera}</Badge></div>
-            <div>Uptime: {data.uptime}</div>
+            <div>Host: <Badge>{data.hostname}</Badge></div>
+            <div>
+              Camera:{" "}
+              <Badge variant={data.camera.available ? "default" : "destructive"}>
+                {data.camera.message}
+              </Badge>
+            </div>
+            <div>Uptime: {data.uptime ?? "unknown"}</div>
+            <div>
+              Motion: <Badge>{data.motion_detected ? "detected" : "clear"}</Badge>
+            </div>
           </>
         )}
       </CardContent>
@@ -217,8 +237,11 @@ Run in `frontend/`:
 ```bash
 npm run build
 ls dist && ls dist/assets && grep -c '/app/assets/' dist/index.html
+# Bundle-size baseline (record these numbers in the commit message):
+du -sh dist
+gzip -c dist/assets/*.js | wc -c   # gzipped JS bytes — the number that hits the wire
 ```
-Expected: `npm run build` succeeds (tsc + vite build); `dist/index.html` exists; `dist/assets/` contains hashed `.js`/`.css`; the `grep` count is ≥ 1 (asset URLs are `/app/`-prefixed, confirming the `base` setting took effect).
+Expected: `npm run build` succeeds (tsc + vite build); `dist/index.html` exists; `dist/assets/` contains hashed `.js`/`.css`; the `grep` count is ≥ 1 (asset URLs are `/app/`-prefixed, confirming the `base` setting took effect). Record the `du`/gzip numbers as the Phase 1 baseline — this is the cheapest point to catch size regressions before Phases 2–3 add many more routes and components. As a rough soft ceiling, gzipped JS for this single-page scaffold should be well under ~200KB.
 
 - [ ] **Step 12: Commit**
 
@@ -241,7 +264,7 @@ git commit -m "feat(ui): scaffold React+shadcn frontend with pilot status page"
 - Consumes: `frontend/dist/` (from Task 1) at path `../../frontend/dist` relative to the crate root.
 - Produces:
   - `pub fn cache_control_for(path: &str) -> &'static str`
-  - `pub struct SpaResponse { pub status: axum::http::StatusCode, pub content_type: String, pub cache_control: &'static str, pub body: Vec<u8> }`
+  - `pub struct SpaResponse { pub status: axum::http::StatusCode, pub content_type: String, pub cache_control: &'static str, pub body: axum::body::Bytes }`
   - `pub fn resolve_spa(path: &str) -> SpaResponse` — empty/unknown paths fall back to `index.html`
   - `pub async fn spa_index() -> axum::response::Response`
   - `pub async fn spa_asset(path: axum::extract::Path<String>) -> axum::response::Response`
@@ -250,8 +273,9 @@ git commit -m "feat(ui): scaffold React+shadcn frontend with pilot status page"
 
 In `rust/octocam-web/Cargo.toml`, under `[dependencies]` (keep alphabetical grouping loose, matching the file), add:
 ```toml
-rust-embed = "8"
+rust-embed = { version = "8", features = ["mime-guess"] }
 ```
+> The `mime-guess` feature is REQUIRED: rust-embed 8 has no default features, and `EmbeddedFile::metadata().mimetype()` (used in Step 5) is `#[cfg(feature = "mime-guess")]`-gated. Without it the crate fails to compile with `E0599: no method named 'mimetype'`.
 
 - [ ] **Step 2: Regenerate the lockfile**
 
@@ -261,9 +285,14 @@ cd rust/octocam-web && cargo build 2>&1 | tail -5
 ```
 Expected: builds successfully; `Cargo.lock` now contains `rust-embed`. (This also confirms the embed folder path resolves.)
 
-- [ ] **Step 3: Write the failing tests for the pure resolution logic**
+- [ ] **Step 3: Declare the module and write the failing tests**
 
-Create `rust/octocam-web/src/spa.rs` with only the test module first (it will not compile yet — that is the failing state):
+First, declare the module so it is part of the build — **without this, `cargo test` matches 0 tests and exits 0, so the failing/passing states below would never actually be observed.** Add near the other `mod` declarations at the top of `rust/octocam-web/src/main.rs`:
+```rust
+mod spa;
+```
+
+Then create `rust/octocam-web/src/spa.rs` with only the test module first (it will not compile yet — that is the failing state):
 ```rust
 #[cfg(test)]
 mod tests {
@@ -300,9 +329,9 @@ mod tests {
 
 - [ ] **Step 4: Run the tests to verify they fail to compile**
 
-Run:
+Run (note: **no `--lib`** — `octocam-web` is a binary-only crate with no library target, so `cargo test --lib` errors with *"no library targets found"* before compiling anything):
 ```bash
-cd rust/octocam-web && cargo test --lib spa 2>&1 | tail -15
+cd rust/octocam-web && cargo test spa 2>&1 | tail -15
 ```
 Expected: FAIL — `cannot find function cache_control_for` / `resolve_spa` (unresolved names). This confirms the tests exercise not-yet-written code.
 
@@ -310,6 +339,9 @@ Expected: FAIL — `cannot find function cache_control_for` / `resolve_spa` (unr
 
 Prepend to `rust/octocam-web/src/spa.rs` (above the test module):
 ```rust
+use std::borrow::Cow;
+
+use axum::body::Bytes;
 use axum::extract::Path as AxumPath;
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -317,6 +349,12 @@ use rust_embed::RustEmbed;
 
 /// The built SPA bundle, baked into the binary at compile time.
 /// Path is relative to the crate root (rust/octocam-web).
+///
+/// NOTE (debug builds): without the `debug-embed` feature, rust-embed reads the
+/// folder from disk at runtime, resolved relative to the process CWD — NOT the
+/// manifest dir. Always run `cargo run`/`cargo test` for this crate from
+/// `rust/octocam-web/`, or assets 404 in debug. Release builds embed at compile
+/// time and are unaffected.
 #[derive(RustEmbed)]
 #[folder = "../../frontend/dist"]
 struct SpaAssets;
@@ -338,7 +376,17 @@ pub struct SpaResponse {
     pub status: StatusCode,
     pub content_type: String,
     pub cache_control: &'static str,
-    pub body: Vec<u8>,
+    pub body: Bytes,
+}
+
+/// Turn an embedded file's data into a `Bytes` body WITHOUT copying when the
+/// bytes are already `'static` (the release/embedded case). `into_owned()` would
+/// heap-clone the whole asset on every request — wasteful on the Pi Zero 2 W.
+fn body_from(data: Cow<'static, [u8]>) -> Bytes {
+    match data {
+        Cow::Borrowed(b) => Bytes::from_static(b),
+        Cow::Owned(v) => Bytes::from(v),
+    }
 }
 
 /// Resolve a request path (relative to the /app mount, no leading slash) to an
@@ -351,7 +399,7 @@ pub fn resolve_spa(path: &str) -> SpaResponse {
             status: StatusCode::OK,
             content_type: file.metadata.mimetype().to_string(),
             cache_control: cache_control_for(lookup),
-            body: file.data.into_owned(),
+            body: body_from(file.data),
         };
     }
 
@@ -361,13 +409,13 @@ pub fn resolve_spa(path: &str) -> SpaResponse {
             status: StatusCode::OK,
             content_type: "text/html; charset=utf-8".to_string(),
             cache_control: cache_control_for("index.html"),
-            body: file.data.into_owned(),
+            body: body_from(file.data),
         },
         None => SpaResponse {
             status: StatusCode::NOT_FOUND,
             content_type: "text/plain; charset=utf-8".to_string(),
             cache_control: "no-cache",
-            body: b"SPA bundle missing".to_vec(),
+            body: Bytes::from_static(b"SPA bundle missing"),
         },
     }
 }
@@ -401,22 +449,19 @@ pub async fn spa_asset(AxumPath(path): AxumPath<String>) -> Response {
 
 Run:
 ```bash
-cd rust/octocam-web && cargo test --lib spa 2>&1 | tail -15
+cd rust/octocam-web && cargo test spa 2>&1 | tail -15
 ```
 Expected: PASS — all three tests green. (Requires `frontend/dist` present from Task 1.)
 
 - [ ] **Step 7: Mount the SPA routes**
 
-In `rust/octocam-web/src/main.rs`, add near the other `mod` declarations at the top of the file:
-```rust
-mod spa;
-```
-Then in the `Router::new()` chain (around `src/main.rs:528`, alongside the `/static/{*path}` route), add:
+(`mod spa;` was already added in Step 3.) In the `Router::new()` chain (around `src/main.rs:528`, alongside the `/static/{*path}` route), add all three routes:
 ```rust
         .route("/app", get(spa::spa_index))
+        .route("/app/", get(spa::spa_index))
         .route("/app/{*path}", get(spa::spa_asset))
 ```
-Do NOT add any `/` fallback — the existing Askama routes must remain untouched.
+The explicit `/app/` route is REQUIRED: axum's `{*path}` wildcard does not match an empty capture, so without it `GET /app/` (a natural URL given Vite's `base: "/app/"`) would 404. Do NOT add any `/` fallback — the existing Askama routes must remain untouched.
 
 - [ ] **Step 8: Verify the whole crate builds and the full test suite passes**
 
@@ -435,10 +480,11 @@ git commit -m "feat(ui): embed and serve the SPA bundle at /app"
 
 ---
 
-## Task 3: Wire the frontend build into the Pi build script
+## Task 3: Wire the frontend build into the Pi build & deploy scripts
 
 **Files:**
 - Modify: `scripts/build-pi-web.sh`
+- Modify: `scripts/deploy-pi-web.sh`
 
 **Interfaces:**
 - Consumes: `frontend/` project (Task 1), the `/app` serving code (Task 2).
@@ -458,10 +504,39 @@ if [[ -f "$FRONTEND_DIR/package.json" ]]; then
   fi
   echo "Building SPA bundle in $FRONTEND_DIR..."
   ( cd "$FRONTEND_DIR" && npm ci && npm run build )
+  # rust-embed has no build.rs and emits no `cargo:rerun-if-changed` for the
+  # bundle folder. With the persistent bind-mounted CARGO_TARGET_DIR, a changed
+  # bundle could otherwise fail to re-embed. Touch the embedding module to force
+  # a re-compile (and thus a re-embed) on every build.
+  touch "$RUST_WEB_DIR/src/spa.rs"
 fi
 ```
 
-- [ ] **Step 2: Verify the script builds a bundle-embedded binary end to end**
+- [ ] **Step 2: Add `/app` to the deploy health gate**
+
+The rollback health check in `scripts/deploy-pi-web.sh` currently polls only `/login` (~line 167), so a broken `/app` (panic, empty bundle, wrong content-type) would pass the gate and ship — deleting the rollback path. Extend the health-gate loop so `/app` must also serve. Change the poll block:
+```bash
+  for _ in $(seq 1 15); do
+    if curl -fsS -m 4 -o /dev/null "http://127.0.0.1:$HEALTH_PORT/login"; then
+      healthy=true
+      break
+    fi
+    sleep 2
+  done
+```
+to also require `/app`:
+```bash
+  for _ in $(seq 1 15); do
+    if curl -fsS -m 4 -o /dev/null "http://127.0.0.1:$HEALTH_PORT/login" \
+       && curl -fsS -m 4 -o /dev/null "http://127.0.0.1:$HEALTH_PORT/app"; then
+      healthy=true
+      break
+    fi
+    sleep 2
+  done
+```
+
+- [ ] **Step 3: Verify the script builds a bundle-embedded binary end to end**
 
 Run (requires Docker running):
 ```bash
@@ -469,14 +544,14 @@ scripts/build-pi-web.sh
 ```
 Expected: the SPA build runs first, then the Docker cross-compile succeeds, and `dist/pi/octocam-web` is (re)written. If Docker is unavailable in this environment, skip execution and note it — the deploy verification below covers the real check.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add scripts/build-pi-web.sh
-git commit -m "build: build SPA bundle on host before Pi cross-compile"
+git add scripts/build-pi-web.sh scripts/deploy-pi-web.sh
+git commit -m "build: build SPA bundle on host before Pi cross-compile; health-gate /app"
 ```
 
-- [ ] **Step 4: Deploy and verify on the real Pi (manual verification)**
+- [ ] **Step 5: Deploy and verify on the real Pi (manual verification)**
 
 Run:
 ```bash
@@ -489,7 +564,9 @@ ssh root@octocam.local 'curl -fsS -m 4 http://127.0.0.1:8080/app | grep -c "/app
 ssh root@octocam.local 'curl -fsS -m 4 -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/login'         # expect 200 (Askama page still works)
 ssh root@octocam.local 'curl -fsS -m 4 -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/app/settings'  # expect 200 (SPA fallback -> index.html)
 ```
-Then open `https://octocam.local/app` in a browser and confirm the shadcn status card renders and shows live `/api/status` values. Expected: card renders; Service/Camera/Uptime populate from the API.
+Then verify the live card in a browser. Note `/api/status` requires auth (returns **401** without a session cookie), so:
+- **Logged out:** open `https://octocam.local/app` — the card renders and shows the red **"device unreachable"** badge (the `isError` state). This is a valid state to confirm the error path works.
+- **Logged in:** authenticate at `https://octocam.local/login` first (sets the `octocam_session` cookie), then open `https://octocam.local/app`. Expected: card renders and Host / Camera / Uptime / Motion populate from `/api/status` — and specifically the Camera badge shows a message string, **not** `[object Object]`.
 
 ---
 
@@ -504,6 +581,7 @@ Then open `https://octocam.local/app` in a browser and confirm the shadcn status
 - ✅ Cheap live panel via TanStack Query polling → Task 1 Step 9 (`refetchInterval: 5000`)
 - ✅ Device-unreachable state instead of blank screen → Task 1 Step 9 (`isError` badge)
 - ⏭️ Full page migration, API completion, auth gate, Askama deletion → **out of scope for Phase 1** (Phases 2–4, separate plans)
+- ⏭️ **Brotli/gzip precompression** of assets (a spec efficiency requirement) is **deliberately deferred** — Phase 1 serves uncompressed embedded assets with correct cache headers. Wire `tower_http::compression` (or nginx `gzip_static`) in a later phase once the bundle surface is larger; nginx already sits in front and can gzip on the fly in the interim.
 
 **Placeholder scan:** No TBD/TODO/"handle appropriately" steps. All code blocks are concrete; all verification steps have explicit expected outcomes.
 
