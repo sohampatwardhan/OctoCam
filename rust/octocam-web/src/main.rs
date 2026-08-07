@@ -510,6 +510,9 @@ async fn async_main() {
         .route("/logout", post(logout))
         .route("/hotspot-detect.html", get(captive_probe))
         .route("/generate_204", get(captive_probe))
+        .route("/api/login", post(api_login))
+        .route("/api/logout", post(api_logout))
+        .route("/api/setup", get(api_setup_get).post(api_setup_post))
         .route("/api/settings", get(api_settings).put(api_settings_update))
         .route("/api/status", get(api_status))
         .route("/api/identity", get(api_identity))
@@ -1930,6 +1933,158 @@ async fn logout() -> Response {
     response
 }
 
+/// JSON counterpart of `login`/`authenticate`. Mirrors `authenticate`'s
+/// credential check exactly (`verify_password(password, hash)` order) but
+/// returns a JSON body instead of a redirect, and 401s on bad credentials
+/// instead of redirecting to `/login?failed=1`.
+#[derive(Deserialize)]
+struct LoginReq {
+    username: String,
+    password: String,
+}
+
+async fn api_login(State(state): State<Arc<AppState>>, Json(req): Json<LoginReq>) -> Response {
+    match state.db.get_user_by_username(&req.username) {
+        Ok(Some(user)) if security::verify_password(&req.password, &user.password_hash) => {
+            let body = Json(serde_json::json!({
+                "success": true,
+                "username": user.username,
+                "role": user.role,
+                "is_admin": user.is_admin(),
+            }))
+            .into_response();
+            with_login_cookie_for_user(body, &state, user.id, &user.username)
+        }
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Invalid credentials" })),
+        )
+            .into_response(),
+    }
+}
+
+/// JSON counterpart of `logout`. Clears the same session cookie, verbatim.
+async fn api_logout() -> Response {
+    let mut response = Json(serde_json::json!({ "success": true })).into_response();
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_static("octocam_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"),
+    );
+    response
+}
+
+/// JSON counterpart of `setup` (GET). No auth — used by the pre-setup wizard
+/// to decide whether to show the setup flow at all.
+async fn api_setup_get(State(state): State<Arc<AppState>>) -> Response {
+    let settings = settings::load_settings(&state.config_path);
+    let needed = !settings.setup_complete || !state.db.has_users().unwrap_or(false);
+    api::ok_json(serde_json::json!({ "setup_required": needed }))
+}
+
+/// JSON counterpart of `complete_setup`. Mirrors its 7-step sequence in the
+/// same order: password-match check, blocking Wi-Fi join (if an SSID was
+/// given), hash + create the first admin user, inject the
+/// setup_complete/camera_enabled/homekit_enabled/admin_password_hash fields
+/// into the settings map, validate/merge/save, configure the HomeKit
+/// service, then set the session cookie.
+///
+/// Differs from `complete_setup` only in how the settings map is built: the
+/// form handler stringifies every field into a `HashMap<String, String>`
+/// and calls `validate_form`; here the body already arrives as typed JSON
+/// (bools/numbers), so we merge it into a `Map<String, Value>` and call
+/// `validate_map` directly — the same native-JSON path `api_settings_update`
+/// already uses above. `homekit_enabled` still uses *presence* of the key
+/// (not its value) to match the HTML checkbox semantics `complete_setup`
+/// relies on.
+async fn api_setup_post(
+    State(state): State<Arc<AppState>>,
+    Json(mut body): Json<serde_json::Map<String, serde_json::Value>>,
+) -> Response {
+    let mut current = settings::load_settings(&state.config_path);
+
+    let admin_username = body
+        .remove("admin_username")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "admin".to_string());
+    let admin_password = body
+        .remove("admin_password")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let admin_password_confirm = body
+        .remove("admin_password_confirm")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let wifi_password = body
+        .remove("wifi_password")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let wifi_ssid = body
+        .get("wifi_ssid")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_default();
+    let cache = wifi::load_network_cache(&state.wifi_cache_path);
+    let wifi_security = wifi::cached_security_for(&cache, &wifi_ssid);
+
+    if admin_password != admin_password_confirm {
+        return Json(serde_json::json!({
+            "success": false,
+            "field": "admin_password_confirm",
+            "message": "Admin passwords do not match.",
+        }))
+        .into_response();
+    }
+
+    if !wifi_ssid.trim().is_empty() {
+        let (ssid, password, security) = (
+            wifi_ssid.clone(),
+            wifi_password.clone(),
+            wifi_security.clone(),
+        );
+        let connected = match run_blocking(move || wifi::connect_to_network(&ssid, &password, &security))
+            .await
+        {
+            Ok(pair) => pair,
+            Err(error) => return api::ApiError::internal(error.0).into_response(),
+        };
+        let (connected, message) = connected;
+        if !connected {
+            return Json(serde_json::json!({
+                "success": false,
+                "field": "wifi",
+                "message": message,
+            }))
+            .into_response();
+        }
+    }
+
+    let password_hash = security::hash_password(&admin_password);
+    let user = match state.db.create_user(&admin_username, &password_hash, "admin") {
+        Ok(user) => user,
+        Err(error) => return api::ApiError::internal(error.to_string()).into_response(),
+    };
+
+    body.insert("setup_complete".to_string(), Value::Bool(true));
+    body.insert("camera_enabled".to_string(), Value::Bool(true));
+    let homekit_enabled = body.contains_key("homekit_enabled");
+    body.insert("homekit_enabled".to_string(), Value::Bool(homekit_enabled));
+    body.insert("admin_password_hash".to_string(), Value::String(password_hash));
+    let validated = settings::validate_map(&body);
+    merge_settings(&mut current, validated);
+    if let Err(error) = settings::save_settings(&state.config_path, &current) {
+        return api::ApiError::internal(error.to_string()).into_response();
+    }
+
+    let homekit_settings = current.clone();
+    if let Err(error) = run_blocking(move || configure_homekit_service(&homekit_settings)).await {
+        return api::ApiError::internal(error.0).into_response();
+    }
+
+    let body_json = Json(serde_json::json!({ "success": true })).into_response();
+    with_login_cookie_for_user(body_json, &state, user.id, &user.username)
+}
+
 async fn api_settings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -3256,6 +3411,49 @@ mod tests {
                 .expect("deserialize SshKeyDeleteReq without confirm");
         assert_eq!(req.fingerprint, "SHA256:xyz");
         assert!(!req.confirm);
+    }
+
+    #[test]
+    fn login_req_deserializes_username_and_password() {
+        let req: LoginReq =
+            serde_json::from_value(serde_json::json!({ "username": "admin", "password": "hunter2" }))
+                .expect("deserialize LoginReq");
+        assert_eq!(req.username, "admin");
+        assert_eq!(req.password, "hunter2");
+    }
+
+    #[test]
+    fn login_req_rejects_missing_password() {
+        let result: Result<LoginReq, _> =
+            serde_json::from_value(serde_json::json!({ "username": "admin" }));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn api_logout_clears_session_cookie_verbatim() {
+        // Must match the plain `/logout` handler's cookie string exactly so a
+        // client that hits either endpoint ends up logged out the same way.
+        let response = api_logout().await;
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("api_logout sets Set-Cookie")
+            .to_str()
+            .expect("cookie header is valid UTF-8");
+        assert_eq!(
+            cookie,
+            "octocam_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_logout_body_reports_success_true() {
+        let response = api_logout().await;
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read api_logout body");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parse JSON body");
+        assert_eq!(value, serde_json::json!({ "success": true }));
     }
 
     #[test]
