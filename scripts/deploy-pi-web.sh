@@ -164,7 +164,8 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   # reconcile can restart octocam-rtsp (bounded ~10s) BEFORE the listener binds.
   healthy=false
   for _ in \$(seq 1 15); do
-    if curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\"; then
+    if curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\" \
+       && curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/app\"; then
       healthy=true
       break
     fi

@@ -47,6 +47,23 @@ fi
 
 mkdir -p "$DIST_DIR" "$CARGO_CACHE/registry" "$CARGO_CACHE/git"
 
+# Build the SPA bundle on the host first. The Rust build container has no Node,
+# and rust-embed bakes frontend/dist into the binary at compile time.
+FRONTEND_DIR="$PROJECT_DIR/frontend"
+if [[ -f "$FRONTEND_DIR/package.json" ]]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to build the web UI bundle. Install Node 20 LTS and retry." >&2
+    exit 1
+  fi
+  echo "Building SPA bundle in $FRONTEND_DIR..."
+  ( cd "$FRONTEND_DIR" && npm ci && npm run build )
+  # rust-embed has no build.rs and emits no cargo:rerun-if-changed for the
+  # bundle folder. With the persistent bind-mounted CARGO_TARGET_DIR, a changed
+  # bundle could otherwise fail to re-embed. Touch the embedding module to force
+  # a re-compile (and thus a re-embed) on every build.
+  touch "$RUST_WEB_DIR/src/spa.rs"
+fi
+
 echo "Building OctoCam web UI for $PI_TARGET with $DOCKER_IMAGE..."
 docker run --rm \
   --platform linux/arm64/v8 \
