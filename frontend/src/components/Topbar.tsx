@@ -1,30 +1,25 @@
-import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
 import { Camera, LogOut, Settings } from "lucide-react"
-import { apiGet, apiPost, type Status } from "@/lib/api"
+import { apiPost } from "@/lib/api"
 import { useMe } from "@/hooks/useAuth"
+import { useStatus } from "@/hooks/useStatus"
 import { queryClient } from "@/lib/queryClient"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { PowerDialog } from "@/components/PowerDialog"
 
-const LIVE_STATES = new Set(["active", "running", "connected"])
-
 export function Topbar() {
   const navigate = useNavigate()
   const { data: me } = useMe()
-  // Best-effort live status — the chip degrades to nothing if /api/status is
-  // unreachable rather than blocking the shell. Task 4's dashboard hook will
-  // likely absorb this fetch; duplicating it here keeps this task testable alone.
-  const { data: status } = useQuery({
-    queryKey: ["status"],
-    queryFn: () => apiGet<Status>("/api/status"),
-    refetchInterval: 10_000,
-    retry: false,
-  })
+  // Shared with the dashboard's useStatus() (same query key) — no duplicate
+  // fetch. Degrades to nothing if /api/status is unreachable rather than
+  // blocking the shell.
+  const { data: status } = useStatus()
 
   const rtspState = status?.services.rtsp.state
-  const isLive = rtspState ? LIVE_STATES.has(rtspState) : false
+  // systemd's real "live" state is "active" (see system.rs ServiceStatus.state)
+  // — "running"/"connected" aren't states rtsp's unit ever reports.
+  const isLive = rtspState === "active"
 
   async function handleLogout() {
     try {
