@@ -534,6 +534,7 @@ async fn async_main() {
         .route("/api/users", get(api_users_list))
         .route("/api/users/add", post(api_users_add))
         .route("/api/users/{id}", delete(api_users_delete))
+        .route("/api/ssh-keys", get(api_ssh_keys_list).post(api_ssh_keys_add).delete(api_ssh_keys_delete))
         .route("/snapshot.jpg", get(snapshot))
         .route("/sw.js", get(service_worker))
         .route("/static/{*path}", get(static_asset))
@@ -1282,6 +1283,112 @@ async fn ssh_keys_revoke(
         Err(_join) => "/ssh-keys?status=write_failed".to_string(),
     };
     Ok(Redirect::to(&redirect).into_response())
+}
+
+/// JSON-facing view of an `ssh_keys::AuthorizedKey`.
+#[derive(Serialize)]
+struct SshKeyDto {
+    key_type: String,
+    comment: String,
+    fingerprint: String,
+    preview: String,
+}
+
+async fn api_ssh_keys_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    // ssh_keys::list takes no args and returns Result<_, KeyError>, so
+    // run_blocking yields a nested Result (join failure, then read failure).
+    let keys = run_blocking(ssh_keys::list)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?
+        .map_err(|_| api::ApiError::service_unavailable("Could not read authorized keys"))?;
+    let dtos: Vec<SshKeyDto> = keys
+        .into_iter()
+        .map(|k| SshKeyDto {
+            key_type: k.key_type,
+            comment: k.comment,
+            fingerprint: k.fingerprint,
+            preview: k.preview,
+        })
+        .collect();
+    Ok(api::ok_json(dtos))
+}
+
+#[derive(Deserialize)]
+struct SshKeyAddReq {
+    public_key: String,
+}
+
+async fn api_ssh_keys_add(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(req): Json<SshKeyAddReq>,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    // cross_origin() returns true when the request IS cross-site, so reject
+    // when it's true (matches the form handler's `if cross_origin(&headers)`).
+    if cross_origin(&headers) {
+        return Err(api::ApiError::new(
+            StatusCode::FORBIDDEN,
+            "Cross-origin request rejected",
+        ));
+    }
+    let dir = ssh_keys_state_dir(&state);
+    run_blocking(move || ssh_keys::add(&dir, &req.public_key))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?
+        .map_err(|e| api::ApiError::bad_request(e.code()))?;
+    Ok(api::ok_json(serde_json::json!({ "success": true })))
+}
+
+#[derive(Deserialize)]
+struct SshKeyDeleteReq {
+    fingerprint: String,
+    #[serde(default)]
+    confirm: bool,
+}
+
+async fn api_ssh_keys_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(req): Json<SshKeyDeleteReq>,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    if cross_origin(&headers) {
+        return Err(api::ApiError::new(
+            StatusCode::FORBIDDEN,
+            "Cross-origin request rejected",
+        ));
+    }
+    let dir = ssh_keys_state_dir(&state);
+    let outcome = run_blocking(move || ssh_keys::revoke(&dir, &req.fingerprint, req.confirm))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?
+        .map_err(|e| api::ApiError::bad_request(e.code()))?;
+    match outcome {
+        ssh_keys::RevokeOutcome::Warn => Err(api::ApiError::conflict(
+            "This is the last key; resend with confirm=true to remove it",
+        )),
+        ssh_keys::RevokeOutcome::Revoked => Ok(api::ok_json(serde_json::json!({ "success": true }))),
+    }
 }
 
 async fn service_worker() -> Response {
@@ -2924,6 +3031,35 @@ mod tests {
                 "has_sub": true,
             })
         );
+    }
+
+    #[test]
+    fn ssh_key_dto_serializes_with_expected_field_names() {
+        let dto = SshKeyDto {
+            key_type: "ssh-ed25519".to_string(),
+            comment: "alice@laptop".to_string(),
+            fingerprint: "SHA256:abc123".to_string(),
+            preview: "AAAA…zzzz".to_string(),
+        };
+        let value = serde_json::to_value(&dto).expect("serialize SshKeyDto");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "key_type": "ssh-ed25519",
+                "comment": "alice@laptop",
+                "fingerprint": "SHA256:abc123",
+                "preview": "AAAA…zzzz",
+            })
+        );
+    }
+
+    #[test]
+    fn ssh_key_delete_req_defaults_confirm_to_false() {
+        let req: SshKeyDeleteReq =
+            serde_json::from_value(serde_json::json!({ "fingerprint": "SHA256:xyz" }))
+                .expect("deserialize SshKeyDeleteReq without confirm");
+        assert_eq!(req.fingerprint, "SHA256:xyz");
+        assert!(!req.confirm);
     }
 
     #[test]
