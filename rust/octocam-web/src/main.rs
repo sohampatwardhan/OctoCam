@@ -1,3 +1,4 @@
+mod api;
 mod backup;
 mod camera;
 mod db;
@@ -511,6 +512,7 @@ async fn async_main() {
         .route("/generate_204", get(captive_probe))
         .route("/api/settings", get(api_settings))
         .route("/api/status", get(api_status))
+        .route("/api/me", get(api_me))
         .route("/api/motion/events", get(api_motion_events))
         .route("/api/wifi/networks", get(api_wifi_networks))
         .route("/api/wifi/scan", post(api_wifi_scan))
@@ -1847,6 +1849,30 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         motion_detected: state.motion_detected.load(std::sync::atomic::Ordering::Relaxed),
     })
     .into_response())
+}
+
+async fn api_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let settings = settings::load_settings(&state.config_path);
+    let setup_required = !settings.setup_complete
+        || !state.db.has_users().unwrap_or(false);
+    match authenticated_user(&state, &headers) {
+        Some(user) => api::ok_json(serde_json::json!({
+            "authenticated": true,
+            "id": user.id,
+            "username": user.username,
+            "role": user.role,
+            "is_admin": user.is_admin(),
+            "setup_required": setup_required,
+        })),
+        None => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "authenticated": false,
+                "setup_required": setup_required,
+            })),
+        )
+            .into_response(),
+    }
 }
 
 async fn api_motion_events(
