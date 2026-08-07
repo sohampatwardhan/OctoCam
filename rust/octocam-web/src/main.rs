@@ -514,6 +514,9 @@ async fn async_main() {
         .route("/api/status", get(api_status))
         .route("/api/identity", get(api_identity))
         .route("/api/rtsp", get(api_rtsp))
+        .route("/api/system", get(api_system))
+        .route("/api/power", post(api_power))
+        .route("/api/time/sync", post(api_time_sync))
         .route("/api/me", get(api_me))
         .route("/api/motion/events", get(api_motion_events))
         .route("/api/wifi/networks", get(api_wifi_networks))
@@ -1899,6 +1902,92 @@ async fn api_rtsp(
     }))
 }
 
+async fn api_system(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let status = run_blocking(system::status)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    Ok(api::ok_json(status))
+}
+
+#[derive(Deserialize)]
+struct PowerReq {
+    action: String,
+}
+
+async fn api_power(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(req): Json<PowerReq>,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    if !matches!(
+        req.action.as_str(),
+        "restart_service" | "restart_device" | "shutdown_device"
+    ) {
+        return Err(api::ApiError::bad_request(format!(
+            "Unknown power action: {}",
+            req.action
+        )));
+    }
+    schedule_power_action(&req.action).map_err(|e| api::ApiError::internal(e.0))?;
+    // Fire-and-forget (mirrors the form handler): the systemctl call runs after
+    // a short delay; we can only confirm it was scheduled.
+    Ok(api::ok_json(serde_json::json!({
+        "success": true,
+        "scheduled": req.action,
+    })))
+}
+
+#[derive(Deserialize)]
+struct TimeSyncReq {
+    time_server: Option<String>,
+}
+
+async fn api_time_sync(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(req): Json<TimeSyncReq>,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let mut current = settings::load_settings(&state.config_path);
+    if let Some(time_server) = req.time_server.clone() {
+        let mut next_map = settings_to_map(&current).map_err(|e| api::ApiError::internal(e.0))?;
+        next_map.insert("time_server".to_string(), Value::String(time_server));
+        let mut validated = settings::validate_map(&next_map);
+        validated.setup_complete = current.setup_complete;
+        settings::enforce_matter_requires_admin(&mut validated);
+        settings::enforce_hksv_requires_motion(&mut validated);
+        merge_settings(&mut current, validated);
+        settings::save_settings(&state.config_path, &current)
+            .map_err(|error| api::ApiError::internal(error.to_string()))?;
+    }
+    let time_server = current.time_server.clone();
+    run_blocking(move || system::sync_clock(&time_server))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?
+        .map_err(api::ApiError::internal)?;
+    Ok(api::ok_json(serde_json::json!({ "success": true })))
+}
+
 async fn api_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let settings = settings::load_settings(&state.config_path);
     let setup_required = !settings.setup_complete
@@ -2748,5 +2837,31 @@ mod tests {
                 "has_sub": true,
             })
         );
+    }
+
+    #[test]
+    fn schedule_power_action_rejects_unknown_action() {
+        // api_power's `matches!` guard (400) short-circuits before this runs, but
+        // schedule_power_action is the last line of defense and must still refuse
+        // anything outside the known set.
+        let err = schedule_power_action("erase_disk").expect_err("unknown action must error");
+        assert_eq!(err.0, "Unknown power action.");
+    }
+
+    #[test]
+    fn power_req_deserializes_from_json_body() {
+        let req: PowerReq = serde_json::from_value(serde_json::json!({ "action": "restart_device" }))
+            .expect("deserialize PowerReq");
+        assert_eq!(req.action, "restart_device");
+    }
+
+    #[test]
+    fn time_sync_req_time_server_is_optional() {
+        let req: TimeSyncReq = serde_json::from_value(serde_json::json!({})).expect("deserialize TimeSyncReq");
+        assert_eq!(req.time_server, None);
+
+        let req: TimeSyncReq = serde_json::from_value(serde_json::json!({ "time_server": "pool.ntp.org" }))
+            .expect("deserialize TimeSyncReq");
+        assert_eq!(req.time_server, Some("pool.ntp.org".to_string()));
     }
 }
