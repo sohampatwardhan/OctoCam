@@ -524,6 +524,8 @@ async fn async_main() {
         .route("/api/motion/events", get(api_motion_events))
         .route("/api/wifi/networks", get(api_wifi_networks))
         .route("/api/wifi/scan", post(api_wifi_scan))
+        .route("/api/wifi/connect", post(api_wifi_connect))
+        .route("/api/wifi/delete", delete(api_wifi_delete))
         .route("/api/passkey/register/start", post(api_passkey_register_start))
         .route("/api/passkey/register/finish", post(api_passkey_register_finish))
         .route("/api/passkey/login/start", post(api_passkey_login_start))
@@ -2367,6 +2369,91 @@ async fn api_wifi_scan(
     }
 }
 
+#[derive(Deserialize)]
+struct WifiConnectReq {
+    ssid: String,
+    #[serde(default)]
+    password: String,
+    security: Option<String>,
+}
+
+async fn api_wifi_connect(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(req): Json<WifiConnectReq>,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    if req.ssid.trim().is_empty() {
+        return Err(api::ApiError::bad_request("ssid is required"));
+    }
+
+    let cache = wifi::load_network_cache(&state.wifi_cache_path);
+    let security = req
+        .security
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| wifi::cached_security_for(&cache, &req.ssid));
+
+    let (ssid, password) = (req.ssid.clone(), req.password.clone());
+    let (connected, message) = run_blocking(move || wifi::connect_to_network(&ssid, &password, &security))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    if connected {
+        Ok(api::ok_json(serde_json::json!({ "success": true, "message": message })))
+    } else {
+        Err(api::ApiError::bad_request(message))
+    }
+}
+
+#[derive(Deserialize)]
+struct WifiDeleteReq {
+    name: String,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+async fn api_wifi_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(req): Json<WifiDeleteReq>,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    if req.name.trim().is_empty() {
+        return Err(api::ApiError::bad_request("name is required"));
+    }
+
+    let active_ssid = run_blocking(system::status)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?
+        .wifi
+        .ssid;
+    if active_ssid.as_deref() == Some(req.name.trim()) {
+        return Err(api::ApiError::bad_request(
+            "Cannot delete the currently connected network.",
+        ));
+    }
+
+    let (name, source) = (req.name.clone(), req.source.clone().unwrap_or_default());
+    let (deleted, message) = run_blocking(move || wifi::forget_saved_profile(&name, &source))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    if deleted {
+        Ok(api::ok_json(serde_json::json!({ "success": true, "message": message })))
+    } else {
+        Err(api::ApiError::bad_request(message))
+    }
+}
+
 use base64::{engine::general_purpose::URL_SAFE, Engine};
 
 #[derive(Deserialize)]
@@ -3337,5 +3424,34 @@ mod tests {
             validated.device_name, "back-porch-cam",
             "untouched field must be preserved from the seeded current settings"
         );
+    }
+
+    #[test]
+    fn wifi_connect_req_defaults_password_and_security() {
+        let req: WifiConnectReq = serde_json::from_value(serde_json::json!({ "ssid": "HomeNet" }))
+            .expect("deserialize WifiConnectReq without password/security");
+        assert_eq!(req.ssid, "HomeNet");
+        assert_eq!(req.password, "");
+        assert_eq!(req.security, None);
+    }
+
+    #[test]
+    fn wifi_connect_req_captures_password_and_security_when_present() {
+        let req: WifiConnectReq = serde_json::from_value(serde_json::json!({
+            "ssid": "HomeNet",
+            "password": "s3cret",
+            "security": "wpa2",
+        }))
+        .expect("deserialize full WifiConnectReq");
+        assert_eq!(req.password, "s3cret");
+        assert_eq!(req.security, Some("wpa2".to_string()));
+    }
+
+    #[test]
+    fn wifi_delete_req_defaults_source_to_none() {
+        let req: WifiDeleteReq = serde_json::from_value(serde_json::json!({ "name": "HomeNet" }))
+            .expect("deserialize WifiDeleteReq without source");
+        assert_eq!(req.name, "HomeNet");
+        assert_eq!(req.source, None);
     }
 }
