@@ -510,7 +510,7 @@ async fn async_main() {
         .route("/logout", post(logout))
         .route("/hotspot-detect.html", get(captive_probe))
         .route("/generate_204", get(captive_probe))
-        .route("/api/settings", get(api_settings))
+        .route("/api/settings", get(api_settings).put(api_settings_update))
         .route("/api/status", get(api_status))
         .route("/api/identity", get(api_identity))
         .route("/api/rtsp", get(api_rtsp))
@@ -1942,6 +1942,115 @@ async fn api_settings(
     .into_response())
 }
 
+/// JSON counterpart of `update_settings` (the `/settings` form handler).
+/// Mirrors its two branches exactly:
+///   - non-admin: may only change their own password (admin_password /
+///     admin_password_confirm), everything else is ignored.
+///   - admin: full dynamic-map merge, run through the same invariant
+///     pipeline in the same order as the form handler.
+///
+/// Incoming JSON values are merged directly into the settings map without
+/// any string coercion: `settings::validate_map`'s field readers
+/// (`bool_value`/`int_value`/`string_value`/...) already accept
+/// `Value::Bool`/`Value::Number`/`Value::String` natively (see settings.rs),
+/// so a JSON client sending real booleans/numbers works out of the box.
+/// This differs from the HTML form path only in that HTML forms omit
+/// unchecked checkboxes entirely (handled there via the `_checkboxes` CSV
+/// hack) — a JSON client instead sends an explicit `false`, so no
+/// checkbox-presence translation is needed here. Keys prefixed with `_` are
+/// skipped, mirroring the form handler's control-key filtering.
+async fn api_settings_update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(mut body): Json<serde_json::Map<String, serde_json::Value>>,
+) -> api::ApiResult {
+    if let Some(resp) = require_user_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let user = authenticated_user(&state, &headers);
+    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
+
+    let admin_username = body
+        .remove("admin_username")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty());
+    let admin_password = body
+        .remove("admin_password")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    let admin_password_confirm = body
+        .remove("admin_password_confirm")
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+
+    if !is_admin {
+        if admin_password.is_empty() || admin_password != admin_password_confirm {
+            return Err(api::ApiError::bad_request(
+                "Password fields are empty or do not match.",
+            ));
+        }
+        if let Some(user) = user {
+            let new_hash = security::hash_password(&admin_password);
+            let _ = state.db.update_password(user.id, &new_hash);
+        }
+        return Ok(api::ok_json(serde_json::json!({ "success": true })));
+    }
+
+    let mut current = settings::load_settings(&state.config_path);
+    if !admin_password.is_empty() || admin_username.is_some() {
+        if admin_password != admin_password_confirm && !admin_password.is_empty() {
+            return Err(api::ApiError::bad_request(
+                "Password fields do not match.",
+            ));
+        }
+        if let Some(user) = &user {
+            let new_hash = if !admin_password.is_empty() {
+                security::hash_password(&admin_password)
+            } else {
+                user.password_hash.clone()
+            };
+            let _ = state.db.update_password(user.id, &new_hash);
+        }
+    }
+
+    let mut next_map = settings_to_map(&current).map_err(|e| api::ApiError::internal(e.0))?;
+    for (key, value) in body {
+        if key.starts_with('_') {
+            continue;
+        }
+        next_map.insert(key, value);
+    }
+    let mut validated = settings::validate_map(&next_map);
+    if admin_password.is_empty() && admin_password_confirm.is_empty() {
+        validated.admin_password_hash = current.admin_password_hash.clone();
+    } else {
+        if admin_password != admin_password_confirm {
+            return Err(api::ApiError::bad_request(
+                "Password fields do not match.",
+            ));
+        }
+        validated.admin_password_hash = security::hash_password(&admin_password);
+    }
+    validated.setup_complete = current.setup_complete;
+    settings::enforce_matter_requires_admin(&mut validated);
+    settings::enforce_hksv_requires_motion(&mut validated);
+    merge_settings(&mut current, validated);
+    settings::save_settings(&state.config_path, &current)
+        .map_err(|error| api::ApiError::internal(error.to_string()))?;
+    apply_settings_side_effects(&state, &current)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+
+    let saved = settings::load_settings(&state.config_path);
+    Ok(api::ok_json(serde_json::json!({
+        "success": true,
+        "settings": settings::public_settings(&saved),
+    })))
+}
+
 async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
     if let Some(response) = require_user_login(&state, &headers, &uri, true)? {
         return Ok(response);
@@ -3148,5 +3257,85 @@ mod tests {
         let req: TimeSyncReq = serde_json::from_value(serde_json::json!({ "time_server": "pool.ntp.org" }))
             .expect("deserialize TimeSyncReq");
         assert_eq!(req.time_server, Some("pool.ntp.org".to_string()));
+    }
+
+    // The following tests exercise the exact dynamic-map merge pipeline used
+    // by `api_settings_update`'s admin branch (settings_to_map -> overlay
+    // JSON values -> validate_map -> enforce_matter_requires_admin ->
+    // enforce_hksv_requires_motion -> merge_settings), without needing a
+    // running AppState/db. They pin down two things that a subtle mistake in
+    // that handler could silently break: (1) native JSON Value types
+    // (bool/number) overlaid onto the seeded map are honored by
+    // `validate_map` without any string coercion, and (2) the security
+    // invariants still win over a client-supplied value when the pipeline
+    // runs in the correct order.
+
+    #[test]
+    fn json_overlay_matter_enabled_is_still_forced_off_without_admin_password() {
+        let current = Settings {
+            admin_password_hash: String::new(),
+            ..Settings::default()
+        };
+        let mut next_map = settings_to_map(&current).expect("serialize current settings");
+        // A JSON client sends a real boolean, not the string "true" the HTML
+        // form's checkbox hack would produce.
+        next_map.insert("matter_enabled".to_string(), Value::Bool(true));
+
+        let mut validated = settings::validate_map(&next_map);
+        assert!(
+            validated.matter_enabled,
+            "validate_map must honor the native JSON bool before enforcement runs"
+        );
+
+        settings::enforce_matter_requires_admin(&mut validated);
+        settings::enforce_hksv_requires_motion(&mut validated);
+
+        assert!(
+            !validated.matter_enabled,
+            "enforce_matter_requires_admin must still win when admin_password_hash is empty"
+        );
+    }
+
+    #[test]
+    fn json_overlay_hksv_enabled_is_still_forced_off_without_motion() {
+        let current = Settings {
+            motion_enabled: false,
+            ..Settings::default()
+        };
+        let mut next_map = settings_to_map(&current).expect("serialize current settings");
+        next_map.insert("hksv_enabled".to_string(), Value::Bool(true));
+
+        let mut validated = settings::validate_map(&next_map);
+        assert!(validated.hksv_enabled);
+
+        settings::enforce_matter_requires_admin(&mut validated);
+        settings::enforce_hksv_requires_motion(&mut validated);
+
+        assert!(
+            !validated.hksv_enabled,
+            "enforce_hksv_requires_motion must still win when motion_enabled is false"
+        );
+    }
+
+    #[test]
+    fn json_overlay_preserves_untouched_fields_from_current_settings() {
+        // The seed-from-current-then-overlay design means fields the JSON
+        // client didn't mention must retain their current value rather than
+        // resetting to Settings::default() — this is what makes PUT
+        // /api/settings a genuine partial update.
+        let current = Settings {
+            device_name: "back-porch-cam".to_string(),
+            framerate: 24,
+            ..Settings::default()
+        };
+        let mut next_map = settings_to_map(&current).expect("serialize current settings");
+        next_map.insert("framerate".to_string(), Value::Number(30.into()));
+
+        let validated = settings::validate_map(&next_map);
+        assert_eq!(validated.framerate, 30, "overlaid field must be applied");
+        assert_eq!(
+            validated.device_name, "back-porch-cam",
+            "untouched field must be preserved from the seeded current settings"
+        );
     }
 }
