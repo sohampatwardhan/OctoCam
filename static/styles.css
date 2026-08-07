@@ -1,26 +1,60 @@
+/* Token names follow the shadcn/ui convention: a bare name is a SURFACE colour,
+   and `<name>-foreground` is the text/icon colour that sits on that surface. */
 :root {
   color-scheme: light;
-  --bg: #f5f7f8;
-  --ink: #16212b;
-  --muted: #60707f;
-  --panel: #ffffff;
-  --panel-muted: #f9fbfc;
-  --line: #d6dee5;
-  --line-strong: #b9c6d1;
-  --accent: #c5462d;
-  --accent-strong: #9f321f;
-  --accent-soft: #fff0ec;
-  --ok: #08734f;
-  --ok-soft: #e9f8f1;
-  --warn: #93531c;
-  --field: #fbfcfd;
-  --focus: #2f7dd3;
-  --rail-line: var(--line);
-  --shadow: 0 12px 34px rgb(22 33 43 / 8%);
+  --background: #f5f7f8;
+  --foreground: #16212b;
+  --card: #ffffff;
+  --muted: #f9fbfc;
+  --muted-foreground: #60707f;
+  --border: #d6dee5;
+  --border-strong: #b9c6d1;
+  --sidebar-border: var(--border);
+  --input: #fbfcfd;
+  --ring: #2f7dd3;
+
+  /* Primary actions carry the brand red; --accent is its soft tinted surface. */
+  --primary: #c5462d;
+  --primary-strong: #9f321f;
+  --primary-foreground: #ffffff;
+  --primary-border: #d46a5a;
+  --accent: #fff0ec;
+  --accent-border: #e3b4aa;
+
+  /* Destructive shares the brand red today, but is named separately so delete
+     affordances stay red if the brand colour ever moves. */
+  --destructive: var(--primary);
+  --destructive-strong: var(--primary-strong);
+  --destructive-foreground: var(--primary-foreground);
+  --destructive-border: var(--primary-border);
+
+  --success: #08734f;
+  --success-muted: #e9f8f1;
+  --success-border: #b9d9c8;
+  --warning: #93531c;
+
+  /* Inverted surfaces: terminal, logs, and video letterboxing. */
+  --inverse: #111820;
+  --inverse-foreground: #e8eef3;
+
+  /* One focus treatment, derived from --ring, used by every interactive element. */
+  --ring-outline: 2px solid color-mix(in srgb, var(--ring) 50%, transparent);
+  --ring-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 30%, transparent);
+
+  /* Elevation scale, lightest to heaviest. */
   --shadow-soft: 0 6px 18px rgb(22 33 43 / 6%);
+  --shadow: 0 12px 34px rgb(22 33 43 / 8%);
+  --shadow-lg: 0 16px 45px rgb(22 33 43 / 16%);
+  --shadow-overlay: 0 22px 70px rgb(22 33 43 / 22%);
+
+  /* Radius scale derived from one knob, as shadcn does. */
   --radius: 8px;
-  --radius-sm: 6px;
-  --control: 42px;
+  --radius-sm: calc(var(--radius) * 0.75);
+
+  /* Control heights, on the 4px grid. --control stays >= 44px so primary inputs
+     and buttons keep a comfortable touch target on a phone. */
+  --control: 44px;
+  --control-sm: 40px;
 }
 
 * {
@@ -30,8 +64,8 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
-  color: var(--ink);
+  background: var(--background);
+  color: var(--foreground);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   line-height: 1.45;
   text-rendering: optimizeLegibility;
@@ -57,7 +91,7 @@ select {
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--focus) 35%, transparent);
+  outline: var(--ring-outline);
   outline-offset: 2px;
 }
 
@@ -77,7 +111,7 @@ select {
 .setup-shell {
   width: min(1120px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 30px 0;
+  padding: 32px 0;
 }
 
 .shell {
@@ -105,8 +139,8 @@ select {
   min-height: 64px;
   margin-bottom: 0;
   padding: 0 24px;
-  border-bottom: 1px solid var(--rail-line);
-  background: var(--bg);
+  border-bottom: 1px solid var(--sidebar-border);
+  background: var(--background);
 }
 
 .top-actions {
@@ -116,7 +150,7 @@ select {
 }
 
 .brand-mark {
-  color: var(--ink);
+  color: var(--foreground);
   font-size: clamp(1.55rem, 2.3vw, 2.1rem);
   font-weight: 500;
   line-height: 1;
@@ -124,12 +158,12 @@ select {
 }
 
 .brand-mark:hover {
-  color: var(--accent-strong);
+  color: var(--primary-strong);
 }
 
 .eyebrow {
-  margin: 0 0 3px;
-  color: var(--accent-strong);
+  margin: 0 0 4px;
+  color: var(--primary-strong);
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0;
@@ -157,13 +191,12 @@ h3 {
 }
 
 .subhead {
-  margin: 6px 0 0;
-  color: var(--muted);
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
   font-weight: 700;
 }
 
 .status-pill,
-.status-icon,
 .notice,
 .toast,
 .secondary,
@@ -171,17 +204,16 @@ h3 {
   border-radius: var(--radius);
 }
 
-.status-icon,
 .icon-action {
   position: relative;
   display: grid;
-  width: 42px;
-  min-width: 42px;
-  height: 42px;
+  width: var(--control);
+  min-width: var(--control);
+  height: var(--control);
   place-items: center;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   text-decoration: none;
 }
 
@@ -196,7 +228,7 @@ h3 {
 }
 
 .power-action.is-off {
-  color: var(--warn);
+  color: var(--warning);
 }
 
 .icon-action {
@@ -204,7 +236,7 @@ h3 {
 }
 
 .icon-action:hover {
-  color: var(--accent-strong);
+  color: var(--primary-strong);
 }
 
 .power-dialog,
@@ -217,11 +249,11 @@ h3 {
   margin: 0;
   overflow: auto;
   padding: 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: 0 22px 70px rgb(22 33 43 / 22%);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-overlay);
   transform: translate(-50%, -50%);
 }
 
@@ -263,7 +295,7 @@ h3 {
 .power-dialog-inner {
   display: grid;
   gap: 16px;
-  padding: 18px;
+  padding: 20px;
 }
 
 .wifi-dialog {
@@ -273,19 +305,19 @@ h3 {
 .wifi-dialog-inner {
   display: grid;
   gap: 16px;
-  padding: 18px;
+  padding: 20px;
 }
 
 .power-dialog-head {
   display: flex;
   align-items: start;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
 }
 
 .power-dialog-head p {
   margin: 0 0 4px;
-  color: var(--accent-strong);
+  color: var(--primary-strong);
   font-size: 0.76rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -298,26 +330,26 @@ h3 {
 
 .power-actions-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .power-option {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-columns: var(--control) minmax(0, 1fr);
   gap: 12px;
   width: 100%;
   padding: 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel-muted);
-  color: var(--ink);
+  background: var(--muted);
+  color: var(--foreground);
   text-align: left;
   cursor: pointer;
 }
 
 .power-option:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--primary);
+  background: var(--accent);
 }
 
 .power-option:disabled {
@@ -329,7 +361,7 @@ h3 {
   width: 30px;
   height: 30px;
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .power-option strong,
@@ -342,18 +374,18 @@ h3 {
 }
 
 .power-option small {
-  margin-top: 3px;
-  color: var(--muted);
+  margin-top: 4px;
+  color: var(--muted-foreground);
   font-size: 0.86rem;
   line-height: 1.35;
 }
 
 .power-option-danger:hover {
-  border-color: var(--accent);
+  border-color: var(--primary);
 }
 
 .power-option-danger .power-option-icon {
-  color: var(--warn);
+  color: var(--warning);
 }
 
 .power-cancel {
@@ -365,27 +397,37 @@ h3 {
 .status-pill {
   flex: 0 0 auto;
   padding: 8px 12px;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid var(--border);
+  background: var(--card);
   font-weight: 700;
   box-shadow: var(--shadow-soft);
 }
 
 .status-pill.is-on {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .status-pill.is-off {
-  color: var(--warn);
+  color: var(--warning);
 }
 
 .notice {
   margin: 0 0 16px;
-  padding: 10px 12px;
-  border: 1px solid #b9d9c8;
-  background: var(--ok-soft);
-  color: var(--ok);
+  padding: 12px 12px;
+  border: 1px solid var(--success-border);
+  background: var(--success-muted);
+  color: var(--success);
   font-weight: 700;
+}
+
+.notice.is-error {
+  border-color: var(--accent-border);
+  background: var(--accent);
+  color: var(--primary-strong);
+}
+
+.inline-notice {
+  margin: 12px 0 0;
 }
 
 .toast-region {
@@ -399,12 +441,12 @@ h3 {
 
 .toast {
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid #b9d9c8;
-  background: var(--ok-soft);
-  color: var(--ok);
+  padding: 12px 16px;
+  border: 1px solid var(--success-border);
+  background: var(--success-muted);
+  color: var(--success);
   font-weight: 700;
-  box-shadow: 0 16px 45px rgb(22 33 43 / 16%);
+  box-shadow: var(--shadow-lg);
   animation: toast-lifetime 5s ease forwards;
 }
 
@@ -419,13 +461,6 @@ h3 {
     opacity: 0;
     transform: translateY(8px);
   }
-}
-
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.85fr);
-  gap: 18px;
-  align-items: start;
 }
 
 .app-layout {
@@ -446,8 +481,8 @@ h3 {
   align-self: start;
   min-height: calc(100vh - 64px);
   padding: 0;
-  border-right: 1px solid var(--rail-line);
-  background: var(--panel);
+  border-right: 1px solid var(--sidebar-border);
+  background: var(--card);
 }
 
 .side-nav nav {
@@ -457,8 +492,8 @@ h3 {
 
 .side-nav p {
   margin: 0;
-  padding: 12px 18px 6px;
-  color: var(--accent-strong);
+  padding: 12px 20px 8px;
+  color: var(--primary-strong);
   font-size: 0.74rem;
   font-weight: 800;
   letter-spacing: 0;
@@ -474,9 +509,9 @@ h3 {
   align-items: center;
   gap: 12px;
   min-height: 52px;
-  padding: 8px 18px;
-  border-bottom: 1px solid var(--rail-line);
-  color: var(--muted);
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--sidebar-border);
+  color: var(--muted-foreground);
   font-size: clamp(1rem, 1.45vw, 1.35rem);
   font-weight: 800;
   text-decoration: none;
@@ -490,36 +525,35 @@ h3 {
 }
 
 .nav-link:hover {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  background: var(--accent);
+  color: var(--primary-strong);
 }
 
 .nav-link.is-active {
-  background: var(--panel-muted);
-  color: var(--ink);
-  box-shadow: inset 4px 0 0 var(--accent);
+  background: var(--muted);
+  color: var(--foreground);
+  box-shadow: inset 4px 0 0 var(--primary);
 }
 
 .content-stack {
   display: grid;
-  gap: 18px;
+  gap: 20px;
   align-content: start;
   padding: 56px 56px 40px;
 }
 
 .panel {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel);
+  background: var(--card);
   box-shadow: var(--shadow);
 }
 
 .settings-card,
 .action-card,
-.monitor-panel,
 .setup-panel,
 .logs-panel {
-  padding: 18px;
+  padding: 20px;
 }
 
 .settings-stack {
@@ -557,7 +591,7 @@ h3 {
 }
 
 .section-heading {
-  padding: 0 0 22px;
+  padding: 0 0 24px;
   border-top: 0;
 }
 
@@ -570,12 +604,12 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
 }
 
 .subsection-heading {
-  padding: 24px 0 10px;
-  border-top: 1px solid var(--line);
+  padding: 24px 0 12px;
+  border-top: 1px solid var(--border);
 }
 
 .subsection-heading h3 {
@@ -585,9 +619,9 @@ h3 {
 label,
 .toggle-row {
   display: grid;
-  gap: 7px;
-  margin-bottom: 14px;
-  color: var(--muted);
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--muted-foreground);
   font-size: 0.95rem;
   font-weight: 700;
 }
@@ -601,32 +635,32 @@ input,
 select {
   width: 100%;
   min-height: var(--control);
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--field);
-  color: var(--ink);
-  padding: 8px 10px;
+  background: var(--input);
+  color: var(--foreground);
+  padding: 8px 12px;
 }
 
 input:hover,
 select:hover {
-  border-color: var(--line-strong);
+  border-color: var(--border-strong);
 }
 
 input:focus,
 select:focus {
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 15%, transparent);
+  border-color: var(--ring);
+  box-shadow: var(--ring-shadow);
   outline: 0;
 }
 
 input[type="range"] {
   padding: 0;
-  accent-color: var(--focus);
+  accent-color: var(--ring);
 }
 
 input[type="checkbox"] {
-  accent-color: var(--ok);
+  accent-color: var(--success);
 }
 
 .url-field {
@@ -648,16 +682,16 @@ input[type="checkbox"] {
   display: grid;
   min-height: var(--control);
   place-items: center;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-left: 0;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: var(--field);
-  color: var(--ink);
+  background: var(--input);
+  color: var(--foreground);
   cursor: pointer;
 }
 
 .icon-button:hover {
-  background: var(--panel-muted);
+  background: var(--muted);
 }
 
 .copy-button::before,
@@ -676,16 +710,16 @@ input[type="checkbox"] {
 }
 
 .copy-button::after {
-  background: var(--field);
+  background: var(--input);
   transform: translate(3px, -3px);
 }
 
 .copy-button[data-copied="true"] {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .copy-button[data-copied="selected"] {
-  color: var(--accent-strong);
+  color: var(--primary-strong);
 }
 
 .copy-button[data-copied="true"]::before {
@@ -747,11 +781,11 @@ input[type="checkbox"] {
 }
 
 .switch input:checked + span {
-  background: var(--ok);
+  background: var(--success);
 }
 
 .switch input:focus-visible + span {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 24%, transparent);
+  box-shadow: var(--ring-shadow);
 }
 
 .switch input:checked + span::after {
@@ -761,7 +795,7 @@ input[type="checkbox"] {
 .checks {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 18px;
+  gap: 12px 20px;
   margin-bottom: 12px;
 }
 
@@ -782,7 +816,7 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   min-height: var(--control);
   border: 0;
   font-weight: 800;
@@ -791,21 +825,21 @@ input[type="checkbox"] {
 
 .primary {
   width: 100%;
-  background: var(--accent);
-  color: #ffffff;
+  background: var(--primary);
+  color: var(--primary-foreground);
   cursor: pointer;
   box-shadow: var(--shadow-soft);
 }
 
 .primary:hover {
-  background: var(--accent-strong);
+  background: var(--primary-strong);
   transform: translateY(-1px);
 }
 
 .primary:disabled,
 .primary:disabled:hover {
-  background: var(--line);
-  color: var(--muted);
+  background: var(--border);
+  color: var(--muted-foreground);
   cursor: not-allowed;
   box-shadow: none;
   transform: none;
@@ -813,15 +847,15 @@ input[type="checkbox"] {
 
 .secondary {
   width: 100%;
-  margin-top: 14px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
 }
 
 .secondary:hover {
-  border-color: var(--line-strong);
-  background: var(--panel-muted);
+  border-color: var(--border-strong);
+  background: var(--muted);
 }
 
 .setup-link .lucide-icon {
@@ -832,32 +866,45 @@ input[type="checkbox"] {
 
 .secondary.compact {
   width: auto;
-  min-height: 38px;
+  min-height: var(--control-sm);
   margin-top: 0;
   padding: 0 12px;
+  cursor: pointer;
+}
+
+/* Bottom-aligns a button with the input of the label sitting beside it in a
+   .grid-two row (labels carry a 14px bottom margin). */
+.field-action {
+  display: flex;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+
+.field-action .secondary {
+  margin-top: 0;
   cursor: pointer;
 }
 
 .icon-text-button {
   display: inline-flex;
   width: auto;
-  min-height: 38px;
+  min-height: var(--control-sm);
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   padding: 0 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel);
-  color: var(--ink);
+  background: var(--card);
+  color: var(--foreground);
   cursor: pointer;
   font-weight: 500;
   text-decoration: none;
 }
 
 .icon-text-button:hover {
-  border-color: var(--line-strong);
-  background: var(--panel-muted);
+  border-color: var(--border-strong);
+  background: var(--muted);
 }
 
 .scan-form {
@@ -869,15 +916,15 @@ input[type="checkbox"] {
 }
 
 .compact-list {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .status-list div {
   display: grid;
   grid-template-columns: 96px 1fr;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .wide-list div {
@@ -886,11 +933,11 @@ input[type="checkbox"] {
 
 .matter-status-list div {
   grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
-  gap: 18px;
+  gap: 20px;
 }
 
 .status-list dt {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-weight: 800;
 }
 
@@ -901,7 +948,7 @@ input[type="checkbox"] {
 
 .metric-meter {
   display: grid;
-  gap: 7px;
+  gap: 8px;
 }
 
 .metric-value {
@@ -912,9 +959,9 @@ input[type="checkbox"] {
   display: block;
   width: min(340px, 100%);
   height: 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--panel-muted);
+  background: var(--muted);
   overflow: hidden;
 }
 
@@ -923,21 +970,21 @@ input[type="checkbox"] {
   width: var(--meter-value, 0%);
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
+  background: var(--primary);
   transition: width 220ms ease;
 }
 
 .wifi-signal {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .wifi-signal-indicator {
   display: inline-grid;
   width: 24px;
   height: 24px;
-  color: var(--muted);
+  color: var(--muted-foreground);
 }
 
 .signal-icon {
@@ -953,72 +1000,107 @@ input[type="checkbox"] {
   display: block;
 }
 
-.profile-list {
+/* Canonical list-of-records pattern: a name with a muted meta line on the left,
+   optional actions on the right. Used for users, passkeys, and Wi-Fi profiles.
+   Distinct from .status-list (a dt/dd grid) and .client-row (a bordered card). */
+.data-list {
   display: grid;
   gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.profile-row {
+.data-row {
   display: flex;
   min-height: 58px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
 }
 
-.profile-row:first-child {
+.data-row:first-child {
   padding-top: 0;
 }
 
-.profile-row:last-child {
+.data-row:last-child {
   border-bottom: 0;
   padding-bottom: 0;
 }
 
-.profile-row strong,
-.profile-row span {
+.data-row strong,
+.data-row span {
   display: block;
 }
 
-.profile-row strong {
-  color: var(--ink);
+.data-row strong {
+  color: var(--foreground);
   font-weight: 800;
 }
 
-.profile-row span {
-  color: var(--muted);
+.data-row span {
+  color: var(--muted-foreground);
   font-weight: 400;
 }
 
-.profile-status {
+.data-row-actions {
+  display: flex;
   flex: 0 0 auto;
-  color: var(--ok) !important;
+  gap: 8px;
+  margin: 0;
 }
 
-.profile-delete-form {
+.data-row-status {
   flex: 0 0 auto;
-  margin: 0;
+  color: var(--success) !important;
+}
+
+.role-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground) !important;
+  font-size: 0.75rem;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em;
+  vertical-align: 2px;
+}
+
+.role-badge.is-admin {
+  border-color: var(--success-border);
+  background: var(--success-muted);
+  color: var(--success) !important;
+}
+
+.data-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .danger-icon-button {
   display: inline-grid;
-  width: 38px;
-  height: 38px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   place-items: center;
   padding: 0;
-  border: 1px solid #d46a5a;
+  border: 1px solid var(--destructive-border);
   border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: #ffffff;
+  background: var(--destructive);
+  color: var(--destructive-foreground);
   cursor: pointer;
   line-height: 0;
 }
 
 .danger-icon-button:hover {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
+  background: var(--destructive-strong);
+  border-color: var(--destructive-strong);
 }
 
 .danger-icon-button .lucide-icon {
@@ -1027,8 +1109,55 @@ input[type="checkbox"] {
 
 .empty-note {
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-weight: 700;
+}
+
+/* Inline call-to-action banner: message on the left, actions on the right. */
+.callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--accent-border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.callout strong {
+  font-size: 0.98rem;
+}
+
+.callout p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.86rem;
+}
+
+.callout-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.callout-actions input {
+  max-width: 170px;
+  min-height: var(--control-sm);
+}
+
+.callout-actions .primary,
+.callout-actions .secondary {
+  width: auto;
+  min-height: var(--control-sm);
+  margin-top: 0;
+  padding: 0 16px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .mac-list {
@@ -1041,12 +1170,12 @@ input[type="checkbox"] {
 
 .wifi-connect-form {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .scan-action-row {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .scan-action-row .secondary {
@@ -1056,7 +1185,7 @@ input[type="checkbox"] {
 
 .scan-results-panel {
   display: grid;
-  gap: 7px;
+  gap: 8px;
 }
 
 .segmented-control {
@@ -1064,25 +1193,9 @@ input[type="checkbox"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel-muted);
-}
-
-.segment {
-  min-height: 36px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-weight: 800;
-}
-
-.segment.is-active {
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: 0 1px 4px rgb(22 33 43 / 10%);
+  background: var(--muted);
 }
 
 .field-row {
@@ -1101,7 +1214,7 @@ input[type="checkbox"] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .field-row.with-action label {
@@ -1110,8 +1223,8 @@ input[type="checkbox"] {
 
 .field-note {
   min-height: 20px;
-  margin: 6px 0 0;
-  color: var(--muted);
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
   font-size: 0.88rem;
   font-weight: 700;
 }
@@ -1119,17 +1232,17 @@ input[type="checkbox"] {
 .maintenance-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .maintenance-option {
   display: grid;
   align-content: start;
   min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--line);
+  padding: 16px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel-muted);
+  background: var(--muted);
 }
 
 .weekday-picker {
@@ -1143,7 +1256,7 @@ input[type="checkbox"] {
 .weekday-picker legend {
   margin: 0 0 8px;
   padding: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.95rem;
   font-weight: 700;
 }
@@ -1151,7 +1264,7 @@ input[type="checkbox"] {
 .weekday-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
 }
 
 .weekday-chip {
@@ -1176,65 +1289,44 @@ input[type="checkbox"] {
   place-items: center;
   width: 100%;
   min-height: 34px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--field);
-  color: var(--muted);
+  background: var(--input);
+  color: var(--muted-foreground);
   font-size: 0.88rem;
   font-weight: 800;
 }
 
 .weekday-chip input:checked + span {
-  border-color: color-mix(in srgb, var(--ok) 70%, var(--line));
-  background: color-mix(in srgb, var(--ok) 14%, var(--field));
-  color: var(--ok);
+  border-color: color-mix(in srgb, var(--success) 70%, var(--border));
+  background: color-mix(in srgb, var(--success) 14%, var(--input));
+  color: var(--success);
 }
 
 .weekday-chip input:focus-visible + span {
-  border-color: var(--focus);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 15%, transparent);
+  border-color: var(--ring);
+  box-shadow: var(--ring-shadow);
 }
 
 .maintenance-submit {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 .wifi-signal[data-signal-level="high"] .wifi-signal-indicator {
-  color: var(--ok);
+  color: var(--success);
 }
 
 .wifi-signal[data-signal-level="low"] .wifi-signal-indicator {
-  color: var(--accent-strong);
+  color: var(--primary-strong);
 }
 
 .wifi-signal[data-signal-level="zero"] .wifi-signal-indicator {
-  color: var(--warn);
-}
-
-.preview {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 16 / 9;
-  margin-top: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #e7ebef;
-  overflow: hidden;
-}
-
-.preview img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.preview img.is-hidden {
-  display: none;
+  color: var(--warning);
 }
 
 .stream-dashboard {
   gap: 16px;
-  padding: 34px 34px 36px;
+  padding: 36px 36px 36px;
 }
 
 .stream-dashboard-head,
@@ -1248,7 +1340,7 @@ input[type="checkbox"] {
 
 .stream-dashboard-head {
   justify-content: space-between;
-  gap: 18px;
+  gap: 20px;
 }
 
 .stream-dashboard-head h1 {
@@ -1261,12 +1353,12 @@ input[type="checkbox"] {
   display: inline-flex;
   min-height: 34px;
   align-items: center;
-  gap: 7px;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel);
-  color: var(--muted);
+  background: var(--card);
+  color: var(--muted-foreground);
   font-size: 0.84rem;
   font-weight: 800;
   white-space: nowrap;
@@ -1274,7 +1366,7 @@ input[type="checkbox"] {
 
 .topbar-status-chip strong,
 .inline-state {
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .status-dot {
@@ -1282,8 +1374,8 @@ input[type="checkbox"] {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 14%, transparent);
+  background: var(--success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent);
 }
 
 .stream-dashboard-grid {
@@ -1295,9 +1387,9 @@ input[type="checkbox"] {
 
 .stream-stage,
 .dashboard-card {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--panel);
+  background: var(--card);
   box-shadow: var(--shadow-soft);
 }
 
@@ -1310,8 +1402,8 @@ input[type="checkbox"] {
   justify-content: space-between;
   gap: 12px;
   padding: 12px;
-  border-bottom: 1px solid var(--line);
-  background: #f8fafc;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
 }
 
 .stream-command-actions {
@@ -1322,19 +1414,19 @@ input[type="checkbox"] {
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(78px, auto);
-  min-height: 38px;
+  min-height: var(--control-sm);
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--field);
+  background: var(--input);
 }
 
 .stream-segments button {
-  min-height: 38px;
+  min-height: var(--control-sm);
   border: 0;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--border);
   background: transparent;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font: inherit;
   font-weight: 800;
   cursor: pointer;
@@ -1345,13 +1437,13 @@ input[type="checkbox"] {
 }
 
 .stream-segments button[aria-pressed="true"] {
-  background: var(--ink);
-  color: #ffffff;
+  background: var(--foreground);
+  color: var(--primary-foreground);
 }
 
 .stream-segments button:not([aria-pressed="true"]):hover {
-  background: var(--panel);
-  color: var(--ink);
+  background: var(--card);
+  color: var(--foreground);
 }
 
 .stream-segments button:disabled {
@@ -1383,7 +1475,7 @@ input[type="checkbox"] {
   min-height: 420px;
   place-items: center;
   aspect-ratio: 4 / 3;
-  background: #111820;
+  background: var(--inverse);
 }
 
 .live-frame img,
@@ -1395,7 +1487,7 @@ input[type="checkbox"] {
 
 .live-video {
   display: block;
-  background: #111820;
+  background: var(--inverse);
 }
 
 .live-frame img.is-hidden {
@@ -1407,8 +1499,8 @@ input[type="checkbox"] {
   inset: 0;
   display: grid;
   place-items: center;
-  background: #111820;
-  color: #e8eef3;
+  background: var(--inverse);
+  color: var(--inverse-foreground);
   font-weight: 800;
 }
 
@@ -1418,10 +1510,10 @@ input[type="checkbox"] {
 
 .stream-note {
   margin: 0;
-  padding: 10px 12px;
-  border-bottom: 1px solid #f0d0c6;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  padding: 12px 12px;
+  border-bottom: 1px solid var(--accent-border);
+  background: var(--accent);
+  color: var(--primary-strong);
   font-weight: 800;
 }
 
@@ -1431,17 +1523,17 @@ input[type="checkbox"] {
 
 .stream-frame-footer {
   flex-wrap: wrap;
-  gap: 10px 18px;
+  gap: 12px 20px;
   min-height: 46px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--line);
-  color: var(--muted);
+  padding: 12px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
   font-size: 0.84rem;
   font-weight: 800;
 }
 
 .stream-frame-footer strong {
-  color: var(--ink);
+  color: var(--foreground);
 }
 
 .stream-side {
@@ -1457,7 +1549,7 @@ input[type="checkbox"] {
 .dashboard-card-head {
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .dashboard-card h2 {
@@ -1468,20 +1560,20 @@ input[type="checkbox"] {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
   margin: 0;
 }
 
 .metric-grid div {
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
+  padding: 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel-muted);
+  background: var(--muted);
 }
 
 .metric-grid dt {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.78rem;
   font-weight: 800;
 }
@@ -1489,13 +1581,13 @@ input[type="checkbox"] {
 .metric-grid dd {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
-  color: var(--ink);
+  color: var(--foreground);
   font-size: 0.95rem;
   font-weight: 800;
 }
 
 .client-meter {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
 }
 
 .client-meter:first-of-type {
@@ -1513,11 +1605,11 @@ input[type="checkbox"] {
   min-height: 58px;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   padding: 12px 0;
   border: 0;
   background: transparent;
-  color: var(--ink);
+  color: var(--foreground);
   cursor: pointer;
   font: inherit;
   list-style: none;
@@ -1528,8 +1620,8 @@ input[type="checkbox"] {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  border-right: 2px solid var(--muted);
-  border-bottom: 2px solid var(--muted);
+  border-right: 2px solid var(--muted-foreground);
+  border-bottom: 2px solid var(--muted-foreground);
   transform: rotate(-45deg);
   transition: transform 0.16s ease;
 }
@@ -1550,11 +1642,11 @@ input[type="checkbox"] {
 .client-meter b {
   flex: 0 0 auto;
   min-width: 62px;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
+  padding: 8px 8px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: #f4f8fb;
-  color: var(--ink);
+  background: var(--muted);
+  color: var(--foreground);
   font-size: 0.96rem;
   text-align: center;
 }
@@ -1562,7 +1654,7 @@ input[type="checkbox"] {
 .client-list {
   display: grid;
   gap: 8px;
-  padding: 0 0 12px 18px;
+  padding: 0 0 12px 20px;
 }
 
 .client-list[hidden] {
@@ -1571,7 +1663,7 @@ input[type="checkbox"] {
 
 .client-list p {
   margin: 0;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -1580,10 +1672,10 @@ input[type="checkbox"] {
   display: grid;
   gap: 8px;
   min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--line);
+  padding: 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--panel-muted);
+  background: var(--muted);
 }
 
 .client-row > div {
@@ -1600,14 +1692,14 @@ input[type="checkbox"] {
 
 .client-row span {
   flex: 0 0 auto;
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-size: 0.74rem;
   font-weight: 800;
 }
 
 .client-row dl {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   margin: 0;
 }
 
@@ -1625,13 +1717,13 @@ input[type="checkbox"] {
 }
 
 .client-row dt {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-weight: 800;
 }
 
 .client-row dd {
   overflow-wrap: anywhere;
-  color: var(--ink);
+  color: var(--foreground);
   font-weight: 700;
 }
 
@@ -1639,11 +1731,11 @@ input[type="checkbox"] {
   display: grid;
   min-height: 120px;
   place-items: center;
-  margin: 0 0 14px;
-  border: 1px dashed #b6c0c8;
+  margin: 0 0 16px;
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
-  background: var(--field);
-  color: var(--muted);
+  background: var(--input);
+  color: var(--muted-foreground);
   font-weight: 700;
   text-align: center;
 }
@@ -1654,40 +1746,40 @@ input[type="checkbox"] {
 
 .error-pairing {
   min-height: 72px;
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--border));
+  background: var(--accent);
+  color: var(--primary-strong);
 }
 
 .homekit-pairing {
   display: grid;
   grid-template-columns: 176px minmax(0, 1fr);
-  gap: 18px;
+  gap: 20px;
   align-items: center;
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   padding: 16px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--field);
+  background: var(--input);
 }
 
 .homekit-qr {
   width: 176px;
   height: 176px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: #ffffff;
 }
 
 .homekit-pairing-details {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
 .homekit-pairing-details span,
 .homekit-pairing-details small {
-  color: var(--muted);
+  color: var(--muted-foreground);
   font-weight: 700;
 }
 
@@ -1707,10 +1799,10 @@ pre {
   margin: 0;
   overflow: auto;
   border-radius: var(--radius);
-  background: #111820;
-  color: #e8eef3;
+  background: var(--inverse);
+  color: var(--inverse-foreground);
   font: 0.84rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  padding: 14px;
+  padding: 16px;
   white-space: pre-wrap;
 }
 
@@ -1721,11 +1813,30 @@ pre {
     padding: 0;
   }
 
-  .layout,
   .app-layout,
   .grid-two,
   .homekit-pairing {
     grid-template-columns: 1fr;
+  }
+
+  .callout {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .callout-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Input takes its own row so the buttons sit side by side without wrapping. */
+  .callout-actions input {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .callout-actions .primary,
+  .callout-actions .secondary {
+    flex: 1 1 auto;
   }
 
   .homekit-qr {
@@ -1738,7 +1849,7 @@ pre {
     position: static;
     min-height: 0;
     border-right: 0;
-    border-bottom: 2px solid var(--rail-line);
+    border-bottom: 2px solid var(--sidebar-border);
   }
 
   .side-nav.is-open {
@@ -1751,15 +1862,15 @@ pre {
 
   .side-nav p {
     grid-column: 1 / -1;
-    padding: 10px 18px 4px;
+    padding: 12px 20px 4px;
   }
 
   .topbar {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr) auto;
+    grid-template-columns: var(--control-sm) minmax(0, 1fr) auto;
     gap: 12px;
     min-height: auto;
-    padding: 16px 18px;
+    padding: 16px 20px;
   }
 
   .topbar-dashboard {
@@ -1774,16 +1885,16 @@ pre {
     align-items: flex-start;
     flex-direction: row;
     justify-content: flex-end;
-    gap: 10px;
+    gap: 12px;
   }
 
   .content-stack {
-    gap: 14px;
+    gap: 16px;
     padding: 28px 20px 36px;
   }
 
   .stream-dashboard {
-    padding: 22px 14px 28px;
+    padding: 24px 16px 28px;
   }
 
   .stream-dashboard-head {
@@ -1793,8 +1904,8 @@ pre {
   }
 
   .topbar-status-chip {
-    gap: 7px;
-    padding: 6px 8px;
+    gap: 8px;
+    padding: 8px 8px;
     font-size: 0;
   }
 
@@ -1859,15 +1970,14 @@ pre {
 
   .nav-link {
     min-height: 46px;
-    padding: 8px 18px;
+    padding: 8px 20px;
     font-size: 1.05rem;
   }
 
-  .status-icon,
   .icon-action {
-    width: 38px;
-    min-width: 38px;
-    height: 38px;
+    width: var(--control-sm);
+    min-width: var(--control-sm);
+    height: var(--control-sm);
   }
 
   .toast-region {
@@ -1882,7 +1992,7 @@ pre {
   max-width: 480px;
   width: 100%;
   aspect-ratio: 4 / 3;
-  margin: 15px 0;
+  margin: 16px 0;
   border-radius: 6px;
   overflow: hidden;
   border: 1.5px solid var(--border);

@@ -132,6 +132,7 @@ pub struct SystemView {
     pub wifi_details: Vec<LabelValue>,
     pub logs: Vec<String>,
     pub ssh_target: String,
+    pub is_admin: bool,
 }
 
 pub fn status() -> SystemStatus {
@@ -243,6 +244,7 @@ pub fn view(status: &SystemStatus) -> SystemView {
         wifi_details: wifi_details(&status.wifi),
         logs: status.logs.clone(),
         ssh_target,
+        is_admin: true,
     }
 }
 
@@ -1266,6 +1268,7 @@ fn parse_wpa_supplicant_profiles(
 
     profiles
 }
+
 
 fn dietpi_autosetup_profiles(active_ssid: Option<&str>) -> Vec<StoredWifiProfile> {
     let Ok(contents) = fs::read_to_string("/boot/dietpi.txt") else {

@@ -1,5 +1,13 @@
 <aside class="side-nav" id="octocam-section-nav" aria-label="OctoCam sections" data-side-nav>
   <nav>
+    <a class="nav-link {% if active_page == "dashboard" %}is-active{% endif %}" href="/dashboard">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m10 17.843 3.033-1.755a.64.64 0 0 1 .967.56v4.704a.65.65 0 0 1-.967.56L10 20.157"></path>
+        <rect width="7" height="6" x="3" y="16" rx="1"></rect>
+      </svg>
+      <span>Dashboard</span>
+    </a>
+    {% if system.is_admin %}
     <p>Basic Settings</p>
     <a class="nav-link {% if active_page == "identity" %}is-active{% endif %}" href="/identity">
       <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
@@ -98,5 +106,14 @@
       </svg>
       <span>Admin</span>
     </a>
+    {% else %}
+    <a class="nav-link {% if active_page == "settings" %}is-active{% endif %}" href="/settings">
+      <svg class="nav-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>
+      <span>Account Settings</span>
+    </a>
+    {% endif %}
   </nav>
 </aside>

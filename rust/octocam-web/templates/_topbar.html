@@ -30,6 +30,7 @@
         <circle cx="12" cy="12" r="3"></circle>
       </svg>
     </a>
+    {% if system.is_admin %}
     <a
       class="icon-action power-action {% if settings.camera_enabled %}is-on{% else %}is-off{% endif %} {% if system.camera_available %}is-available{% else %}is-unavailable{% endif %}"
       href="#power-options"
@@ -46,6 +47,7 @@
         <path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path>
       </svg>
     </a>
+    {% endif %}
     <form method="post" action="/logout">
       <button class="icon-action close-action" type="submit" aria-label="Log out" title="Log out">
         <svg class="lucide-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">

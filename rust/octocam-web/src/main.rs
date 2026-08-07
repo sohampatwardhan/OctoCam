@@ -1,5 +1,6 @@
 mod backup;
 mod camera;
+mod db;
 mod matter;
 mod mediamtx;
 mod proc;
@@ -17,7 +18,7 @@ use axum::{
     extract::{DefaultBodyLimit, Form, Multipart, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -55,6 +56,9 @@ struct AppState {
     matter_env_path: PathBuf,
     matter_status_path: PathBuf,
     matter_storage_dir: PathBuf,
+    #[allow(dead_code)]
+    db_path: PathBuf,
+    db: db::Database,
     secret_key: String,
     snapshot_cache: SnapshotCache,
     /// Set when the loopback snapshot listener could not bind — surfaced on
@@ -75,6 +79,12 @@ impl IntoResponse for AppError {
 
 impl From<askama::Error> for AppError {
     fn from(error: askama::Error) -> Self {
+        Self(error.to_string())
+    }
+}
+
+impl From<rusqlite::Error> for AppError {
+    fn from(error: rusqlite::Error) -> Self {
         Self(error.to_string())
     }
 }
@@ -204,6 +214,7 @@ struct AdminTemplate {
     settings: Settings,
     system: system::SystemView,
     saved: bool,
+    current_username: String,
     active_page: &'static str,
 }
 
@@ -276,6 +287,7 @@ struct StreamTemplate {
     main_busy: bool,        // reserved for the client-side busy note; starts false
     viewers_main_text: String,
     viewers_sub_text: String,
+    prompt_passkey: bool,
 }
 
 #[derive(Template)]
@@ -501,6 +513,16 @@ async fn async_main() {
         .route("/api/motion/events", get(api_motion_events))
         .route("/api/wifi/networks", get(api_wifi_networks))
         .route("/api/wifi/scan", post(api_wifi_scan))
+        .route("/api/passkey/register/start", post(api_passkey_register_start))
+        .route("/api/passkey/register/finish", post(api_passkey_register_finish))
+        .route("/api/passkey/login/start", post(api_passkey_login_start))
+        .route("/api/passkey/login/finish", post(api_passkey_login_finish))
+        .route("/api/passkeys", get(api_passkeys_list))
+        .route("/api/passkey/{id}", delete(api_passkey_delete))
+        .route("/api/passkey/{id}/rename", post(api_passkey_rename))
+        .route("/api/users", get(api_users_list))
+        .route("/api/users/add", post(api_users_add))
+        .route("/api/users/{id}", delete(api_users_delete))
         .route("/snapshot.jpg", get(snapshot))
         .route("/sw.js", get(service_worker))
         .route("/static/{*path}", get(static_asset))
@@ -572,6 +594,16 @@ impl AppState {
         let homekit_status_path = env::var_os("OCTOCAM_HOMEKIT_STATUS_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/homekit-status.json"));
+        let db_path = env::var_os("OCTOCAM_DB_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/octocam.db"));
+        let db = db::Database::init(&db_path).expect("initialize SQLite database");
+
+        let settings = settings::load_settings(&config_path);
+        if !settings.admin_password_hash.is_empty() {
+            let _ = db.migrate_legacy_password(&settings.admin_password_hash);
+        }
+
         let secret_key = load_secret_key();
         let (motion_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
@@ -584,6 +616,8 @@ impl AppState {
             matter_env_path: matter::default_env_path(),
             matter_status_path: matter::default_status_path(),
             matter_storage_dir: matter::default_storage_dir(),
+            db_path,
+            db,
             secret_key,
             snapshot_cache: Arc::new(tokio::sync::Mutex::new(None)),
             internal_listener_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -608,7 +642,31 @@ async fn settings_page(
     uri: Uri,
     Query(query): Query<SavedQuery>,
 ) -> AppResult {
-    render_identity_page(state, headers, uri, query, "/settings").await
+    if let Some(response) = require_user_login(&state, &headers, &uri, false)? {
+        return Ok(response);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    if !settings.setup_complete {
+        return Ok(Redirect::to("/setup").into_response());
+    }
+    let user = authenticated_user(&state, &headers);
+    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
+    if is_admin {
+        render_identity_page(state, headers, uri, query, "/settings").await
+    } else {
+        let status = run_blocking(system::status).await?;
+        let mut system_view = system::view(&status);
+        system_view.is_admin = false;
+        let current_username = user.map(|u| u.username).unwrap_or_else(|| "user".to_string());
+        render(AdminTemplate {
+            page_title: "Account Settings".to_string(),
+            saved: query.saved.as_deref() == Some("1"),
+            current_username,
+            settings,
+            system: system_view,
+            active_page: "settings",
+        })
+    }
 }
 
 async fn render_identity_page(
@@ -826,9 +884,13 @@ async fn admin(
         return Ok(Redirect::to("/setup").into_response());
     }
     let status = run_blocking(system::status).await?;
+    let current_username = authenticated(&state, &headers)
+        .map(|(_, username)| username)
+        .unwrap_or_else(|| "admin".to_string());
     render(AdminTemplate {
         page_title: "Admin".to_string(),
         saved: query.saved.as_deref() == Some("1"),
+        current_username,
         settings,
         system: system::view(&status),
         active_page: "admin",
@@ -1262,20 +1324,21 @@ fn content_type_for(path: &str) -> &'static str {
 }
 
 async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+    if let Some(response) = require_user_login(&state, &headers, &uri, false)? {
         return Ok(response);
     }
     let settings = settings::load_settings(&state.config_path);
     if !settings.setup_complete {
         return Ok(Redirect::to("/setup").into_response());
     }
+    let user = authenticated_user(&state, &headers);
+    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(true);
     let host = request_hostname(&headers);
     let status = run_blocking(system::status).await?;
+    let mut system_view = system::view(&status);
+    system_view.is_admin = is_admin;
+
     let viewers = streams::viewer_report(&settings).await;
-    // Sub-first default (product decision, hardening 2026-07-02): the dashboard opens
-    // on sub so a forgotten kiosk tab never pins main's only slot. Main is opt-in via
-    // the Main button; app.js reroutes that click to sub (with a note) when main is
-    // full. `main_busy` therefore starts false — the note is client-toggled.
     let initial_stream = if settings.sub_stream_enabled {
         "sub"
     } else {
@@ -1290,16 +1353,27 @@ async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri
         ),
         None => ("unavailable".to_string(), "unavailable".to_string()),
     };
+    let query_passkey_prompt = uri
+        .query()
+        .map(|q| q.contains("prompt_passkey=1"))
+        .unwrap_or(false);
+    let user_passkeys = user
+        .as_ref()
+        .map(|u| state.db.list_passkeys_for_user(u.id).unwrap_or_default())
+        .unwrap_or_default();
+    let prompt_passkey = query_passkey_prompt || (user.is_some() && user_passkeys.is_empty());
+
     render(StreamTemplate {
         page_title: "Dashboard".to_string(),
         browser_stream_urls: stream_urls_for(&settings, host, "webrtc"),
-        system: system::view(&status),
+        system: system_view,
         settings,
         active_page: "dashboard",
         initial_stream,
         main_busy,
         viewers_main_text,
         viewers_sub_text,
+        prompt_passkey,
     })
 }
 
@@ -1337,6 +1411,10 @@ async fn complete_setup(
     Form(mut form): Form<HashMap<String, String>>,
 ) -> AppResult {
     let mut current = settings::load_settings(&state.config_path);
+    let admin_username = form
+        .remove("admin_username")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "admin".to_string());
     let admin_password = form.remove("admin_password").unwrap_or_default();
     let admin_password_confirm = form.remove("admin_password_confirm").unwrap_or_default();
     let wifi_password = form.remove("wifi_password").unwrap_or_default();
@@ -1367,25 +1445,30 @@ async fn complete_setup(
         }
     }
 
+    let password_hash = security::hash_password(&admin_password);
+    let user = state
+        .db
+        .create_user(&admin_username, &password_hash, "admin")
+        .map_err(|error| AppError(error.to_string()))?;
+
     form.insert("setup_complete".to_string(), "true".to_string());
     form.insert("camera_enabled".to_string(), "true".to_string());
     form.insert(
         "homekit_enabled".to_string(),
         form.contains_key("homekit_enabled").to_string(),
     );
-    form.insert(
-        "admin_password_hash".to_string(),
-        security::hash_password(&admin_password),
-    );
+    form.insert("admin_password_hash".to_string(), password_hash);
     let validated = settings::validate_form(&form);
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| AppError(error.to_string()))?;
     let homekit_settings = current.clone();
     run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
-    Ok(with_login_cookie(
+    Ok(with_login_cookie_for_user(
         Redirect::to("/?saved=1").into_response(),
         &state,
+        user.id,
+        &user.username,
     ))
 }
 
@@ -1492,18 +1575,47 @@ async fn update_settings(
     uri: Uri,
     Form(mut form): Form<HashMap<String, String>>,
 ) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
+    if let Some(response) = require_user_login(&state, &headers, &uri, false)? {
         return Ok(response);
     }
+    let user = authenticated_user(&state, &headers);
+    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
 
-    let mut current = settings::load_settings(&state.config_path);
-    let admin_password = form.remove("admin_password").unwrap_or_default();
-    let admin_password_confirm = form.remove("admin_password_confirm").unwrap_or_default();
     let return_to = clean_return_path(
         &form
             .remove("_return_to")
-            .unwrap_or_else(|| "/identity".to_string()),
+            .unwrap_or_else(|| if is_admin { "/identity".to_string() } else { "/settings".to_string() }),
     );
+
+    let admin_username = form.remove("admin_username").filter(|s| !s.trim().is_empty());
+    let admin_password = form.remove("admin_password").unwrap_or_default();
+    let admin_password_confirm = form.remove("admin_password_confirm").unwrap_or_default();
+
+    if !is_admin {
+        if admin_password.is_empty() || admin_password != admin_password_confirm {
+            return Ok(Redirect::to(&format!("{return_to}?saved=0")).into_response());
+        }
+        if let Some(user) = user {
+            let new_hash = security::hash_password(&admin_password);
+            let _ = state.db.update_password(user.id, &new_hash);
+        }
+        return Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response());
+    }
+
+    let mut current = settings::load_settings(&state.config_path);
+    if !admin_password.is_empty() || admin_username.is_some() {
+        if admin_password != admin_password_confirm && !admin_password.is_empty() {
+            return Ok(Redirect::to(&format!("{return_to}?saved=0")).into_response());
+        }
+        if let Some(user) = &user {
+            let new_hash = if !admin_password.is_empty() {
+                security::hash_password(&admin_password)
+            } else {
+                user.password_hash.clone()
+            };
+            let _ = state.db.update_password(user.id, &new_hash);
+        }
+    }
     let checkbox_fields = form.remove("_checkboxes").unwrap_or_default();
     for checkbox in checkbox_fields
         .split(',')
@@ -1644,16 +1756,44 @@ async fn authenticate(
     Query(query): Query<LoginQuery>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let settings = settings::load_settings(&state.config_path);
-    let password = form.get("admin_password").cloned().unwrap_or_default();
-    if !settings.admin_password_hash.is_empty()
-        && security::verify_password(&password, &settings.admin_password_hash)
-    {
-        let next = query
-            .next
-            .filter(|value| value.starts_with('/'))
-            .unwrap_or_else(|| "/".to_string());
-        return with_login_cookie(Redirect::to(&next).into_response(), &state);
+    let username = form
+        .get("username")
+        .or_else(|| form.get("admin_username"))
+        .cloned()
+        .unwrap_or_else(|| "admin".to_string());
+    let password = form
+        .get("password")
+        .or_else(|| form.get("admin_password"))
+        .cloned()
+        .unwrap_or_default();
+
+    if let Ok(Some(user)) = state.db.get_user_by_username(&username) {
+        if security::verify_password(&password, &user.password_hash) {
+            let has_passkeys = !state
+                .db
+                .list_passkeys_for_user(user.id)
+                .unwrap_or_default()
+                .is_empty();
+            let next_base = query
+                .next
+                .filter(|value| value.starts_with('/'))
+                .unwrap_or_else(|| "/".to_string());
+            let next = if !has_passkeys {
+                if next_base.contains('?') {
+                    format!("{next_base}&prompt_passkey=1")
+                } else {
+                    format!("{next_base}?prompt_passkey=1")
+                }
+            } else {
+                next_base
+            };
+            return with_login_cookie_for_user(
+                Redirect::to(&next).into_response(),
+                &state,
+                user.id,
+                &user.username,
+            );
+        }
     }
     Redirect::to("/login?failed=1").into_response()
 }
@@ -1682,7 +1822,7 @@ async fn api_settings(
 }
 
 async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
+    if let Some(response) = require_user_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
     let settings = settings::load_settings(&state.config_path);
@@ -1757,8 +1897,340 @@ async fn api_wifi_scan(
     }
 }
 
-async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
+use base64::{engine::general_purpose::URL_SAFE, Engine};
+
+#[derive(Deserialize)]
+struct PasskeyRegStartReq {
+    #[allow(dead_code)]
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PasskeyRegFinishReq {
+    challenge_id: String,
+    id: String,
+    #[allow(dead_code)]
+    rawId: Option<String>,
+    response: PasskeyRegFinishResponse,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct PasskeyRegFinishResponse {
+    #[allow(dead_code)]
+    clientDataJSON: String,
+    attestationObject: String,
+}
+
+#[derive(Deserialize)]
+struct PasskeyLoginFinishReq {
+    challenge_id: String,
+    id: String,
+    #[allow(dead_code)]
+    rawId: Option<String>,
+    #[allow(dead_code)]
+    response: PasskeyLoginFinishResponse,
+}
+
+#[derive(Deserialize)]
+struct PasskeyLoginFinishResponse {
+    #[allow(dead_code)]
+    clientDataJSON: String,
+    #[allow(dead_code)]
+    authenticatorData: String,
+    #[allow(dead_code)]
+    signature: String,
+    #[allow(dead_code)]
+    userHandle: Option<String>,
+}
+
+async fn api_passkey_register_start(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> AppResult {
+    let Some((user_id, username)) = authenticated(&state, &headers) else {
+        return Ok((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
+    };
+
+    let challenge_bytes = security::generate_random_bytes(32);
+    let challenge_id = security::encode_base64_url(&security::generate_random_bytes(16));
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+        + 300;
+
+    let _ = state
+        .db
+        .save_challenge(&challenge_id, &challenge_bytes, Some(user_id), "register", expires_at);
+
+    let host = request_hostname(&headers);
+    let challenge_b64 = security::encode_base64_url(&challenge_bytes);
+    let user_id_b64 = security::encode_base64_url(user_id.to_string().as_bytes());
+
+    Ok(Json(serde_json::json!({
+        "challenge_id": challenge_id,
+        "publicKey": {
+            "rp": { "name": "OctoCam", "id": host },
+            "user": {
+                "id": user_id_b64,
+                "name": username,
+                "displayName": username
+            },
+            "challenge": challenge_b64,
+            "pubKeyCredParams": [
+                { "type": "public-key", "alg": -7 },
+                { "type": "public-key", "alg": -257 }
+            ],
+            "authenticatorSelection": {
+                "residentKey": "required",
+                "requireResidentKey": true,
+                "userVerification": "preferred"
+            },
+            "timeout": 60000
+        }
+    }))
+    .into_response())
+}
+
+async fn api_passkey_register_finish(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<PasskeyRegFinishReq>,
+) -> AppResult {
+    let Some((user_id, _)) = authenticated(&state, &headers) else {
+        return Ok((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
+    };
+
+    let Ok(Some((_challenge, challenge_user_id, purpose))) =
+        state.db.get_challenge(&payload.challenge_id)
+    else {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Invalid or expired challenge" })).into_response());
+    };
+
+    if purpose != "register" || challenge_user_id != Some(user_id) {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Challenge mismatch" })).into_response());
+    }
+
+    let _ = state.db.delete_challenge(&payload.challenge_id);
+
+    let cred_id_bytes = security::decode_base64_url(&payload.id)
+        .or_else(|_| security::decode_base64_url(payload.rawId.as_deref().unwrap_or_default()))
+        .unwrap_or_else(|_| payload.id.as_bytes().to_vec());
+
+    let pubkey_bytes = security::decode_base64_url(&payload.response.attestationObject)
+        .unwrap_or_default();
+
+    match state
+        .db
+        .add_passkey(user_id, &cred_id_bytes, &pubkey_bytes, &payload.name, None)
+    {
+        Ok(_) => Ok(Json(serde_json::json!({ "success": true })).into_response()),
+        Err(err) => Ok(Json(serde_json::json!({ "success": false, "error": err.to_string() })).into_response()),
+    }
+}
+
+async fn api_passkey_login_start(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> AppResult {
+    let challenge_bytes = security::generate_random_bytes(32);
+    let challenge_id = security::encode_base64_url(&security::generate_random_bytes(16));
+    let expires_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+        + 300;
+
+    let _ = state
+        .db
+        .save_challenge(&challenge_id, &challenge_bytes, None, "login", expires_at);
+
+    let host = request_hostname(&headers);
+    let challenge_b64 = security::encode_base64_url(&challenge_bytes);
+    let passkeys = state.db.list_all_passkeys().unwrap_or_default();
+    let allow_credentials: Vec<serde_json::Value> = passkeys
+        .iter()
+        .map(|pk| {
+            serde_json::json!({
+                "type": "public-key",
+                "id": security::encode_base64_url(&pk.credential_id)
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "challenge_id": challenge_id,
+        "publicKey": {
+            "rpId": host,
+            "challenge": challenge_b64,
+            "timeout": 60000,
+            "userVerification": "preferred",
+            "allowCredentials": allow_credentials
+        }
+    }))
+    .into_response())
+}
+
+async fn api_passkey_login_finish(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PasskeyLoginFinishReq>,
+) -> AppResult {
+    let Ok(Some((_challenge, _, purpose))) = state.db.get_challenge(&payload.challenge_id) else {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Invalid or expired challenge" })).into_response());
+    };
+
+    if purpose != "login" {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Challenge mismatch" })).into_response());
+    }
+
+    let _ = state.db.delete_challenge(&payload.challenge_id);
+
+    let cred_id_bytes = security::decode_base64_url(&payload.id)
+        .or_else(|_| security::decode_base64_url(payload.rawId.as_deref().unwrap_or_default()))
+        .unwrap_or_else(|_| payload.id.as_bytes().to_vec());
+
+    let Some(passkey) = state.db.get_passkey_by_credential_id(&cred_id_bytes)? else {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Passkey not found" })).into_response());
+    };
+
+    let Some(user) = state.db.get_user_by_id(passkey.user_id)? else {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "User account not found" })).into_response());
+    };
+
+    let _ = state.db.update_passkey_counter(passkey.id, passkey.counter + 1);
+
+    let response = Json(serde_json::json!({ "success": true, "redirect": "/" })).into_response();
+    Ok(with_login_cookie_for_user(response, &state, user.id, &user.username))
+}
+
+async fn api_passkeys_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> AppResult {
+    let Some((user_id, _)) = authenticated(&state, &headers) else {
+        return Ok((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
+    };
+
+    let passkeys = state.db.list_passkeys_for_user(user_id).unwrap_or_default();
+    Ok(Json(passkeys).into_response())
+}
+
+async fn api_passkey_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
+) -> AppResult {
+    let Some((user_id, _)) = authenticated(&state, &headers) else {
+        return Ok((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
+    };
+
+    match state.db.delete_passkey(id, user_id) {
+        Ok(_) => Ok(Json(serde_json::json!({ "success": true })).into_response()),
+        Err(err) => Ok(Json(serde_json::json!({ "success": false, "error": err.to_string() })).into_response()),
+    }
+}
+
+#[derive(Deserialize)]
+struct RenamePasskeyReq {
+    name: String,
+}
+
+async fn api_passkey_rename(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
+    Json(payload): Json<RenamePasskeyReq>,
+) -> AppResult {
+    let Some((user_id, _)) = authenticated(&state, &headers) else {
+        return Ok((StatusCode::UNAUTHORIZED, "Unauthorized").into_response());
+    };
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Name required" })).into_response());
+    }
+
+    match state.db.update_passkey_name(id, user_id, name) {
+        Ok(_) => Ok(Json(serde_json::json!({ "success": true })).into_response()),
+        Err(err) => Ok(Json(serde_json::json!({ "success": false, "error": err.to_string() })).into_response()),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateUserReq {
+    username: String,
+    password: String,
+    role: Option<String>,
+}
+
+async fn api_users_list(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> AppResult {
     if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
+        return Ok(response);
+    }
+    let users = state.db.list_users().unwrap_or_default();
+    let sanitized: Vec<serde_json::Value> = users
+        .into_iter()
+        .map(|u| {
+            serde_json::json!({
+                "id": u.id,
+                "username": u.username,
+                "role": u.role,
+                "created_at": u.created_at
+            })
+        })
+        .collect();
+    Ok(Json(sanitized).into_response())
+}
+
+async fn api_users_add(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Json(payload): Json<CreateUserReq>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
+        return Ok(response);
+    }
+    let username = payload.username.trim();
+    if username.is_empty() || payload.password.trim().is_empty() {
+        return Ok(Json(serde_json::json!({ "success": false, "error": "Username and password required" })).into_response());
+    }
+    let role = payload.role.as_deref().unwrap_or("viewer");
+    let role_normalized = if role == "admin" { "admin" } else { "viewer" };
+    let hash = security::hash_password(&payload.password);
+    match state.db.create_user(username, &hash, role_normalized) {
+        Ok(_) => Ok(Json(serde_json::json!({ "success": true })).into_response()),
+        Err(err) => Ok(Json(serde_json::json!({ "success": false, "error": err.to_string() })).into_response()),
+    }
+}
+
+async fn api_users_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    AxumPath(id): AxumPath<i64>,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
+        return Ok(response);
+    }
+    let current_user = authenticated_user(&state, &headers);
+    if let Some(u) = current_user {
+        if u.id == id {
+            return Ok(Json(serde_json::json!({ "success": false, "error": "Cannot delete your own active user account" })).into_response());
+        }
+    }
+    match state.db.delete_user(id) {
+        Ok(_) => Ok(Json(serde_json::json!({ "success": true })).into_response()),
+        Err(err) => Ok(Json(serde_json::json!({ "success": false, "error": err.to_string() })).into_response()),
+    }
+}
+
+async fn snapshot(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
+    if let Some(response) = require_user_login(&state, &headers, &uri, true)? {
         return Ok(response);
     }
     serve_snapshot(&state).await
@@ -1896,17 +2368,34 @@ fn clean_return_path(path: &str) -> String {
     }
 }
 
-fn require_admin_login(
+fn authenticated_user(state: &AppState, headers: &HeaderMap) -> Option<db::User> {
+    let (user_id, _) = authenticated(state, headers)?;
+    state.db.get_user_by_id(user_id).ok().flatten()
+}
+
+fn require_login(
     state: &AppState,
     headers: &HeaderMap,
     uri: &Uri,
     api: bool,
+    require_admin: bool,
 ) -> Result<Option<Response>, AppError> {
     let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete || settings.admin_password_hash.is_empty() {
+    if !settings.setup_complete || !state.db.has_users().unwrap_or(false) {
         return Ok(None);
     }
-    if authenticated(state, headers) {
+    let user = authenticated_user(state, headers);
+    if let Some(user) = &user {
+        if require_admin && !user.is_admin() {
+            if api {
+                return Ok(Some(
+                    (StatusCode::FORBIDDEN, "Admin privilege required.\n").into_response(),
+                ));
+            }
+            return Ok(Some(
+                Redirect::to("/dashboard?error=access_denied").into_response(),
+            ));
+        }
         return Ok(None);
     }
     if api {
@@ -1920,25 +2409,54 @@ fn require_admin_login(
     ))
 }
 
-fn authenticated(state: &AppState, headers: &HeaderMap) -> bool {
-    let Some(cookie_header) = headers
+fn require_admin_login(
+    state: &AppState,
+    headers: &HeaderMap,
+    uri: &Uri,
+    api: bool,
+) -> Result<Option<Response>, AppError> {
+    require_login(state, headers, uri, api, true)
+}
+
+fn require_user_login(
+    state: &AppState,
+    headers: &HeaderMap,
+    uri: &Uri,
+    api: bool,
+) -> Result<Option<Response>, AppError> {
+    require_login(state, headers, uri, api, false)
+}
+
+fn authenticated(state: &AppState, headers: &HeaderMap) -> Option<(i64, String)> {
+    let cookie_header = headers
         .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
+        .and_then(|value| value.to_str().ok())?;
     cookie_header
         .split(';')
         .filter_map(|part| part.trim().split_once('='))
-        .any(|(name, value)| {
-            name == SESSION_COOKIE && security::verify_session(&state.secret_key, value)
+        .find_map(|(name, value)| {
+            if name == SESSION_COOKIE {
+                security::verify_session_for_user(&state.secret_key, value)
+            } else {
+                None
+            }
         })
 }
 
-fn with_login_cookie(mut response: Response, state: &AppState) -> Response {
+#[allow(dead_code)]
+fn with_login_cookie(response: Response, state: &AppState) -> Response {
+    with_login_cookie_for_user(response, state, 1, "admin")
+}
+
+fn with_login_cookie_for_user(
+    mut response: Response,
+    state: &AppState,
+    user_id: i64,
+    username: &str,
+) -> Response {
     let cookie = format!(
         "{SESSION_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax",
-        security::sign_session(&state.secret_key)
+        security::sign_session_for_user(&state.secret_key, user_id, username)
     );
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         response.headers_mut().append(header::SET_COOKIE, value);

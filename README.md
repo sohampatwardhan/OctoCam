@@ -54,8 +54,10 @@ Development preferences:
 
 Passwords must never be stored in plaintext by OctoCam.
 
-- OctoCam admin passwords are stored only as salted PBKDF2-HMAC-SHA256 hashes.
-- Password hashes are not returned by the settings API.
+- User accounts are stored in SQLite (`/var/lib/octocam/octocam.db`).
+- Passwords are stored only as salted PBKDF2-HMAC-SHA256 hashes.
+- WebAuthn Passkeys (Touch ID, Face ID, YubiKey) are supported for fast and secure remote/local authentication.
+- Password hashes and private credential keys are never returned by the settings API.
 - The web session signing key is generated at install time and stored at
   `/var/lib/octocam/secret-key`.
 - Wi-Fi passwords are not stored in OctoCam settings or scan caches.
@@ -69,52 +71,22 @@ Passwords must never be stored in plaintext by OctoCam.
   never writes an empty key file except on a confirmed last-key revoke. Adding
   or revoking a key requires an authenticated admin session and a same-origin
   request. Full key material is never placed in a URL or log line.
-- Configuration backups contain no secrets: the admin password hash is never
+- Configuration backups contain no secrets: admin password hashes are never
   exported, and Wi-Fi credentials are never included (they live in
   NetworkManager, not OctoCam). Backup and restore both require setup to be
   complete and an authenticated admin session; restore additionally requires a
   same-origin request and caps the upload size. A restored file can only set
-  the portable settings — it cannot overwrite the admin password, `setup_complete`,
+  the portable settings — it cannot overwrite admin passwords, `setup_complete`,
   Wi-Fi SSID, or pairing state on the target device.
 
 ## OS Baseline
 
-Target Debian 12 `bookworm` for the first OctoCam appliance builds. Bookworm is
-available both as Raspberry Pi OS Legacy Lite 64-bit and as DietPi for Raspberry
-Pi Zero 2 W, and it gives the project a better-tested, lower-footprint base than
-the newer Debian 13 `trixie` images.
+Target Debian 12 `bookworm` for OctoCam builds. **DietPi for Raspberry Pi Zero 2 W** remains the active OS baseline due to its lightweight footprint and minimal background overhead. Raspberry Pi OS Lite (64-bit) remains an evaluation option down the line for direct first-party hardware support.
 
 Use a minimal image, not a desktop image. The device should boot to
 `multi-user.target`, run only the services needed for Wi-Fi, SSH, camera,
 OctoCam, RTSP, and optional HomeKit accessory support, and avoid background desktop or
 developer conveniences.
-
-Raspberry Pi OS Legacy Lite is the reference baseline because it is the most
-boring path for Raspberry Pi camera, libcamera/rpicam, and first-party Pi
-support.
-
-DietPi is the leading low-overhead candidate because it is Debian with reduced
-bloat, supports the Raspberry Pi Zero 2 W, and supports the Raspberry Pi camera.
-If it preserves the camera and Wi-Fi setup behavior, it may become the preferred
-OctoCam image.
-
-Trixie remains the forward-looking target once it has more Raspberry Pi field
-time or when a required camera, NetworkManager, HomeKit, or security feature
-depends on it.
-
-DietPi acceptance criteria:
-
-- Use the ARMv8 Raspberry Pi Zero 2 W image, preferably Debian 12 `bookworm`
-  while Bookworm remains the OctoCam baseline.
-- Verify Raspberry Pi camera support, rpicam/libcamera packages, and the
-  chosen RTSP service.
-- Verify NetworkManager, `nmcli`, setup AP mode, and captive portal behavior.
-- Verify HomeKit accessory runtime memory on a 512MB board.
-- Measure idle RAM, boot time, write rate, and thermal behavior against
-  Raspberry Pi OS Legacy Lite.
-
-DietPi should become the preferred image if it preserves camera and Wi-Fi
-behavior while giving meaningful headroom on the Pi Zero 2 W.
 
 Conservative minimization is available during install:
 

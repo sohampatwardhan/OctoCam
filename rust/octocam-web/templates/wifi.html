@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.device_name }} Wi-Fi</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260707-matter-status-layout">
-    <script src="/static/app.js?v=20260707-matter-status-layout" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20260730-shadcn-tokens">
+    <script src="/static/app.js?v=20260730-shadcn-tokens" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -67,17 +67,17 @@
               </a>
             </div>
             {% if stored_profiles.len() > 0 %}
-              <div class="profile-list">
+              <div class="data-list">
                 {% for profile in stored_profiles %}
-                  <div class="profile-row">
+                  <div class="data-row">
                     <div>
                       <strong>{{ profile.name }}</strong>
                       <span>{{ profile.security }} · {{ profile.source }}</span>
                     </div>
                     {% if profile.active %}
-                      <span class="profile-status">Connected</span>
+                      <span class="data-row-status">Connected</span>
                     {% else if profile.can_delete %}
-                      <form class="profile-delete-form" method="post" action="/wifi/delete" data-confirm-message="Delete saved Wi-Fi profile {{ profile.name }}?">
+                      <form class="data-row-actions" method="post" action="/wifi/delete" data-confirm-message="Delete saved Wi-Fi profile {{ profile.name }}?">
                         <input type="hidden" name="wifi_profile_name" value="{{ profile.name }}">
                         <input type="hidden" name="wifi_profile_source" value="{{ profile.delete_source }}">
                         <button class="danger-icon-button" type="submit" aria-label="Delete saved Wi-Fi profile {{ profile.name }}" title="Delete saved Wi-Fi profile">
