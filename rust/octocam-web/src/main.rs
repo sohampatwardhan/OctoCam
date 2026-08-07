@@ -518,6 +518,7 @@ async fn async_main() {
         .route("/api/identity", get(api_identity))
         .route("/api/rtsp", get(api_rtsp))
         .route("/api/system", get(api_system))
+        .route("/api/logs", get(api_logs))
         .route("/api/homekit", get(api_homekit))
         .route("/api/matter", get(api_matter))
         .route("/api/matter/reset", post(api_matter_reset))
@@ -2292,6 +2293,22 @@ async fn api_system(
         .await
         .map_err(|e| api::ApiError::internal(e.0))?;
     Ok(api::ok_json(status))
+}
+
+async fn api_logs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let status = run_blocking(system::status)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    Ok(api::ok_json(serde_json::json!({ "lines": status.logs })))
 }
 
 async fn api_homekit(
