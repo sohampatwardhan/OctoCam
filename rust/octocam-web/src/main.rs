@@ -512,6 +512,8 @@ async fn async_main() {
         .route("/generate_204", get(captive_probe))
         .route("/api/settings", get(api_settings))
         .route("/api/status", get(api_status))
+        .route("/api/identity", get(api_identity))
+        .route("/api/rtsp", get(api_rtsp))
         .route("/api/me", get(api_me))
         .route("/api/motion/events", get(api_motion_events))
         .route("/api/wifi/networks", get(api_wifi_networks))
@@ -1851,6 +1853,52 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
     .into_response())
 }
 
+async fn api_identity(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let status = run_blocking(system::status)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    Ok(api::ok_json(serde_json::json!({
+        "settings": settings::public_settings(&settings),
+        "system": status,
+    })))
+}
+
+#[derive(Serialize)]
+struct RtspUrls {
+    main: String,
+    sub: String,
+    has_sub: bool,
+}
+
+async fn api_rtsp(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let urls = stream_urls_for(&settings, request_hostname(&headers), "rtsp");
+    Ok(api::ok_json(RtspUrls {
+        main: urls.main,
+        sub: urls.sub,
+        has_sub: urls.has_sub,
+    }))
+}
+
 async fn api_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let settings = settings::load_settings(&state.config_path);
     let setup_required = !settings.setup_complete
@@ -2682,5 +2730,23 @@ mod tests {
         // Never echo the probe's Host header (captive.apple.com etc.) — the client
         // cannot resolve it on the uplink-less AP. Always the gateway IP literal.
         assert_eq!(captive_redirect_target(), "http://10.42.0.1/setup");
+    }
+
+    #[test]
+    fn rtsp_urls_dto_serializes_with_expected_field_names() {
+        let urls = RtspUrls {
+            main: "rtsp://octocam.local:8554/main".to_string(),
+            sub: "rtsp://octocam.local:8554/sub".to_string(),
+            has_sub: true,
+        };
+        let value = serde_json::to_value(&urls).expect("serialize RtspUrls");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "main": "rtsp://octocam.local:8554/main",
+                "sub": "rtsp://octocam.local:8554/sub",
+                "has_sub": true,
+            })
+        );
     }
 }
