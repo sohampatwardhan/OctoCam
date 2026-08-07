@@ -62,7 +62,12 @@ export default function Login() {
   const loginMutation = useMutation({
     mutationFn: () => apiPost<LoginResponse>("/api/login", { username, password }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["me"] })
+      // refetchQueries (not invalidateQueries) — the cache is still holding
+      // the errored 401 from the pre-login /api/me probe, which is inactive
+      // by the time we navigate. invalidateQueries defaults to
+      // refetchType:"active" and would skip it, so AuthGate would remount
+      // against the stale error and bounce back to /login.
+      await queryClient.refetchQueries({ queryKey: ["me"] })
       navigate("/", { replace: true })
     },
   })
@@ -115,7 +120,9 @@ export default function Login() {
       })
 
       if (finishData.success) {
-        await queryClient.invalidateQueries({ queryKey: ["me"] })
+        // Same reasoning as the password-login path above: refetch (not
+        // invalidate) so AuthGate sees an authenticated cache on remount.
+        await queryClient.refetchQueries({ queryKey: ["me"] })
         navigate("/", { replace: true })
       } else if (mediationMode !== "conditional") {
         setPasskeyError(finishData.error || "Passkey authentication failed.")
