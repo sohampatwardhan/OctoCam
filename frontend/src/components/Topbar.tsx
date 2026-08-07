@@ -1,0 +1,68 @@
+import { useQuery } from "@tanstack/react-query"
+import { Link, useNavigate } from "react-router-dom"
+import { Camera, LogOut, Settings } from "lucide-react"
+import { apiGet, apiPost, type Status } from "@/lib/api"
+import { useMe } from "@/hooks/useAuth"
+import { queryClient } from "@/lib/queryClient"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { PowerDialog } from "@/components/PowerDialog"
+
+const LIVE_STATES = new Set(["active", "running", "connected"])
+
+export function Topbar() {
+  const navigate = useNavigate()
+  const { data: me } = useMe()
+  // Best-effort live status — the chip degrades to nothing if /api/status is
+  // unreachable rather than blocking the shell. Task 4's dashboard hook will
+  // likely absorb this fetch; duplicating it here keeps this task testable alone.
+  const { data: status } = useQuery({
+    queryKey: ["status"],
+    queryFn: () => apiGet<Status>("/api/status"),
+    refetchInterval: 10_000,
+    retry: false,
+  })
+
+  const rtspState = status?.services.rtsp.state
+  const isLive = rtspState ? LIVE_STATES.has(rtspState) : false
+
+  async function handleLogout() {
+    try {
+      await apiPost("/api/logout", {})
+    } finally {
+      queryClient.clear()
+      navigate("/login")
+    }
+  }
+
+  return (
+    <header className="sticky top-0 z-10 flex h-12 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur">
+      <Link to="/" className="flex items-center gap-2 font-heading text-sm font-semibold tracking-tight">
+        <Camera className="size-4 text-primary" />
+        OctoCam
+      </Link>
+
+      <div className="ml-auto flex items-center gap-2">
+        {rtspState && (
+          <Badge variant={isLive ? "default" : "secondary"} className="gap-1.5">
+            <span
+              className={`size-1.5 rounded-full ${isLive ? "bg-primary-foreground" : "bg-muted-foreground"}`}
+              aria-hidden="true"
+            />
+            {isLive ? "Live" : rtspState}
+          </Badge>
+        )}
+
+        <Button variant="ghost" size="icon" aria-label="Settings" title="Settings" render={<a href="/settings" />}>
+          <Settings />
+        </Button>
+
+        {me?.is_admin && <PowerDialog />}
+
+        <Button variant="ghost" size="icon" aria-label="Log out" title="Log out" onClick={handleLogout}>
+          <LogOut />
+        </Button>
+      </div>
+    </header>
+  )
+}
