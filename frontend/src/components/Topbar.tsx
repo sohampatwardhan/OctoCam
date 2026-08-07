@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom"
-import { Camera, LogOut, Settings } from "lucide-react"
+import { Camera, LogOut, Menu, Settings } from "lucide-react"
 import { apiPost } from "@/lib/api"
 import { useMe } from "@/hooks/useAuth"
 import { useStatus } from "@/hooks/useStatus"
@@ -8,7 +8,14 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { PowerDialog } from "@/components/PowerDialog"
 
-export function Topbar() {
+interface TopbarProps {
+  /** Shown only on routes that render the Sidebar (i.e. not "/"). */
+  showMenuButton?: boolean
+  menuOpen?: boolean
+  onMenuClick?: () => void
+}
+
+export function Topbar({ showMenuButton = false, menuOpen = false, onMenuClick }: TopbarProps = {}) {
   const navigate = useNavigate()
   const { data: me } = useMe()
   // Shared with the dashboard's useStatus() (same query key) — no duplicate
@@ -32,6 +39,19 @@ export function Topbar() {
 
   return (
     <header className="sticky top-0 z-10 flex h-12 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-blur">
+      {showMenuButton && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Toggle navigation"
+          aria-expanded={menuOpen}
+          className="md:hidden"
+          onClick={onMenuClick}
+        >
+          <Menu />
+        </Button>
+      )}
+
       <Link to="/" className="flex items-center gap-2 font-heading text-sm font-semibold tracking-tight">
         <Camera className="size-4 text-primary" />
         OctoCam
