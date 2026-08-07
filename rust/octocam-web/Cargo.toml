@@ -23,6 +23,7 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
 urlencoding = "2"
 
 [dev-dependencies]

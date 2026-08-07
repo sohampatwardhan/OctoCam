@@ -6,6 +6,7 @@ mod mediamtx;
 mod proc;
 mod security;
 mod settings;
+mod spa;
 mod ssh_keys;
 mod streams;
 mod system;
@@ -526,6 +527,9 @@ async fn async_main() {
         .route("/snapshot.jpg", get(snapshot))
         .route("/sw.js", get(service_worker))
         .route("/static/{*path}", get(static_asset))
+        .route("/app", get(spa::spa_index))
+        .route("/app/", get(spa::spa_index))
+        .route("/app/{*path}", get(spa::spa_asset))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
