@@ -2209,6 +2209,13 @@ async fn api_settings_update(
     })))
 }
 
+#[derive(Serialize)]
+struct BrowserStreamUrls {
+    main: String,
+    sub: String,
+    has_sub: bool,
+}
+
 async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
     if let Some(response) = require_user_login(&state, &headers, &uri, true)? {
         return Ok(response);
@@ -2224,11 +2231,18 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         status: system::SystemStatus,
         viewers: Option<streams::ViewerReport>,
         motion_detected: bool,
+        browser_stream_urls: BrowserStreamUrls,
     }
+    let urls = stream_urls_for(&settings, request_hostname(&headers), "webrtc");
     Ok(Json(StatusResponse {
         status: status?,
         viewers,
         motion_detected: state.motion_detected.load(std::sync::atomic::Ordering::Relaxed),
+        browser_stream_urls: BrowserStreamUrls {
+            main: urls.main,
+            sub: urls.sub,
+            has_sub: urls.has_sub,
+        },
     })
     .into_response())
 }
@@ -3396,6 +3410,24 @@ mod tests {
             serde_json::json!({
                 "main": "rtsp://octocam.local:8554/main",
                 "sub": "rtsp://octocam.local:8554/sub",
+                "has_sub": true,
+            })
+        );
+    }
+
+    #[test]
+    fn browser_stream_urls_dto_serializes_with_expected_field_names() {
+        let urls = BrowserStreamUrls {
+            main: "http://octocam.local:8889/main".to_string(),
+            sub: "http://octocam.local:8889/sub".to_string(),
+            has_sub: true,
+        };
+        let value = serde_json::to_value(&urls).expect("serialize BrowserStreamUrls");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "main": "http://octocam.local:8889/main",
+                "sub": "http://octocam.local:8889/sub",
                 "has_sub": true,
             })
         );
