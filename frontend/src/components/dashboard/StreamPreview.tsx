@@ -61,7 +61,8 @@ export function StreamPreview() {
   const playing = prefs?.playing ?? false
 
   const mainIsFull = Boolean(
-    status?.viewers?.main && status.viewers.main.total >= status.viewers.main.capacity
+    status?.viewers?.main &&
+      status.viewers.main.browser + status.viewers.main.rtsp >= status.viewers.main.capacity
   )
 
   function selectStream(next: StreamKey) {

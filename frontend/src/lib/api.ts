@@ -56,6 +56,8 @@ export interface ClientView {
 }
 
 export interface PathViewers {
+  browser: number
+  rtsp: number
   total: number
   capacity: number
   clients: ClientView[]

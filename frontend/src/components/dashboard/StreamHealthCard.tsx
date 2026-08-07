@@ -15,7 +15,7 @@ export function StreamHealthCard() {
         {!isLoading && !isError && rtspState && (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
             <span
-              className={cn("size-1.5 rounded-full", isActive ? "bg-emerald-500" : "bg-muted-foreground/60")}
+              className={cn("size-1.5 rounded-full", isActive ? "bg-success" : "bg-muted-foreground/60")}
               aria-hidden="true"
             />
             {isActive ? "Active" : rtspState}
