@@ -515,6 +515,9 @@ async fn async_main() {
         .route("/api/identity", get(api_identity))
         .route("/api/rtsp", get(api_rtsp))
         .route("/api/system", get(api_system))
+        .route("/api/homekit", get(api_homekit))
+        .route("/api/matter", get(api_matter))
+        .route("/api/matter/reset", post(api_matter_reset))
         .route("/api/power", post(api_power))
         .route("/api/time/sync", post(api_time_sync))
         .route("/api/me", get(api_me))
@@ -1918,6 +1921,90 @@ async fn api_system(
     Ok(api::ok_json(status))
 }
 
+async fn api_homekit(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let view = homekit_view(&state.homekit_status_path, &settings);
+    Ok(api::ok_json(serde_json::json!({
+        "status": view.status,
+        "paired": view.paired,
+        "has_pairing": view.has_pairing,
+        "pincode": view.pincode,
+        "setup_uri": view.setup_uri,
+        "has_qr": view.has_qr,
+        "qr_data_url": view.qr_data_url,
+        "error": view.error,
+        "has_error": view.has_error,
+    })))
+}
+
+async fn api_matter(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let identity = if settings.matter_enabled {
+        matter::load_or_generate_identity(&state.matter_identity_path).ok()
+    } else {
+        None
+    };
+    let matter_status = matter::read_status(&state.matter_status_path);
+    let mut view = matter::view(&settings, identity.as_ref(), &matter_status);
+    view.snapshot_endpoint_down = state
+        .internal_listener_down
+        .load(std::sync::atomic::Ordering::Relaxed);
+    Ok(api::ok_json(serde_json::json!({
+        "status": view.status,
+        "commissioned": view.commissioned,
+        "fabric_count": view.fabric_count,
+        "orphaned_fabrics": view.orphaned_fabrics,
+        "manual_code": view.manual_code,
+        "qr_svg": view.qr_svg,
+        "stream_source": view.stream_source,
+        "error": view.error,
+        "has_error": view.has_error,
+        "ipv6_ok": view.ipv6_ok,
+        "admin_password_set": view.admin_password_set,
+        "snapshot_endpoint_down": view.snapshot_endpoint_down,
+    })))
+}
+
+async fn api_matter_reset(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let (storage, env_path, id_path) = (
+        state.matter_storage_dir.clone(),
+        state.matter_env_path.clone(),
+        state.matter_identity_path.clone(),
+    );
+    run_blocking(move || matter::reset_pairing(&settings, &storage, &env_path, &id_path))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    Ok(api::ok_json(serde_json::json!({ "success": true })))
+}
+
 #[derive(Deserialize)]
 struct PowerReq {
     action: String,
@@ -2837,6 +2924,68 @@ mod tests {
                 "has_sub": true,
             })
         );
+    }
+
+    #[test]
+    fn homekit_view_maps_status_file_fields_for_api_homekit() {
+        // api_homekit serializes these exact fields off HomeKitView; pin the
+        // shape here so a HomeKitView field rename is caught at compile+test
+        // time rather than silently changing the wire contract.
+        let dir = std::env::temp_dir().join(format!("octocam-homekit-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("homekit-status.json");
+        std::fs::write(
+            &path,
+            r#"{"status":"paired","paired":true,"pincode":"123-45-678","setup_uri":"X-HM://abc","qr_data_url":"data:image/png;base64,xyz","error":""}"#,
+        )
+        .unwrap();
+        let mut settings = Settings::default();
+        settings.homekit_enabled = true;
+        let view = homekit_view(&path, &settings);
+        let json = serde_json::json!({
+            "status": view.status,
+            "paired": view.paired,
+            "has_pairing": view.has_pairing,
+            "pincode": view.pincode,
+            "setup_uri": view.setup_uri,
+            "has_qr": view.has_qr,
+            "qr_data_url": view.qr_data_url,
+            "error": view.error,
+            "has_error": view.has_error,
+        });
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "status": "paired",
+                "paired": true,
+                "has_pairing": true,
+                "pincode": "123-45-678",
+                "setup_uri": "X-HM://abc",
+                "has_qr": true,
+                "qr_data_url": "data:image/png;base64,xyz",
+                "error": "",
+                "has_error": false,
+            })
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn matter_view_disabled_without_identity_maps_expected_fields_for_api_matter() {
+        // api_matter never loads an identity when matter_enabled is false; the
+        // resulting MatterView should report a clean disabled state with no
+        // manual code or QR payload.
+        let settings = Settings::default();
+        assert!(!settings.matter_enabled);
+        let status = matter::read_status(std::path::Path::new("/nonexistent/matter-status.json"));
+        let view = matter::view(&settings, None, &status);
+        assert_eq!(view.status, "disabled");
+        assert_eq!(view.manual_code, "");
+        assert_eq!(view.qr_svg, "");
+        assert_eq!(view.commissioned, false);
+        assert_eq!(view.fabric_count, 0);
+        assert!(!view.orphaned_fabrics);
+        assert!(!view.has_error);
     }
 
     #[test]
