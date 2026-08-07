@@ -149,3 +149,16 @@ export interface SavedWifiProfile {
   can_delete: boolean
   delete_source: string
 }
+
+// `GET /api/setup` — see api_setup_get in main.rs. Also embedded in `Me`
+// above for the post-login probe; this is the standalone pre-auth shape.
+export interface SetupStatus {
+  setup_required: boolean
+}
+
+// `POST /api/setup` response — see api_setup_post in main.rs. Soft failures
+// (password mismatch, Wi-Fi join failure) come back as HTTP 200 with
+// success:false, so apiPost resolves normally rather than throwing.
+export type SetupResult =
+  | { success: true }
+  | { success: false; field?: string; message?: string }

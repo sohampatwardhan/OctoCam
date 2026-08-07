@@ -3,12 +3,14 @@ import { AppShell } from "@/components/AppShell"
 import { AuthGate } from "@/components/AuthGate"
 import Dashboard from "@/routes/Dashboard"
 import Login from "@/routes/Login"
+import Setup from "@/routes/Setup"
 import Wifi from "@/routes/Wifi"
 
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/setup" element={<Setup />} />
       <Route
         element={
           <AuthGate>

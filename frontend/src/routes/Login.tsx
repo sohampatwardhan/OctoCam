@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { Camera, Fingerprint, Loader2 } from "lucide-react"
-import { apiGet, apiPost } from "@/lib/api"
+import { apiGet, apiPost, type SetupStatus } from "@/lib/api"
 import { queryClient } from "@/lib/queryClient"
 import {
   base64urlToBuffer,
@@ -38,10 +38,6 @@ interface PasskeyLoginFinish {
   success: boolean
   redirect?: string
   error?: string
-}
-
-interface SetupStatus {
-  setup_required: boolean
 }
 
 export default function Login() {
@@ -230,9 +226,9 @@ export default function Login() {
           {setup?.setup_required && (
             <p className="text-center text-xs text-muted-foreground">
               First time here?{" "}
-              <a href="/setup" className="underline underline-offset-2 hover:text-foreground">
+              <Link to="/setup" className="underline underline-offset-2 hover:text-foreground">
                 Finish setup
-              </a>
+              </Link>
             </p>
           )}
         </CardContent>
