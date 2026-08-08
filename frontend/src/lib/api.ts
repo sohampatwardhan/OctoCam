@@ -431,6 +431,19 @@ export interface PasskeyDto {
   last_used_at: string | null
 }
 
+// `GET /api/users` — user accounts / RBAC, admin-only. See api_users_list in
+// rust/octocam-web/src/main.rs (~line 3051). `role` is whatever string is
+// stored in the `users` table; `api_users_add` only ever writes "admin" or
+// "viewer" (anything else it sends normalizes to "viewer"), but this stays a
+// plain `string` rather than a union since the server doesn't validate it on
+// read.
+export interface UserDto {
+  id: number
+  username: string
+  role: string
+  created_at: string
+}
+
 // `GET /api/setup` — see api_setup_get in main.rs. Also embedded in `Me`
 // above for the post-login probe; this is the standalone pre-auth shape.
 export interface SetupStatus {

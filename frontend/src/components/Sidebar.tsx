@@ -54,7 +54,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "System info", to: "/system", icon: Server, adminOnly: true, inApp: true },
       { label: "System logs", to: "/logs", icon: ScrollText, adminOnly: true, inApp: true },
       { label: "SSH keys", to: "/ssh-keys", icon: KeyRound, adminOnly: true, inApp: true },
-      { label: "Admin", to: "/admin", icon: Shield, adminOnly: true },
+      { label: "Admin", to: "/admin", icon: Shield, adminOnly: true, inApp: true },
     ],
   },
   {
