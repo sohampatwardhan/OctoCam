@@ -11,13 +11,15 @@ import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CopyButton } from "@/components/CopyButton"
 
-export default function Rtsp() {
+/**
+ * Renders RTSP controls as a form independent from the surrounding stream form.
+ * Separate local state and mutation ownership keep either save from submitting or resetting
+ * unsaved values in the other settings group.
+ */
+export function RtspSection() {
   const { data: settings, isLoading, isError } = useSettings()
   const updateSettings = useUpdateSettings()
 
-  // Local, editable copy of the fields this form owns — seeded once from
-  // the server so the user's in-progress edits survive the background
-  // refetches useSettings/useUpdateSettings trigger (e.g. after Save).
   const [initialized, setInitialized] = useState(false)
   const [enabled, setEnabled] = useState(false)
   const [path, setPath] = useState("")
@@ -42,8 +44,10 @@ export default function Rtsp() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6">
-      <h1 className="font-heading text-2xl font-semibold tracking-tight">RTSP</h1>
+    <section className="flex flex-col gap-6" aria-labelledby="rtsp-heading">
+      <h2 id="rtsp-heading" className="font-heading text-xl font-semibold tracking-tight">
+        RTSP
+      </h2>
 
       {isError ? (
         <p className="text-sm text-muted-foreground">Device unreachable.</p>
@@ -70,7 +74,7 @@ export default function Rtsp() {
 
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="rtsp_path">Path</Label>
-                    <Input id="rtsp_path" value={path} maxLength={80} onChange={(e) => setPath(e.target.value)} />
+                    <Input id="rtsp_path" value={path} maxLength={80} onChange={(event) => setPath(event.target.value)} />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
@@ -81,7 +85,7 @@ export default function Rtsp() {
                       min={1}
                       max={4}
                       value={maxClients}
-                      onChange={(e) => setMaxClients(e.target.value)}
+                      onChange={(event) => setMaxClients(event.target.value)}
                     />
                   </div>
 
@@ -104,7 +108,7 @@ export default function Rtsp() {
           {initialized && enabled && <RtspUrlsCard />}
         </div>
       )}
-    </div>
+    </section>
   )
 }
 

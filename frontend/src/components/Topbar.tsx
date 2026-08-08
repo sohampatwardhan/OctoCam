@@ -69,7 +69,14 @@ export function Topbar({ showMenuButton = false, menuOpen = false, onMenuClick }
           </Badge>
         )}
 
-        <Button variant="ghost" size="icon" aria-label="Settings" title="Settings" render={<a href="/settings" />}>
+        <Button
+          variant="ghost"
+          size="icon"
+          nativeButton={false}
+          aria-label="Settings"
+          title="Settings"
+          render={<a href="/settings/account" />}
+        >
           <Settings />
         </Button>
 

@@ -11,6 +11,7 @@ import { ImageSection } from "@/components/stream/ImageSection"
 import { MotionSection } from "@/components/stream/MotionSection"
 import { HksvSection } from "@/components/stream/HksvSection"
 import { OverlaySection } from "@/components/stream/OverlaySection"
+import { RtspSection } from "@/components/stream/RtspSection"
 import type { StreamFormPatch, StreamFormState } from "@/components/stream/types"
 
 const ALL_ZONES = (1n << 64n) - 1n
@@ -169,6 +170,8 @@ export default function StreamSettings() {
           </Card>
         </form>
       )}
+
+      <RtspSection />
     </div>
   )
 }
