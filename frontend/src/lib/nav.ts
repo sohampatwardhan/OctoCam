@@ -16,6 +16,7 @@ export const ADMIN_ONLY_SETTINGS_SLUGS = [
   "identity",
   "wifi",
   "stream",
+  "motion",
   "homekit",
   "matter",
   "system",

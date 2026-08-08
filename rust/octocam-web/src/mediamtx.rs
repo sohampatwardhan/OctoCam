@@ -299,9 +299,22 @@ pub fn mediamtx_scaled_path(
     max_readers: i32,
 ) -> String {
     let bitrate = bitrate_kbps * 1000;
+    // Latency budget for the scaled path. Three defaults dominate if left alone:
+    //
+    // - ffmpeg probes up to 5s of input before emitting anything. The source is
+    //   a local RTSP stream whose SDP already describes it, so the probe buys
+    //   nothing; `nobuffer`/`low_delay` with a minimal probe drops that wait.
+    // - x264's default keyint is 250 frames, which at these frame rates is
+    //   ~25s between IDRs. A WebRTC viewer cannot render until one arrives, so
+    //   the GOP alone accounted for most of the join delay. Pin it to 2s and
+    //   disable scene-cut keyframes so the interval stays predictable.
+    // - A VBV buffer of 2x the bitrate lets rate control run ~2s behind. Half
+    //   the bitrate keeps it honest; `zerolatency` already removes lookahead
+    //   and B-frames.
+    let gop = (fps * 2).max(1);
     let command = format!(
-        "ffmpeg -hide_banner -loglevel warning -rtsp_transport tcp -i rtsp://127.0.0.1:8554/{source_path} -vf scale={width}:{height},fps={fps} -c:v libx264 -preset veryfast -tune zerolatency -profile:v baseline -b:v {bitrate} -maxrate {bitrate} -bufsize {bufsize} -an -f rtsp rtsp://127.0.0.1:$RTSP_PORT/{name}",
-        bufsize = bitrate * 2,
+        "ffmpeg -hide_banner -loglevel warning -fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -rtsp_transport tcp -i rtsp://127.0.0.1:8554/{source_path} -vf scale={width}:{height},fps={fps} -c:v libx264 -preset veryfast -tune zerolatency -profile:v baseline -g {gop} -keyint_min {fps} -sc_threshold 0 -b:v {bitrate} -maxrate {bitrate} -bufsize {bufsize} -an -f rtsp rtsp://127.0.0.1:$RTSP_PORT/{name}",
+        bufsize = bitrate / 2,
     );
     format!(
         "  {name}:\n    source: publisher\n    maxReaders: {max_readers}\n    runOnDemand: {command}\n    runOnDemandRestart: false\n    runOnDemandStartTimeout: 20s",
@@ -404,6 +417,30 @@ mod tests {
         assert!(content.contains("rtsp://127.0.0.1:8554/main"));
         assert!(content.contains("scale=640:480,fps=10"));
         assert!(!content.contains("rpiCameraSecondary: true"));
+    }
+
+    // Regression guard: the scaled path's latency came almost entirely from
+    // ffmpeg/x264 defaults — a multi-second input probe and a ~25s keyframe
+    // interval that a WebRTC viewer has to wait out before the first frame.
+    #[test]
+    fn scaled_path_pins_low_latency_input_and_gop() {
+        let path = mediamtx_scaled_path("main", "sub", 640, 480, 10, 600, 6);
+
+        for flag in [
+            "-fflags nobuffer",
+            "-flags low_delay",
+            "-probesize 32",
+            "-analyzeduration 0",
+            "-sc_threshold 0",
+        ] {
+            assert!(path.contains(flag), "missing {flag} in: {path}");
+        }
+
+        // 2s of frames, not x264's 250-frame default.
+        assert!(path.contains("-g 20"), "expected a 2s GOP in: {path}");
+        assert!(path.contains("-keyint_min 10"), "expected keyint_min=fps in: {path}");
+        // VBV buffer at half the bitrate, so rate control cannot lag seconds behind.
+        assert!(path.contains("-bufsize 300000"), "expected a tight VBV buffer in: {path}");
     }
 
     #[test]

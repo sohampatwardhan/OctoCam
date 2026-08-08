@@ -1,10 +1,17 @@
 import { useStatus } from "@/hooks/useStatus"
+import { useSettings } from "@/hooks/useSettings"
+import { useMotionEvents } from "@/hooks/useMotionEvents"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
 export function StreamHealthCard() {
   const { data, isLoading, isError } = useStatus()
+  const { data: settings } = useSettings()
+  const motionDetected = useMotionEvents(data?.motion_detected)
+  // Detection being off is a different state from "nothing is moving", and
+  // motion_detected reads false in both.
+  const motionEnabled = settings?.motion_enabled ?? false
   const rtspState = data?.services.rtsp.state
   const isActive = rtspState === "active"
 
@@ -43,10 +50,30 @@ export function StreamHealthCard() {
             />
             <Metric label="Uptime" value={data.uptime ?? "—"} />
             <Metric label="Web UI" value={data.services.octocam_web.state} />
+            <MotionMetric enabled={motionEnabled} detected={motionDetected} />
           </dl>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function MotionMetric({ enabled, detected }: { enabled: boolean; detected: boolean }) {
+  const value = !enabled ? "Off" : detected ? "Motion detected" : "Clear"
+  return (
+    <div className="flex flex-col gap-1">
+      <dt className="text-xs font-medium text-muted-foreground">Motion</dt>
+      <dd className="flex items-center gap-1.5 truncate text-sm font-semibold" title={value}>
+        <span
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            !enabled ? "bg-muted-foreground/60" : detected ? "bg-destructive" : "bg-success"
+          )}
+          aria-hidden="true"
+        />
+        {value}
+      </dd>
+    </div>
   )
 }
 

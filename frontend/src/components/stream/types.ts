@@ -22,14 +22,6 @@ export interface StreamFormState {
   vflip: boolean
   noirMode: boolean
 
-  motionEnabled: boolean
-  motionSensitivity: string
-  // A u64 bitmask. Kept as BigInt end-to-end in the UI — Number can't
-  // represent all 64 bits without precision loss (see api.ts's
-  // Settings.motion_zones comment). Serialized to a decimal string only when
-  // building the PUT patch.
-  motionZones: bigint
-
   hksvEnabled: boolean
 
   textOverlayEnabled: boolean
@@ -41,3 +33,17 @@ export interface StreamFormState {
 }
 
 export type StreamFormPatch = Partial<StreamFormState>
+
+// Motion detection lives on its own page with its own save, so it carries its
+// own form state rather than riding along in the stream patch.
+export interface MotionFormState {
+  motionEnabled: boolean
+  motionSensitivity: string
+  // A u64 bitmask. Kept as BigInt end-to-end in the UI — Number can't
+  // represent all 64 bits without precision loss (see api.ts's
+  // Settings.motion_zones comment). Serialized to a decimal string only when
+  // building the PUT patch.
+  motionZones: bigint
+}
+
+export type MotionFormPatch = Partial<MotionFormState>

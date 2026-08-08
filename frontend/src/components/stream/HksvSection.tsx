@@ -4,6 +4,12 @@ import type { StreamFormPatch, StreamFormState } from "@/components/stream/types
 
 interface HksvSectionProps {
   value: StreamFormState
+  /**
+   * Saved motion state from the device, not local form state — motion now
+   * saves on its own page, so the gate has to follow what the server actually
+   * has rather than unsaved edits elsewhere.
+   */
+  motionEnabled: boolean
   onChange: (patch: StreamFormPatch) => void
 }
 
@@ -11,13 +17,13 @@ interface HksvSectionProps {
 // mirroring settings::enforce_hksv_requires_motion (settings.rs) — the
 // bridge can only start a recording from a motion trigger, so HKSV can't
 // mean anything without it.
-export function HksvSection({ value, onChange }: HksvSectionProps) {
+export function HksvSection({ value, motionEnabled, onChange }: HksvSectionProps) {
   return (
     <Card>
       <CardHeader>
         <CardTitle>HomeKit Secure Video</CardTitle>
         <CardDescription>
-          Requires motion detection above, a Home Hub (HomePod/Apple TV), and an iCloud+ plan with HomeKit Secure
+          Requires motion detection, a Home Hub (HomePod/Apple TV), and an iCloud+ plan with HomeKit Secure
           Video storage. Recording quality is chosen by the Home app.
         </CardDescription>
       </CardHeader>
@@ -26,13 +32,13 @@ export function HksvSection({ value, onChange }: HksvSectionProps) {
           <span className="text-sm font-medium">Record clips to HomeKit on motion</span>
           <Switch
             id="hksv_enabled"
-            checked={value.hksvEnabled && value.motionEnabled}
-            disabled={!value.motionEnabled}
+            checked={value.hksvEnabled && motionEnabled}
+            disabled={!motionEnabled}
             onCheckedChange={(checked) => onChange({ hksvEnabled: checked })}
           />
         </label>
-        {!value.motionEnabled && (
-          <p className="mt-2 text-sm text-muted-foreground">Turn on motion detection above to enable this.</p>
+        {!motionEnabled && (
+          <p className="mt-2 text-sm text-muted-foreground">Turn on motion detection in Motion settings to enable this.</p>
         )}
       </CardContent>
     </Card>

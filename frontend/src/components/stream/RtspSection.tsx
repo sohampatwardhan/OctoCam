@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
-import { CopyButton } from "@/components/CopyButton"
+import { RtspUrlRow } from "@/components/stream/RtspUrlRow"
+import { useReportUnsavedChanges } from "@/hooks/useUnsavedChanges"
 
 /**
  * Renders RTSP controls as a form independent from the surrounding stream form.
@@ -33,6 +34,16 @@ export function RtspSection() {
       setInitialized(true)
     }
   }, [settings, initialized])
+
+  // Owns its own save, so it reports separately from the Stream form.
+  const dirty =
+    initialized &&
+    Boolean(settings) &&
+    (enabled !== settings!.rtsp_enabled ||
+      path !== settings!.rtsp_path ||
+      maxClients !== String(settings!.rtsp_max_clients))
+
+  useReportUnsavedChanges({ id: "rtsp", label: "RTSP", anchorId: "rtsp-heading" }, dirty)
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -136,24 +147,11 @@ function RtspUrlsCard() {
           <p className="text-sm text-muted-foreground">Device unreachable.</p>
         ) : (
           <div className="flex flex-col gap-4">
-            <UrlRow label="HD" url={data.main} />
-            {data.has_sub && <UrlRow label="SD" url={data.sub} />}
+            <RtspUrlRow label="HD" url={data.main} />
+            {data.has_sub && <RtspUrlRow label="SD" url={data.sub} />}
           </div>
         )}
       </CardContent>
     </Card>
-  )
-}
-
-function UrlRow({ label, url }: { label: string; url: string }) {
-  const id = `rtsp-url-${label}`
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label} URL</Label>
-      <div className="flex items-center gap-2">
-        <Input id={id} value={url} readOnly className="font-mono text-xs" />
-        <CopyButton value={url} />
-      </div>
-    </div>
   )
 }

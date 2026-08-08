@@ -12,6 +12,7 @@ import Identity from "@/routes/Identity"
 import Logs from "@/routes/Logs"
 import Login from "@/routes/Login"
 import Matter from "@/routes/Matter"
+import MotionSettings from "@/routes/MotionSettings"
 import Setup from "@/routes/Setup"
 import SshKeys from "@/routes/SshKeys"
 import StreamSettings from "@/routes/StreamSettings"
@@ -25,6 +26,7 @@ const ADMIN_ONLY_PAGES: Record<AdminOnlySettingsSlug, ReactElement> = {
   identity: <Identity />,
   wifi: <Wifi />,
   stream: <StreamSettings />,
+  motion: <MotionSettings />,
   homekit: <Homekit />,
   matter: <Matter />,
   system: <System />,
