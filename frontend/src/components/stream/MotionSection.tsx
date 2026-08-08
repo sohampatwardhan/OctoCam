@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { Loader2 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -181,6 +182,7 @@ function MotionZoneGrid({
   // whole visit. Retry a couple of times, spaced out, before falling back.
   const [attempt, setAttempt] = useState(0)
   const [snapshotFailed, setSnapshotFailed] = useState(false)
+  const [snapshotLoaded, setSnapshotLoaded] = useState(false)
   const retryRef = useRef<number | undefined>(undefined)
 
   useEffect(() => () => window.clearTimeout(retryRef.current), [])
@@ -192,6 +194,12 @@ function MotionZoneGrid({
     }
     // Pause before retrying rather than piling onto the same contention.
     retryRef.current = window.setTimeout(() => setAttempt((n) => n + 1), SNAPSHOT_RETRY_MS)
+  }
+
+  function retrySnapshot() {
+    setSnapshotFailed(false)
+    setSnapshotLoaded(false)
+    setAttempt((n) => n + 1)
   }
 
   function setCell(index: number, active: boolean) {
@@ -226,40 +234,62 @@ function MotionZoneGrid({
       }}
     >
       {!snapshotFailed && (
-        // Best-effort backdrop so zones can be lined up against the actual
-        // scene. Falls back to a plain grid once retries are exhausted.
+        // The zones only mean anything against the scene they mask, so the
+        // grid stays hidden until this resolves. Kept mounted while loading so
+        // the request is actually in flight.
         <img
           key={attempt}
           src={attempt === 0 ? "/snapshot.jpg" : `/snapshot.jpg?attempt=${attempt}`}
           alt=""
           aria-hidden="true"
-          className="absolute inset-0 size-full object-cover opacity-70"
+          className={cn(
+            "absolute inset-0 size-full object-cover opacity-70",
+            !snapshotLoaded && "invisible"
+          )}
+          onLoad={() => setSnapshotLoaded(true)}
           onError={handleSnapshotError}
         />
       )}
-      <div className="relative grid size-full grid-cols-8 grid-rows-8">
-        {Array.from({ length: ZONE_COUNT }, (_, index) => {
-          const active = (mask & (1n << BigInt(index))) !== 0n
-          return (
-            <button
-              key={index}
-              type="button"
-              tabIndex={-1}
-              aria-label={`Zone ${index + 1}, ${active ? "detecting motion" : "ignoring motion"}`}
-              aria-pressed={active}
-              className={cn(
-                "border border-white/15 transition-colors",
-                active ? "bg-success/45 hover:bg-success/55" : "bg-destructive/40 hover:bg-destructive/50"
-              )}
-              onPointerDown={(event) => {
-                event.preventDefault()
-                startDrawing(index)
-              }}
-              onPointerEnter={() => continueDrawing(index)}
-            />
-          )
-        })}
-      </div>
+
+      {snapshotFailed ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center">
+          <p className="text-sm text-muted-foreground">
+            Couldn't load a camera snapshot, so there's no scene to place zones against.
+          </p>
+          <Button type="button" variant="secondary" size="xs" onClick={retrySnapshot}>
+            Try again
+          </Button>
+        </div>
+      ) : !snapshotLoaded ? (
+        <div className="absolute inset-0 flex items-center justify-center gap-2 text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          <p className="text-sm">Loading...</p>
+        </div>
+      ) : (
+        <div className="relative grid size-full grid-cols-8 grid-rows-8">
+          {Array.from({ length: ZONE_COUNT }, (_, index) => {
+            const active = (mask & (1n << BigInt(index))) !== 0n
+            return (
+              <button
+                key={index}
+                type="button"
+                tabIndex={-1}
+                aria-label={`Zone ${index + 1}, ${active ? "detecting motion" : "ignoring motion"}`}
+                aria-pressed={active}
+                className={cn(
+                  "border border-white/15 transition-colors",
+                  active ? "bg-success/45 hover:bg-success/55" : "bg-destructive/40 hover:bg-destructive/50"
+                )}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  startDrawing(index)
+                }}
+                onPointerEnter={() => continueDrawing(index)}
+              />
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

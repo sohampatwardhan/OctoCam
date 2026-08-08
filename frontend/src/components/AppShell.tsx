@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Topbar } from "@/components/Topbar"
 import { Sidebar } from "@/components/Sidebar"
+import { UnsavedChangesProvider } from "@/hooks/useUnsavedChanges"
 
 // Every route except the dashboard gets the persistent settings sidebar
 // (two-column grid, ~228px + fluid content). The dashboard stays full-width,
@@ -26,6 +27,7 @@ export function AppShell() {
   }, [])
 
   return (
+    <UnsavedChangesProvider>
     <div className="flex min-h-screen flex-col bg-background">
       <Topbar
         showMenuButton={withSidebar}
@@ -45,5 +47,6 @@ export function AppShell() {
         </main>
       )}
     </div>
+    </UnsavedChangesProvider>
   )
 }

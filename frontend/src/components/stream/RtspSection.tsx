@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Skeleton } from "@/components/ui/skeleton"
 import { RtspUrlRow } from "@/components/stream/RtspUrlRow"
+import { useReportUnsavedChanges } from "@/hooks/useUnsavedChanges"
 
 /**
  * Renders RTSP controls as a form independent from the surrounding stream form.
@@ -33,6 +34,16 @@ export function RtspSection() {
       setInitialized(true)
     }
   }, [settings, initialized])
+
+  // Owns its own save, so it reports separately from the Stream form.
+  const dirty =
+    initialized &&
+    Boolean(settings) &&
+    (enabled !== settings!.rtsp_enabled ||
+      path !== settings!.rtsp_path ||
+      maxClients !== String(settings!.rtsp_max_clients))
+
+  useReportUnsavedChanges({ id: "rtsp", label: "RTSP", anchorId: "rtsp-heading" }, dirty)
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()

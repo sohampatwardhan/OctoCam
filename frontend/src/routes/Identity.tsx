@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useReportUnsavedChanges } from "@/hooks/useUnsavedChanges"
 
 export default function Identity() {
   const { data: settings, isLoading, isError } = useSettings()
@@ -26,6 +27,15 @@ export default function Identity() {
       setInitialized(true)
     }
   }, [settings, initialized])
+
+  const dirty =
+    initialized &&
+    Boolean(settings) &&
+    (deviceName !== settings!.device_name ||
+      room !== settings!.room ||
+      cameraLabel !== settings!.camera_label)
+
+  useReportUnsavedChanges({ id: "identity", label: "Identity", anchorId: "identity-form" }, dirty)
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault()
@@ -56,7 +66,7 @@ export default function Identity() {
                 <Skeleton className="h-8 w-full" />
               </div>
             ) : (
-              <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+              <form id="identity-form" className="flex flex-col gap-4" onSubmit={handleSubmit}>
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="device_name">Device name</Label>
                   <Input

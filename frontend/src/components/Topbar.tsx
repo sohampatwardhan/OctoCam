@@ -1,9 +1,10 @@
-import { Link, useNavigate } from "react-router-dom"
-import { LogOut, Menu, Settings } from "lucide-react"
+import { Link, useLocation, useNavigate } from "react-router-dom"
+import { LogOut, Menu, Save, Settings } from "lucide-react"
 import { RaspberryPiIcon } from "@/components/icons/selfhst"
 import { apiPost } from "@/lib/api"
 import { useMe } from "@/hooks/useAuth"
 import { useStatus } from "@/hooks/useStatus"
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges"
 import { queryClient } from "@/lib/queryClient"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -16,8 +17,42 @@ interface TopbarProps {
   onMenuClick?: () => void
 }
 
+// Points at unsaved work without touching it. Absent entirely when every form
+// on the page is clean, so the topbar stays quiet until it has something to say.
+function UnsavedChangesIndicator() {
+  const { sections } = useUnsavedChanges()
+  if (sections.length === 0) return null
+
+  const summary =
+    sections.length === 1
+      ? `Unsaved changes in ${sections[0].label}`
+      : `Unsaved changes in ${sections.length} sections`
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={summary}
+      title={`${summary} — jump to them`}
+      className="relative text-primary hover:text-primary"
+      onClick={() => {
+        const target = document.getElementById(sections[0].anchorId)
+        target?.scrollIntoView({ behavior: "smooth", block: "center" })
+      }}
+    >
+      <Save />
+      <span
+        aria-hidden="true"
+        className="absolute top-1 right-1 size-1.5 rounded-full bg-primary ring-2 ring-background"
+      />
+    </Button>
+  )
+}
+
 export function Topbar({ showMenuButton = false, menuOpen = false, onMenuClick }: TopbarProps = {}) {
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const onSettingsPage = pathname.startsWith("/settings")
   const { data: me } = useMe()
   // Shared with the dashboard's useStatus() (same query key) — no duplicate
   // fetch. Degrades to nothing if /api/status is unreachable rather than
@@ -69,16 +104,24 @@ export function Topbar({ showMenuButton = false, menuOpen = false, onMenuClick }
           </Badge>
         )}
 
-        <Button
-          variant="ghost"
-          size="icon"
-          nativeButton={false}
-          aria-label="Settings"
-          title="Settings"
-          render={<a href="/settings/account" />}
-        >
-          <Settings />
-        </Button>
+        {/* Settings pages own their own per-form saves, so the shell only
+            reports that unsaved work exists and jumps to it — it never
+            submits. Elsewhere the cog stays put, which also keeps a
+            non-admin's only topbar route to their account page. */}
+        {onSettingsPage ? (
+          <UnsavedChangesIndicator />
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            nativeButton={false}
+            aria-label="Settings"
+            title="Settings"
+            render={<a href="/settings/account" />}
+          >
+            <Settings />
+          </Button>
+        )}
 
         {me?.is_admin && <PowerDialog />}
 
