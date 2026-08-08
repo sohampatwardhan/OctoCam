@@ -23,8 +23,6 @@ interface NavItem {
   icon: LucideIcon
   /** Only shown to admins. */
   adminOnly?: boolean
-  /** Only shown to non-admins (e.g. account settings admins reach via /admin). */
-  hideForAdmin?: boolean
   /** Real SPA route → react-router NavLink with active styling. Anything
    * else is a plain absolute link that leaves the SPA for the Askama pages. */
   inApp?: boolean
@@ -60,7 +58,7 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    items: [{ label: "Account Settings", to: "/settings", icon: Settings, hideForAdmin: true }],
+    items: [{ label: "Account Settings", to: "/settings", icon: Settings, inApp: true }],
   },
 ]
 
@@ -130,7 +128,6 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
     ...section,
     items: section.items.filter((item) => {
       if (item.adminOnly && !isAdmin) return false
-      if (item.hideForAdmin && isAdmin) return false
       return true
     }),
   })).filter((section) => section.items.length > 0)

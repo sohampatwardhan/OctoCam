@@ -167,6 +167,14 @@ export interface RtspUrls {
 // They're included here (all optional) purely so `useUpdateSettings().mutate`
 // can send per-day booleans in a properly-typed patch.
 export interface Settings {
+  // PUT-only virtual fields (never present in a GET response, like
+  // `resolution`/`sub_resolution` below) — api_settings_update (main.rs
+  // ~line 2212) reads these off the request body to change the caller's own
+  // password, for both admin and non-admin callers. An empty/missing pair
+  // leaves the password unchanged; a non-empty pair that doesn't match comes
+  // back as a 400 `{error:"Password fields are empty or do not match."}`.
+  admin_password?: string
+  admin_password_confirm?: string
   device_name: string
   room: string
   camera_label: string
@@ -408,6 +416,19 @@ export interface SshKeyDto {
   comment: string
   fingerprint: string
   preview: string
+}
+
+// `GET /api/passkeys` — the caller's own passkeys (scoped server-side by
+// user_id — see api_passkeys_list/list_passkeys_for_user in
+// rust/octocam-web/src/main.rs and db.rs's Passkey struct). The server
+// response also includes `credential_id`/`public_key` (raw byte arrays),
+// `user_id`, `counter`, and `transports`; only the fields the Account page
+// renders are typed here.
+export interface PasskeyDto {
+  id: number
+  name: string
+  created_at: string
+  last_used_at: string | null
 }
 
 // `GET /api/setup` — see api_setup_get in main.rs. Also embedded in `Me`

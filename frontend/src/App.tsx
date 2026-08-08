@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { AuthGate } from "@/components/AuthGate"
+import Account from "@/routes/Account"
 import Dashboard from "@/routes/Dashboard"
 import Homekit from "@/routes/Homekit"
 import Identity from "@/routes/Identity"
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/system" element={<System />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/ssh-keys" element={<SshKeys />} />
+        <Route path="/settings" element={<Account />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
