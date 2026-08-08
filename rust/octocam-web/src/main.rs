@@ -518,6 +518,7 @@ async fn async_main() {
         .route("/api/identity", get(api_identity))
         .route("/api/rtsp", get(api_rtsp))
         .route("/api/system", get(api_system))
+        .route("/api/stream-options", get(api_stream_options))
         .route("/api/logs", get(api_logs))
         .route("/api/homekit", get(api_homekit))
         .route("/api/matter", get(api_matter))
@@ -2400,6 +2401,36 @@ async fn api_system(
     Ok(api::ok_json(status))
 }
 
+async fn api_stream_options(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> api::ApiResult {
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    let settings = settings::load_settings(&state.config_path);
+    let time_zone_values = run_blocking(system::available_time_zones)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+    let timezones: Vec<String> =
+        time_zone_views(time_zone_values, &settings.text_overlay_timezone)
+            .into_iter()
+            .map(|zone| zone.value)
+            .collect();
+    Ok(api::ok_json(serde_json::json!({
+        "resolution_presets": preset_views(RESOLUTION_PRESETS, &settings.current_resolution()),
+        "sub_resolution_presets": preset_views(
+            SUB_RESOLUTION_PRESETS,
+            &settings.current_sub_resolution(),
+        ),
+        "timezones": timezones,
+        "rotations": [0, 90, 180, 270],
+    })))
+}
+
 async fn api_logs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -3541,6 +3572,48 @@ mod tests {
                 "sub": "http://octocam.local:8889/sub",
                 "has_sub": true,
             })
+        );
+    }
+
+    #[test]
+    fn stream_options_json_has_expected_keys_and_nonempty_presets() {
+        let settings = Settings::default();
+        let resolution_presets =
+            preset_views(RESOLUTION_PRESETS, &settings.current_resolution());
+        let sub_resolution_presets = preset_views(
+            SUB_RESOLUTION_PRESETS,
+            &settings.current_sub_resolution(),
+        );
+        let timezones: Vec<String> = time_zone_views(
+            vec!["Etc/UTC".to_string()],
+            &settings.text_overlay_timezone,
+        )
+        .into_iter()
+        .map(|zone| zone.value)
+        .collect();
+        let value = serde_json::json!({
+            "resolution_presets": resolution_presets,
+            "sub_resolution_presets": sub_resolution_presets,
+            "timezones": timezones,
+            "rotations": [0, 90, 180, 270],
+        });
+        let obj = value.as_object().expect("stream-options body is a JSON object");
+        for key in ["resolution_presets", "sub_resolution_presets", "timezones", "rotations"] {
+            assert!(obj.contains_key(key), "missing key: {key}");
+        }
+        assert!(
+            !obj["resolution_presets"]
+                .as_array()
+                .expect("resolution_presets is an array")
+                .is_empty(),
+            "resolution_presets must not be empty"
+        );
+        assert!(
+            !obj["timezones"]
+                .as_array()
+                .expect("timezones is an array")
+                .is_empty(),
+            "timezones must not be empty"
         );
     }
 

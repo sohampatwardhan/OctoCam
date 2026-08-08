@@ -70,7 +70,7 @@ pub struct ResolutionPreset {
     pub height: i32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PresetView {
     pub value: String,
     pub label: String,
