@@ -13,6 +13,7 @@ import {
 } from "lucide-react"
 import { AppleHomeKitIcon, MatterIcon } from "@/components/icons/selfhst"
 import { useMe } from "@/hooks/useAuth"
+import { isAdminOnlySettingsPath } from "@/lib/nav"
 import { cn } from "@/lib/utils"
 
 // lucide icons and our vendored selfhst glyphs both satisfy this.
@@ -22,8 +23,6 @@ interface NavItem {
   label: string
   to: string
   icon: NavIcon
-  /** Only shown to admins. */
-  adminOnly?: boolean
   /** Real SPA route → react-router NavLink with active styling. Anything
    * else is a plain absolute link that leaves the SPA for the Askama pages. */
   inApp?: boolean
@@ -41,20 +40,20 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: "Basic Settings",
     items: [
-      { label: "Identity", to: "/settings/identity", icon: IdCard, adminOnly: true, inApp: true },
-      { label: "Wi-Fi", to: "/settings/wifi", icon: Wifi, adminOnly: true, inApp: true },
-      { label: "Stream Config", to: "/settings/stream", icon: SlidersHorizontal, adminOnly: true, inApp: true },
-      { label: "HomeKit", to: "/settings/homekit", icon: AppleHomeKitIcon, adminOnly: true, inApp: true },
-      { label: "Matter", to: "/settings/matter", icon: MatterIcon, adminOnly: true, inApp: true },
+      { label: "Identity", to: "/settings/identity", icon: IdCard, inApp: true },
+      { label: "Wi-Fi", to: "/settings/wifi", icon: Wifi, inApp: true },
+      { label: "Stream Config", to: "/settings/stream", icon: SlidersHorizontal, inApp: true },
+      { label: "HomeKit", to: "/settings/homekit", icon: AppleHomeKitIcon, inApp: true },
+      { label: "Matter", to: "/settings/matter", icon: MatterIcon, inApp: true },
     ],
   },
   {
     title: "Advanced Settings",
     items: [
-      { label: "System info", to: "/settings/system", icon: Server, adminOnly: true, inApp: true },
-      { label: "System logs", to: "/settings/logs", icon: ScrollText, adminOnly: true, inApp: true },
-      { label: "SSH keys", to: "/settings/ssh-keys", icon: KeyRound, adminOnly: true, inApp: true },
-      { label: "Admin", to: "/settings/admin", icon: Shield, adminOnly: true, inApp: true },
+      { label: "System info", to: "/settings/system", icon: Server, inApp: true },
+      { label: "System logs", to: "/settings/logs", icon: ScrollText, inApp: true },
+      { label: "SSH keys", to: "/settings/ssh-keys", icon: KeyRound, inApp: true },
+      { label: "Admin", to: "/settings/admin", icon: Shield, inApp: true },
     ],
   },
   {
@@ -124,12 +123,11 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const { data: me } = useMe()
   const isAdmin = me?.is_admin ?? false
 
+  // Hidden entries come straight from the router's admin-only group, so a page
+  // can never be guarded but still listed, or listed but reachable.
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter((item) => {
-      if (item.adminOnly && !isAdmin) return false
-      return true
-    }),
+    items: section.items.filter((item) => isAdmin || !isAdminOnlySettingsPath(item.to)),
   })).filter((section) => section.items.length > 0)
 
   return (
