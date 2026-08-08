@@ -42,7 +42,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: "Basic Settings",
     items: [
-      { label: "Identity", to: "/identity", icon: IdCard, adminOnly: true },
+      { label: "Identity", to: "/identity", icon: IdCard, adminOnly: true, inApp: true },
       { label: "Wi-Fi", to: "/wifi", icon: Wifi, adminOnly: true, inApp: true },
       { label: "Stream Config", to: "/stream-settings", icon: SlidersHorizontal, adminOnly: true },
       { label: "RTSP", to: "/rtsp", icon: Radio, adminOnly: true, inApp: true },

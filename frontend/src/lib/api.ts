@@ -167,6 +167,9 @@ export interface RtspUrls {
 // They're included here (all optional) purely so `useUpdateSettings().mutate`
 // can send per-day booleans in a properly-typed patch.
 export interface Settings {
+  device_name: string
+  room: string
+  camera_label: string
   rtsp_enabled: boolean
   rtsp_path: string
   rtsp_max_clients: number
