@@ -8,6 +8,7 @@ import Login from "@/routes/Login"
 import Matter from "@/routes/Matter"
 import Rtsp from "@/routes/Rtsp"
 import Setup from "@/routes/Setup"
+import SshKeys from "@/routes/SshKeys"
 import System from "@/routes/System"
 import Wifi from "@/routes/Wifi"
 
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/matter" element={<Matter />} />
         <Route path="/system" element={<System />} />
         <Route path="/logs" element={<Logs />} />
+        <Route path="/ssh-keys" element={<SshKeys />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

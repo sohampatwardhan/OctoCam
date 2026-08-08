@@ -313,6 +313,15 @@ export interface LogsResponse {
   lines: string[]
 }
 
+// `/api/ssh-keys` (GET) — JSON view of root's authorized_keys, admin-only.
+// See SshKeyDto in main.rs (~line 1386), sourced from ssh_keys::AuthorizedKey.
+export interface SshKeyDto {
+  key_type: string
+  comment: string
+  fingerprint: string
+  preview: string
+}
+
 // `GET /api/setup` — see api_setup_get in main.rs. Also embedded in `Me`
 // above for the post-login probe; this is the standalone pre-auth shape.
 export interface SetupStatus {
