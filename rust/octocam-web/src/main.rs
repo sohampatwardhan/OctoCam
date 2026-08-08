@@ -1482,7 +1482,8 @@ async fn api_ssh_keys_delete(
     match outcome {
         ssh_keys::RevokeOutcome::Warn => Err(api::ApiError::conflict(
             "This is the last key; resend with confirm=true to remove it",
-        )),
+        )
+        .with_code("last_key")),
         ssh_keys::RevokeOutcome::Revoked => Ok(api::ok_json(serde_json::json!({ "success": true }))),
     }
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { apiDelete, apiGet, apiPost, type SshKeyDto } from "@/lib/api"
+import { apiDelete, apiGet, apiPost, ApiRequestError, type SshKeyDto } from "@/lib/api"
 import { queryClient } from "@/lib/queryClient"
 
 // `/api/ssh-keys` — root's authorized_keys, admin-only. See api_ssh_keys_list
@@ -63,18 +63,23 @@ interface RevokeResult {
 }
 
 // `DELETE /api/ssh-keys` — revoking the LAST remaining key with
-// `confirm:false` returns HTTP 409 with
-// `{error: "This is the last key; resend with confirm=true to remove it"}`
-// (`api::ApiError::conflict` in `api_ssh_keys_delete`, main.rs ~1483).
-// `apiDelete`'s `throwOnError` only surfaces the message text, not the
-// status code, and `lib/api.ts` has no `ApiHttpError` variant carrying
-// status today. Rather than add one for a single call site, we detect the
-// last-key case by matching that stable, server-authored message substring
-// — it's not user input, so this is safe, and it keeps the change local to
-// this hook. `isLastKeyError` is exported so `SshKeys.tsx` can trigger its
-// confirm dialog without re-deriving the match.
-export function isLastKeyError(message: string): boolean {
-  return message.toLowerCase().includes("last key")
+// `confirm:false` returns HTTP 409 with `{error, code:"last_key"}`
+// (`api::ApiError::conflict(...).with_code("last_key")` in
+// `api_ssh_keys_delete`, main.rs). `apiDelete` throws an `ApiRequestError`
+// (see lib/api.ts) carrying that `code` and the `status`, so this checks the
+// typed signal first — the real detection mechanism, not string-matching a
+// prose message that could change wording independently of behavior. The
+// regex match on `.message` is a defensive fallback only, for the unlikely
+// case the thrown value isn't an `ApiRequestError` (e.g. a network failure
+// surfaced some other way) but still describes a last-key conflict.
+// `isLastKeyError` is exported so `SshKeys.tsx` can trigger its confirm
+// dialog without re-deriving the check.
+export function isLastKeyError(err: unknown): boolean {
+  if (err instanceof ApiRequestError && (err.code === "last_key" || err.status === 409)) {
+    return true
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  return /last key/i.test(message)
 }
 
 export function useRevokeSshKey() {

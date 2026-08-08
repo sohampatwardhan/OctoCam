@@ -5,21 +5,46 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+// Thrown by throwOnError below. Behaves like a plain `Error` (same
+// `.message`, same `instanceof Error`) so existing callers that only read
+// `.message` keep working unchanged, but also carries the HTTP status and,
+// when the server sent one (see api::ApiError::with_code in
+// rust/octocam-web/src/api.rs), a machine-readable `code` — e.g.
+// `api_ssh_keys_delete`'s last-key 409 sends `{error, code:"last_key"}`.
+// Callers that need to branch on the failure kind should check `code`/
+// `status` rather than pattern-matching `.message` text.
+export class ApiRequestError extends Error {
+  status: number
+  code?: string
+
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = "ApiRequestError"
+    this.status = status
+    this.code = code
+  }
+}
+
 // Shared by apiPost/apiPut/apiDelete: throws the server's `{error}` message
-// when the response body is JSON shaped that way, otherwise falls back to a
-// generic "<path> -> <status>" message.
+// (plus `code` when present) as an ApiRequestError when the response body is
+// JSON shaped that way, otherwise falls back to a generic "<path> -> <status>"
+// message with no code.
 async function throwOnError(path: string, res: Response): Promise<void> {
   if (res.ok) return
   let message = `${path} -> ${res.status}`
+  let code: string | undefined
   try {
     const data: unknown = await res.json()
     if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
       message = data.error
+      if ("code" in data && typeof data.code === "string") {
+        code = data.code
+      }
     }
   } catch {
     // response wasn't JSON — keep the generic message
   }
-  throw new Error(message)
+  throw new ApiRequestError(message, res.status, code)
 }
 
 async function apiSendJson<T>(method: "POST" | "PUT" | "DELETE", path: string, body: unknown): Promise<T> {

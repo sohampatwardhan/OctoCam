@@ -67,7 +67,7 @@ export default function SshKeys() {
       { fingerprint: key.fingerprint, confirm: false },
       {
         onError: (error) => {
-          if (isLastKeyError(error.message)) setPendingRevoke(key)
+          if (isLastKeyError(error)) setPendingRevoke(key)
         },
       }
     )
@@ -82,7 +82,7 @@ export default function SshKeys() {
   }
 
   const revokeError =
-    revokeKey.isError && !isLastKeyError(revokeKey.error.message) ? revokeKey.error.message : null
+    revokeKey.isError && !isLastKeyError(revokeKey.error) ? revokeKey.error.message : null
 
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6">
