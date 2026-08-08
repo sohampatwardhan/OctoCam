@@ -3,6 +3,7 @@ import { AppShell } from "@/components/AppShell"
 import { AuthGate } from "@/components/AuthGate"
 import Dashboard from "@/routes/Dashboard"
 import Homekit from "@/routes/Homekit"
+import Logs from "@/routes/Logs"
 import Login from "@/routes/Login"
 import Matter from "@/routes/Matter"
 import Rtsp from "@/routes/Rtsp"
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/homekit" element={<Homekit />} />
         <Route path="/matter" element={<Matter />} />
         <Route path="/system" element={<System />} />
+        <Route path="/logs" element={<Logs />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

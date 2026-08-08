@@ -307,6 +307,12 @@ export interface SavedWifiProfile {
   delete_source: string
 }
 
+// `GET /api/logs` — see api_logs in main.rs. A fixed 40-line journalctl
+// snapshot (not a live tail); the Logs page polls this every 5s.
+export interface LogsResponse {
+  lines: string[]
+}
+
 // `GET /api/setup` — see api_setup_get in main.rs. Also embedded in `Me`
 // above for the post-login probe; this is the standalone pre-auth shape.
 export interface SetupStatus {
