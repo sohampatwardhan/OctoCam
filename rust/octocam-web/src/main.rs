@@ -542,6 +542,10 @@ async fn async_main() {
         .route("/api/users/add", post(api_users_add))
         .route("/api/users/{id}", delete(api_users_delete))
         .route("/api/ssh-keys", get(api_ssh_keys_list).post(api_ssh_keys_add).delete(api_ssh_keys_delete))
+        .route(
+            "/api/restore",
+            post(api_restore).layer(DefaultBodyLimit::max(MAX_RESTORE_BYTES)),
+        )
         .route("/snapshot.jpg", get(snapshot))
         .route("/sw.js", get(service_worker))
         .route("/static/{*path}", get(static_asset))
@@ -1090,6 +1094,91 @@ async fn restore_upload(
         Err(_) => "/system?restore=ok_keys_failed".to_string(),
     };
     Ok(Redirect::to(&redirect).into_response())
+}
+
+/// JSON twin of `restore_upload` for the React System page: same guards and
+/// the same `backup::parse_restore` + `ssh_keys::merge` application, but a
+/// `fetch()`-able `{success, keys_added, keys_failed}` / `{error, code}` body
+/// instead of a redirect-with-querystring. Do not fold this into
+/// `restore_upload` — the Askama route must keep returning a redirect for
+/// the plain HTML `<form>` upload.
+async fn api_restore(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    mut multipart: Multipart,
+) -> api::ApiResult {
+    let current = settings::load_settings(&state.config_path);
+    if let Some(resp) = require_admin_login(&state, &headers, &uri, true)
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        return Ok(resp);
+    }
+    // Restore can inject root SSH keys — match restore_upload's CSRF guard,
+    // which update_settings/api_settings_update do not have.
+    if cross_origin(&headers) {
+        return Err(api::ApiError::new(StatusCode::FORBIDDEN, "Cross-origin request rejected")
+            .with_code("csrf"));
+    }
+
+    // Read the first uploaded field's bytes. The route-scoped DefaultBodyLimit
+    // (see route registration) rejects an oversize body before we get here.
+    let field = match multipart.next_field().await {
+        Ok(Some(field)) => field,
+        Ok(None) => {
+            return Err(api::ApiError::bad_request("No backup file uploaded").with_code("empty"));
+        }
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Err(api::ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "Backup file is too large")
+                .with_code("too_large"));
+        }
+        Err(error) => return Err(api::ApiError::internal(error.to_string())),
+    };
+    let data = match field.bytes().await {
+        Ok(data) => data,
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            return Err(api::ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "Backup file is too large")
+                .with_code("too_large"));
+        }
+        Err(error) => return Err(api::ApiError::internal(error.to_string())),
+    };
+    let bytes = data.to_vec();
+    if bytes.len() > MAX_RESTORE_BYTES {
+        return Err(api::ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "Backup file is too large")
+            .with_code("too_large"));
+    }
+
+    let (restored, keys) = match backup::parse_restore(&bytes, &current) {
+        Ok(result) => result,
+        Err(_) => {
+            return Err(api::ApiError::bad_request("Backup file is invalid").with_code("invalid"));
+        }
+    };
+
+    settings::save_settings(&state.config_path, &restored)
+        .map_err(|error| api::ApiError::internal(error.to_string()))?;
+    apply_settings_side_effects(&state, &restored)
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?;
+
+    // Best-effort key merge; a key-write failure does not roll back the settings
+    // (both are individually atomic and settings are already committed) — mirrors
+    // restore_upload's `ok_keys_failed` case, just as a count instead of a status.
+    let requested_keys = keys.len();
+    let state_dir = ssh_keys_state_dir(&state);
+    let (keys_added, keys_failed) = match run_blocking(move || ssh_keys::merge(&state_dir, &keys))
+        .await
+        .map_err(|e| api::ApiError::internal(e.0))?
+    {
+        Ok((added, skipped)) => (added, skipped),
+        Err(_) => (0, requested_keys),
+    };
+
+    Ok(api::ok_json(serde_json::json!({
+        "success": true,
+        "keys_added": keys_added,
+        "keys_failed": keys_failed,
+    })))
 }
 
 async fn logs(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
