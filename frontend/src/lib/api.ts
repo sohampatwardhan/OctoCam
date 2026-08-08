@@ -242,6 +242,34 @@ export interface Settings {
   scheduled_reboot_day_fri?: boolean
   scheduled_reboot_day_sat?: boolean
   scheduled_reboot_day_sun?: boolean
+  // MQTT publishing to a Home Assistant broker (see settings.rs). The broker
+  // password is never returned: public_settings() strips `mqtt_password` and
+  // substitutes `mqtt_password_set` so the form can show that one exists
+  // without revealing it. `mqtt_node_id` is server-managed and read-only here.
+  mqtt_enabled: boolean
+  mqtt_host: string
+  mqtt_port: number
+  mqtt_username: string
+  // Write-only. Present in a PUT body to set/clear the password; never in a GET
+  // response. Omitting it preserves the stored value (api_settings_update
+  // merges over current settings), so only send it when the admin edits it.
+  mqtt_password?: string
+  mqtt_password_set: boolean
+  mqtt_tls: boolean
+  mqtt_client_id: string
+  mqtt_base_topic: string
+  mqtt_discovery_prefix: string
+  mqtt_node_id: string
+}
+
+// GET /api/mqtt/status — live publisher state for the MQTT settings page.
+// See mqtt::MqttStatus in rust/octocam-web/src/mqtt.rs. `state` is one of
+// "disabled" | "connecting" | "connected"; `last_error` carries the most
+// recent failure reason while a connection keeps retrying.
+export interface MqttStatus {
+  state: "disabled" | "connecting" | "connected"
+  last_error: string | null
+  connected_since: number | null
 }
 
 // A resolution/preset choice — see settings::PresetView in

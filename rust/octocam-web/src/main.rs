@@ -14,6 +14,7 @@ mod system;
 mod wifi;
 mod wifi_setup;
 mod motion;
+mod mqtt;
 
 use axum::{
     extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State},
@@ -66,6 +67,12 @@ struct AppState {
     /// Liveness of the motion detector. Distinguishes "nothing is moving" from
     /// "the detector cannot see anything" — see motion::MotionHealth.
     motion_health: Arc<motion::MotionHealth>,
+    /// What the MQTT publisher is currently doing, for the settings page.
+    mqtt_status: Arc<std::sync::Mutex<mqtt::MqttStatus>>,
+    /// Signals the publisher that settings changed. Every settings writer must
+    /// send on this, not just the settings PUT — a restored backup can change
+    /// broker configuration too, and would otherwise be ignored until restart.
+    mqtt_reload_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 #[derive(Debug)]
@@ -234,6 +241,25 @@ async fn async_main() {
         state.motion_health.clone(),
     );
 
+    // Mint this camera's MQTT identity before anything can build a topic from
+    // it, and persist immediately so the identity survives a restart.
+    {
+        let mut settings = settings::load_settings(&state.config_path);
+        if settings::ensure_mqtt_node_id(&mut settings) {
+            if let Err(error) = settings::save_settings(&state.config_path, &settings) {
+                tracing::warn!("could not persist generated MQTT node id: {error}");
+            }
+        }
+    }
+    mqtt::spawn_mqtt_publisher(
+        state.config_path.clone(),
+        state.motion_detected.clone(),
+        state.motion_health.clone(),
+        state.motion_tx.subscribe(),
+        state.mqtt_reload_tx.subscribe(),
+        state.mqtt_status.clone(),
+    );
+
     let app = Router::new()
         .route("/", get(spa::spa_index))
         .route("/backup", get(backup_download))
@@ -256,6 +282,7 @@ async fn async_main() {
         .route("/api/time/sync", post(api_time_sync))
         .route("/api/me", get(api_me))
         .route("/api/motion/events", get(api_motion_events))
+        .route("/api/mqtt/status", get(api_mqtt_status))
         .route("/api/wifi/networks", get(api_wifi_networks))
         .route("/api/wifi/scan", post(api_wifi_scan))
         .route("/api/wifi/connect", post(api_wifi_connect))
@@ -372,6 +399,11 @@ impl AppState {
             motion_detected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             motion_tx,
             motion_health: Arc::new(motion::MotionHealth::default()),
+            mqtt_status: Arc::new(std::sync::Mutex::new(mqtt::MqttStatus::default())),
+            mqtt_reload_tx: {
+                let (tx, _) = tokio::sync::broadcast::channel(8);
+                tx
+            },
         }
     }
 }
@@ -481,6 +513,7 @@ async fn api_restore(
         }
     };
 
+    notify_settings_changed(&state);
     settings::save_settings(&state.config_path, &restored)
         .map_err(|error| api::ApiError::internal(error.to_string()))?;
     apply_settings_side_effects(&state, &restored)
@@ -827,6 +860,7 @@ async fn api_setup_post(
     body.insert("admin_password_hash".to_string(), Value::String(password_hash));
     let validated = settings::validate_map(&body);
     merge_settings(&mut current, validated);
+    notify_settings_changed(&state);
     if let Err(error) = settings::save_settings(&state.config_path, &current) {
         return api::ApiError::internal(error.to_string()).into_response();
     }
@@ -932,6 +966,7 @@ async fn api_settings_update(
         }
         next_map.insert(key, value);
     }
+    settings::validate_mqtt_submission(&next_map).map_err(api::ApiError::bad_request)?;
     let mut validated = settings::validate_map(&next_map);
     if admin_password.is_empty() && admin_password_confirm.is_empty() {
         validated.admin_password_hash = current.admin_password_hash.clone();
@@ -949,6 +984,7 @@ async fn api_settings_update(
     merge_settings(&mut current, validated);
     settings::save_settings(&state.config_path, &current)
         .map_err(|error| api::ApiError::internal(error.to_string()))?;
+    notify_settings_changed(&state);
     apply_settings_side_effects(&state, &current)
         .await
         .map_err(|e| api::ApiError::internal(e.0))?;
@@ -1253,6 +1289,7 @@ async fn api_time_sync(
         settings::enforce_matter_requires_admin(&mut validated);
         settings::enforce_hksv_requires_motion(&mut validated);
         merge_settings(&mut current, validated);
+        notify_settings_changed(&state);
         settings::save_settings(&state.config_path, &current)
             .map_err(|error| api::ApiError::internal(error.to_string()))?;
     }
@@ -1286,6 +1323,37 @@ async fn api_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
         )
             .into_response(),
     }
+}
+
+/// Current MQTT publisher state, for the settings page.
+///
+/// Admin-only and read-only: it exposes broker connectivity and the reason a
+/// connection is failing, which is operational detail a non-admin has no need
+/// for. There is deliberately no way to drive the publisher from here.
+async fn api_mqtt_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> AppResult {
+    if let Some(response) = require_admin_login(&state, &headers, &uri, true)? {
+        return Ok(response);
+    }
+    let snapshot = state
+        .mqtt_status
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default();
+    Ok(Json(snapshot).into_response())
+}
+
+/// Tells the MQTT publisher its configuration may have changed.
+///
+/// Called by every settings writer rather than only the settings PUT. Restore
+/// is the one that matters: broker fields travel in backups, so a restored
+/// backup silently changes MQTT configuration, and without this the publisher
+/// would keep using the old broker until the next service restart.
+fn notify_settings_changed(state: &AppState) {
+    let _ = state.mqtt_reload_tx.send(());
 }
 
 async fn api_motion_events(
