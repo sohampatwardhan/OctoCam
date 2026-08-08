@@ -10,6 +10,21 @@ const ALL_ZONES = (1n << 64n) - 1n
 const ZONE_COUNT = 64
 const SNAPSHOT_ATTEMPTS = 3
 const SNAPSHOT_RETRY_MS = 1500
+const DEFAULT_ASPECT = "4 / 3"
+
+/** Whether a drag marks cells as monitored or ignored. */
+type PaintMode = "monitor" | "ignore"
+
+// Resolution presets are "WIDTHxHEIGHT". The grid has to match the camera's
+// shape or the cells map to the wrong part of the scene, and the snapshot
+// backdrop gets cropped by object-cover rather than lining up with the zones.
+function aspectRatioFrom(resolution: string): string {
+  const [width, height] = resolution.split("x").map(Number)
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return DEFAULT_ASPECT
+  }
+  return `${width} / ${height}`
+}
 
 interface MotionSectionProps {
   value: StreamFormState
@@ -21,6 +36,8 @@ interface MotionSectionProps {
 // is set when that cell is MONITORED for motion; clearing a bit excludes
 // that region (e.g. a road or a tree) from triggering detection.
 export function MotionSection({ value, onChange }: MotionSectionProps) {
+  const [paintMode, setPaintMode] = useState<PaintMode>("monitor")
+
   return (
     <Card>
       <CardHeader>
@@ -74,16 +91,22 @@ export function MotionSection({ value, onChange }: MotionSectionProps) {
                 disabled={!value.motionEnabled}
                 onClick={() => onChange({ motionZones: 0n })}
               >
-                Clear all
+                Ignore all
               </Button>
             </div>
           </div>
           <p className="text-sm text-muted-foreground">
-            Tap or drag to include/exclude regions. Highlighted zones are monitored; dimmed zones are ignored.
+            Pick a brush, then tap or drag over the scene. Green regions are watched for motion; red
+            regions are ignored.
           </p>
+
+          <PaintModeToggle mode={paintMode} disabled={!value.motionEnabled} onChange={setPaintMode} />
+
           <MotionZoneGrid
             mask={value.motionZones}
             disabled={!value.motionEnabled}
+            paintMode={paintMode}
+            aspectRatio={aspectRatioFrom(value.resolution)}
             onChange={(mask) => onChange({ motionZones: mask })}
           />
         </div>
@@ -92,13 +115,63 @@ export function MotionSection({ value, onChange }: MotionSectionProps) {
   )
 }
 
+// Explicit brush instead of inferring intent from the first cell touched, which
+// made a drag's effect depend on where it started.
+function PaintModeToggle({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: PaintMode
+  disabled: boolean
+  onChange: (next: PaintMode) => void
+}) {
+  const options: { value: PaintMode; label: string; selected: string }[] = [
+    { value: "monitor", label: "Detect motion", selected: "bg-success text-white" },
+    { value: "ignore", label: "Ignore motion", selected: "bg-destructive text-white" },
+  ]
+
+  return (
+    <div
+      className={cn(
+        "inline-flex self-start overflow-hidden rounded-lg border border-border bg-input",
+        disabled && "pointer-events-none opacity-50"
+      )}
+      role="group"
+      aria-label="Zone brush"
+    >
+      {options.map((option, index) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-pressed={mode === option.value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            "px-3 py-1.5 text-xs font-semibold tracking-wide transition-colors",
+            index > 0 && "border-l border-border",
+            mode === option.value
+              ? option.selected
+              : "text-muted-foreground hover:bg-card hover:text-foreground"
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function MotionZoneGrid({
   mask,
   disabled,
+  paintMode,
+  aspectRatio,
   onChange,
 }: {
   mask: bigint
   disabled: boolean
+  paintMode: PaintMode
+  aspectRatio: string
   onChange: (next: bigint) => void
 }) {
   const isDrawingRef = useRef(false)
@@ -128,9 +201,8 @@ function MotionZoneGrid({
 
   function startDrawing(index: number) {
     if (disabled) return
-    const currentlyActive = (mask & (1n << BigInt(index))) !== 0n
     isDrawingRef.current = true
-    drawModeRef.current = !currentlyActive
+    drawModeRef.current = paintMode === "monitor"
     setCell(index, drawModeRef.current)
   }
 
@@ -141,8 +213,9 @@ function MotionZoneGrid({
 
   return (
     <div
+      style={{ aspectRatio }}
       className={cn(
-        "relative aspect-video w-full max-w-md touch-none overflow-hidden rounded-lg border border-border bg-muted select-none",
+        "relative w-full max-w-md touch-none overflow-hidden rounded-lg border border-border bg-muted select-none",
         disabled && "pointer-events-none opacity-50"
       )}
       onPointerUp={() => {
@@ -172,11 +245,11 @@ function MotionZoneGrid({
               key={index}
               type="button"
               tabIndex={-1}
-              aria-label={`Zone ${index + 1}, ${active ? "monitored" : "ignored"}`}
+              aria-label={`Zone ${index + 1}, ${active ? "detecting motion" : "ignoring motion"}`}
               aria-pressed={active}
               className={cn(
                 "border border-white/15 transition-colors",
-                active ? "bg-primary/45 hover:bg-primary/55" : "bg-black/25 hover:bg-black/15"
+                active ? "bg-success/45 hover:bg-success/55" : "bg-destructive/40 hover:bg-destructive/50"
               )}
               onPointerDown={(event) => {
                 event.preventDefault()
