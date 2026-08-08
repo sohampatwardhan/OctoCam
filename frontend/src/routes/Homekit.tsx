@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { House, Loader2 } from "lucide-react"
+import { Loader2 } from "lucide-react"
+import { AppleHomeKitIcon } from "@/components/icons/selfhst"
 import { apiGet, type HomeKitInfo } from "@/lib/api"
 import { useStatus } from "@/hooks/useStatus"
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings"
@@ -126,7 +127,7 @@ function PairingCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <House className="size-4 text-primary" aria-hidden="true" />
+          <AppleHomeKitIcon className="size-4 text-primary" aria-hidden="true" />
           Pairing
         </CardTitle>
         <CardDescription>Add this camera to the Home app on your iPhone or iPad.</CardDescription>

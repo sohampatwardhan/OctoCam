@@ -1,26 +1,28 @@
+import type { ComponentType, SVGProps } from "react"
 import { NavLink } from "react-router-dom"
-import type { LucideIcon } from "lucide-react"
 import {
   IdCard,
   KeyRound,
   LayoutDashboard,
-  House,
   Radio,
   ScrollText,
   Server,
   Settings,
-  Share2,
   Shield,
   SlidersHorizontal,
   Wifi,
 } from "lucide-react"
+import { AppleHomeKitIcon, MatterIcon } from "@/components/icons/selfhst"
 import { useMe } from "@/hooks/useAuth"
 import { cn } from "@/lib/utils"
+
+// lucide icons and our vendored selfhst glyphs both satisfy this.
+type NavIcon = ComponentType<SVGProps<SVGSVGElement>>
 
 interface NavItem {
   label: string
   to: string
-  icon: LucideIcon
+  icon: NavIcon
   /** Only shown to admins. */
   adminOnly?: boolean
   /** Real SPA route → react-router NavLink with active styling. Anything
@@ -44,8 +46,8 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Wi-Fi", to: "/wifi", icon: Wifi, adminOnly: true, inApp: true },
       { label: "Stream Config", to: "/stream-settings", icon: SlidersHorizontal, adminOnly: true, inApp: true },
       { label: "RTSP", to: "/rtsp", icon: Radio, adminOnly: true, inApp: true },
-      { label: "HomeKit", to: "/homekit", icon: House, adminOnly: true, inApp: true },
-      { label: "Matter", to: "/matter", icon: Share2, adminOnly: true, inApp: true },
+      { label: "HomeKit", to: "/homekit", icon: AppleHomeKitIcon, adminOnly: true, inApp: true },
+      { label: "Matter", to: "/matter", icon: MatterIcon, adminOnly: true, inApp: true },
     ],
   },
   {

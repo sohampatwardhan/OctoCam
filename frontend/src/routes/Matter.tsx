@@ -1,6 +1,7 @@
 import { type ReactNode, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Loader2, RotateCcw, Share2 } from "lucide-react"
+import { Loader2, RotateCcw } from "lucide-react"
+import { MatterIcon } from "@/components/icons/selfhst"
 import { apiGet, apiPost, type MatterInfo } from "@/lib/api"
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings"
 import { queryClient } from "@/lib/queryClient"
@@ -180,7 +181,7 @@ function PairingCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Share2 className="size-4 text-primary" aria-hidden="true" />
+          <MatterIcon className="size-4 text-primary" aria-hidden="true" />
           Pairing
         </CardTitle>
         <CardDescription>Add this camera to a Matter ecosystem, such as SmartThings.</CardDescription>
