@@ -476,38 +476,8 @@ async fn async_main() {
     );
 
     let app = Router::new()
-        .route("/", get(dashboard_redirect))
-        .route("/identity", get(identity))
-        .route("/wifi", get(wifi_page))
-        .route("/stream-settings", get(stream_settings))
-        .route("/rtsp", get(rtsp_page))
-        .route("/homekit", get(homekit))
-        .route("/matter", get(matter_page))
-        .route("/matter/reset", post(matter_reset))
-        .route("/admin", get(admin))
-        .route("/advanced", get(system_page))
-        .route("/system", get(system_page))
+        .route("/", get(spa::spa_index))
         .route("/backup", get(backup_download))
-        .route(
-            "/restore",
-            post(restore_upload).layer(DefaultBodyLimit::max(MAX_RESTORE_BYTES)),
-        )
-        .route("/logs", get(logs))
-        .route("/terminal", get(terminal))
-        .route("/ssh-keys", get(ssh_keys_page))
-        .route("/ssh-keys/add", post(ssh_keys_add))
-        .route("/ssh-keys/revoke", post(ssh_keys_revoke))
-        .route("/dashboard", get(stream))
-        .route("/stream", get(dashboard_redirect))
-        .route("/setup", get(setup).post(complete_setup))
-        .route("/wifi/scan", post(scan_wifi))
-        .route("/wifi/connect", post(connect_wifi))
-        .route("/wifi/delete", post(delete_wifi_profile))
-        .route("/settings", get(settings_page).post(update_settings))
-        .route("/time/sync", post(sync_time))
-        .route("/power", post(power_action))
-        .route("/login", get(login).post(authenticate))
-        .route("/logout", post(logout))
         .route("/hotspot-detect.html", get(captive_probe))
         .route("/generate_204", get(captive_probe))
         .route("/api/login", post(api_login))
@@ -548,11 +518,7 @@ async fn async_main() {
             post(api_restore).layer(DefaultBodyLimit::max(MAX_RESTORE_BYTES)),
         )
         .route("/snapshot.jpg", get(snapshot))
-        .route("/sw.js", get(service_worker))
-        .route("/static/{*path}", get(static_asset))
-        .route("/app", get(spa::spa_index))
-        .route("/app/", get(spa::spa_index))
-        .route("/app/{*path}", get(spa::spa_asset))
+        .fallback(spa::spa_asset)
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

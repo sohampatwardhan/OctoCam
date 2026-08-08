@@ -1,8 +1,7 @@
 use std::borrow::Cow;
 
 use axum::body::Bytes;
-use axum::extract::Path as AxumPath;
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
@@ -48,7 +47,7 @@ fn body_from(data: Cow<'static, [u8]>) -> Bytes {
     }
 }
 
-/// Resolve a request path (relative to the /app mount, no leading slash) to an
+/// Resolve a request path (relative to the root mount, no leading slash) to an
 /// embedded asset, falling back to index.html for client-side routes.
 pub fn resolve_spa(path: &str) -> SpaResponse {
     let lookup = if path.is_empty() { "index.html" } else { path };
@@ -93,14 +92,15 @@ fn into_response(r: SpaResponse) -> Response {
         .into_response()
 }
 
-/// Handler for the bare `/app` mount point.
+/// Handler for the bare `/` mount point.
 pub async fn spa_index() -> Response {
     into_response(resolve_spa(""))
 }
 
-/// Handler for `/app/{*path}` — assets and client routes alike.
-pub async fn spa_asset(AxumPath(path): AxumPath<String>) -> Response {
-    into_response(resolve_spa(&path))
+/// Fallback handler for all unmatched paths — assets and client routes alike.
+pub async fn spa_asset(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    into_response(resolve_spa(path))
 }
 
 #[cfg(test)]
