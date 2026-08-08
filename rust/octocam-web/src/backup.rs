@@ -58,6 +58,14 @@ pub const PORTABLE_FIELDS: &[&str] = &[
     "scheduled_reboot_enabled",
     "scheduled_reboot_time",
     "scheduled_reboot_days",
+    "mqtt_enabled",
+    "mqtt_host",
+    "mqtt_port",
+    "mqtt_username",
+    "mqtt_tls",
+    "mqtt_client_id",
+    "mqtt_base_topic",
+    "mqtt_discovery_prefix",
 ];
 
 /// Fields deliberately NOT ported — preserved from the target device on restore.
@@ -69,6 +77,11 @@ pub const EXCLUDED_FIELDS: &[&str] = &[
     "setup_complete",
     "homekit_paired",
     "wifi_ssid",
+    // A credential must not travel in a backup file.
+    "mqtt_password",
+    // Device identity. Restoring onto a second camera would otherwise carry the
+    // first camera's Home Assistant entity id across, and both would claim it.
+    "mqtt_node_id",
 ];
 
 /// Serialize a `Settings` to a JSON object map. Infallible in practice —

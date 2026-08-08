@@ -8,10 +8,11 @@ import { cn } from "@/lib/utils"
 export function StreamHealthCard() {
   const { data, isLoading, isError } = useStatus()
   const { data: settings } = useSettings()
-  const motionDetected = useMotionEvents(data?.motion_detected)
+  const motion = useMotionEvents(data?.motion_detected, data?.motion_health.available)
   // Detection being off is a different state from "nothing is moving", and
   // motion_detected reads false in both.
   const motionEnabled = settings?.motion_enabled ?? false
+  const motionState = data?.motion_health.state
   const rtspState = data?.services.rtsp.state
   const isActive = rtspState === "active"
 
@@ -50,7 +51,12 @@ export function StreamHealthCard() {
             />
             <Metric label="Uptime" value={data.uptime ?? "—"} />
             <Metric label="Web UI" value={data.services.octocam_web.state} />
-            <MotionMetric enabled={motionEnabled} detected={motionDetected} />
+            <MotionMetric
+              enabled={motionEnabled}
+              detected={motion.detected}
+              available={motion.available}
+              state={motionState}
+            />
           </dl>
         )}
       </CardContent>
@@ -58,19 +64,46 @@ export function StreamHealthCard() {
   )
 }
 
-function MotionMetric({ enabled, detected }: { enabled: boolean; detected: boolean }) {
-  const value = !enabled ? "Off" : detected ? "Motion detected" : "Clear"
+function MotionMetric({
+  enabled,
+  detected,
+  available,
+  state,
+}: {
+  enabled: boolean
+  detected: boolean
+  available: boolean
+  state?: string
+}) {
+  // "Clear" is only honest when the detector can actually see. When it can't,
+  // say so rather than reporting a reassuring false — a blind sensor showing
+  // "Clear" is the failure this signal exists to prevent.
+  const blind = enabled && !available
+  const value = !enabled
+    ? "Off"
+    : blind
+      ? state === "reconnecting" || state === "starting"
+        ? "Reconnecting…"
+        : "Unavailable"
+      : detected
+        ? "Motion detected"
+        : "Clear"
+
+  const dotClass = !enabled
+    ? "bg-muted-foreground/60"
+    : blind
+      ? "bg-warning"
+      : detected
+        ? "bg-destructive"
+        : "bg-success"
+
+  const title = blind ? `${value} — motion readings are not current` : value
+
   return (
     <div className="flex flex-col gap-1">
       <dt className="text-xs font-medium text-muted-foreground">Motion</dt>
-      <dd className="flex items-center gap-1.5 truncate text-sm font-semibold" title={value}>
-        <span
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            !enabled ? "bg-muted-foreground/60" : detected ? "bg-destructive" : "bg-success"
-          )}
-          aria-hidden="true"
-        />
+      <dd className="flex items-center gap-1.5 truncate text-sm font-semibold" title={title}>
+        <span className={cn("size-1.5 shrink-0 rounded-full", dotClass)} aria-hidden="true" />
         {value}
       </dd>
     </div>

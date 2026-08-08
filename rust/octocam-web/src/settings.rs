@@ -13,6 +13,44 @@ pub const MAX_ENCODER_HEIGHT: i32 = 1080;
 const ENCODER_FALLBACK_MAIN: (i32, i32) = (1296, 972);
 const ENCODER_FALLBACK_SUB: (i32, i32) = (640, 480);
 
+/// A stored credential that refuses to print itself.
+///
+/// `Settings` derives `Debug`, so any `tracing` call that formats the whole
+/// struct — a routine thing to add while debugging — would otherwise dump the
+/// broker password into the journal. Making redaction a property of the type
+/// means that cannot happen by accident, rather than depending on every future
+/// author remembering not to.
+///
+/// `#[serde(transparent)]` keeps the on-disk and wire representation a plain
+/// string, so existing settings files and API payloads are unaffected.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() { "Secret(empty)" } else { "Secret(redacted)" })
+    }
+}
+
+impl From<String> for Secret {
+    fn from(value: String) -> Self {
+        Secret(value)
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(value: &str) -> Self {
+        Secret(value.to_string())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     pub setup_complete: bool,
@@ -60,6 +98,31 @@ pub struct Settings {
     pub noir_mode: bool,
     pub motion_zones: u64,
     pub hksv_enabled: bool,
+
+    // MQTT publishing to a Home Assistant broker. Disabled by default so the
+    // device makes no outbound broker connection until an admin opts in.
+    pub mqtt_enabled: bool,
+    pub mqtt_host: String,
+    pub mqtt_port: i32,
+    pub mqtt_username: String,
+    /// Broker credential. Deliberately absent from `public_settings`, from
+    /// `backup::PORTABLE_FIELDS`, and from every log statement: it is the one
+    /// value here that grants access to a system outside this device. Stored
+    /// unencrypted, which is a reviewed decision — the settings file is
+    /// root-owned and already holds `admin_password_hash`, so encrypting with a
+    /// key on the same disk would add ceremony rather than protection.
+    pub mqtt_password: Secret,
+    pub mqtt_tls: bool,
+    pub mqtt_client_id: String,
+    pub mqtt_base_topic: String,
+    pub mqtt_discovery_prefix: String,
+    /// This camera's stable MQTT identity, generated once and then never
+    /// derived from anything mutable. Home Assistant keys entities off it, so
+    /// deriving it from the device name would orphan the entity on every
+    /// rename, and deriving it from a MAC or IP would break on hardware or
+    /// network change. Excluded from backups so restoring onto a second camera
+    /// cannot make two devices claim one entity.
+    pub mqtt_node_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -209,6 +272,18 @@ impl Default for Settings {
             noir_mode: false,
             motion_zones: u64::MAX,
             hksv_enabled: false,
+            mqtt_enabled: false,
+            mqtt_host: String::new(),
+            mqtt_port: 1883,
+            mqtt_username: String::new(),
+            mqtt_password: Secret::default(),
+            mqtt_tls: false,
+            mqtt_client_id: String::new(),
+            mqtt_base_topic: "octocam".to_string(),
+            mqtt_discovery_prefix: "homeassistant".to_string(),
+            // Empty until `ensure_mqtt_node_id` mints one. Default must stay
+            // deterministic so tests and comparisons are stable.
+            mqtt_node_id: String::new(),
         }
     }
 }
@@ -255,10 +330,81 @@ pub fn save_settings(path: &PathBuf, settings: &Settings) -> io::Result<()> {
     fs::write(path, format!("{value}\n"))
 }
 
+/// Rejects an MQTT submission that would produce an unusable broker configuration.
+///
+/// Runs on the *merged* settings map (stored values plus the incoming patch),
+/// before anything is written, so returning `Err` leaves the stored
+/// configuration untouched. This exists separately from `validate_map` because
+/// that function clamps out-of-range integers into range — a submitted port of
+/// `0` would silently become `1` and a caller could never tell a correction
+/// from a mistake.
+///
+/// Only outright unusable input is rejected. A disabled MQTT configuration is
+/// never rejected, so a user can save a partially filled form and come back to
+/// it.
+pub fn validate_mqtt_submission(merged: &Map<String, Value>) -> Result<(), String> {
+    if let Some(value) = merged.get("mqtt_port") {
+        let port = value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|raw| raw.trim().parse::<i64>().ok()));
+        match port {
+            Some(port) if (1..=65535).contains(&port) => {}
+            _ => return Err("MQTT port must be between 1 and 65535.".to_string()),
+        }
+    }
+
+    let enabled = merged
+        .get("mqtt_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if enabled {
+        let host = merged
+            .get("mqtt_host")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if host.is_empty() {
+            return Err("MQTT host is required when MQTT is enabled.".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// Mints this camera's MQTT identity if it does not have one yet, returning
+/// whether the caller now needs to persist the settings.
+///
+/// Called at startup rather than at first enable so the identity is fixed
+/// before any topic string is built from it. Random rather than derived: see
+/// the `mqtt_node_id` field for why nothing mutable can be used as a source.
+pub fn ensure_mqtt_node_id(settings: &mut Settings) -> bool {
+    if !settings.mqtt_node_id.is_empty() {
+        return false;
+    }
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    settings.mqtt_node_id = (0..8)
+        .map(|_| {
+            let n: u8 = rng.gen_range(0..16);
+            std::char::from_digit(n as u32, 16).unwrap_or('0')
+        })
+        .collect();
+    true
+}
+
 pub fn public_settings(settings: &Settings) -> Value {
     let mut value = serde_json::to_value(settings).unwrap_or(Value::Null);
     if let Value::Object(map) = &mut value {
         map.remove("admin_password_hash");
+        // The broker credential never leaves the device. The UI still needs to
+        // know whether one exists so it can show "set" without the value, so
+        // swap the secret for a boolean rather than dropping it silently.
+        let password_set = map
+            .get("mqtt_password")
+            .and_then(Value::as_str)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false);
+        map.remove("mqtt_password");
+        map.insert("mqtt_password_set".to_string(), Value::Bool(password_set));
         // motion_zones is a u64 bitmask; as a bare JSON number it can exceed
         // JS's Number.MAX_SAFE_INTEGER (2^53-1) and lose precision in the
         // browser. Emit it as a decimal string instead — u64_value() above
@@ -388,6 +534,22 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         100,
     );
     settings.motion_zones = u64_value(&map, "motion_zones", settings.motion_zones);
+    settings.mqtt_enabled = bool_value(&map, "mqtt_enabled", settings.mqtt_enabled);
+    settings.mqtt_host = string_value(&map, "mqtt_host", &settings.mqtt_host, 255);
+    settings.mqtt_port = int_value(&map, "mqtt_port", settings.mqtt_port, 1, 65535);
+    settings.mqtt_username = string_value(&map, "mqtt_username", &settings.mqtt_username, 128);
+    settings.mqtt_password =
+        Secret::from(string_value(&map, "mqtt_password", settings.mqtt_password.expose(), 256));
+    settings.mqtt_tls = bool_value(&map, "mqtt_tls", settings.mqtt_tls);
+    settings.mqtt_client_id = string_value(&map, "mqtt_client_id", &settings.mqtt_client_id, 128);
+    settings.mqtt_base_topic = string_value(&map, "mqtt_base_topic", &settings.mqtt_base_topic, 128);
+    settings.mqtt_discovery_prefix = string_value(
+        &map,
+        "mqtt_discovery_prefix",
+        &settings.mqtt_discovery_prefix,
+        128,
+    );
+    settings.mqtt_node_id = string_value(&map, "mqtt_node_id", &settings.mqtt_node_id, 64);
     settings.scheduled_service_restart_enabled = bool_value(
         &map,
         "scheduled_service_restart_enabled",
@@ -736,6 +898,132 @@ mod tests {
         let settings = validate_map(&map);
         assert_eq!(settings.rtsp_path, "main");
         assert_eq!(settings.sub_rtsp_path, "sub");
+    }
+
+    #[test]
+    fn mqtt_defaults_are_disabled_with_home_assistant_prefix() {
+        let settings = Settings::default();
+        assert!(!settings.mqtt_enabled, "MQTT must be opt-in (R1.2)");
+        assert_eq!(settings.mqtt_port, 1883);
+        assert_eq!(settings.mqtt_discovery_prefix, "homeassistant", "R1.3");
+        assert_eq!(settings.mqtt_base_topic, "octocam");
+        assert!(settings.mqtt_node_id.is_empty(), "identity is minted, not defaulted");
+    }
+
+    #[test]
+    fn settings_written_before_mqtt_existed_still_load() {
+        // A stored file from before this feature has none of the mqtt_* keys.
+        let raw = serde_json::json!({ "device_name": "OctoCam", "motion_enabled": true });
+        let map = raw.as_object().expect("object").clone();
+        let settings = validate_map(&map);
+        assert_eq!(settings.device_name, "OctoCam");
+        assert!(!settings.mqtt_enabled);
+        assert_eq!(settings.mqtt_discovery_prefix, "homeassistant");
+    }
+
+    #[test]
+    fn out_of_range_port_is_rejected_so_stored_settings_are_untouched() {
+        for bad in [0, 65536, -1] {
+            let map = serde_json::json!({ "mqtt_port": bad })
+                .as_object()
+                .expect("object")
+                .clone();
+            assert!(
+                validate_mqtt_submission(&map).is_err(),
+                "port {bad} must be rejected (R1.4)"
+            );
+        }
+        let ok = serde_json::json!({ "mqtt_port": 8883 })
+            .as_object()
+            .expect("object")
+            .clone();
+        assert!(validate_mqtt_submission(&ok).is_ok());
+    }
+
+    #[test]
+    fn enabling_mqtt_without_a_host_is_rejected() {
+        let map = serde_json::json!({ "mqtt_enabled": true, "mqtt_host": "   " })
+            .as_object()
+            .expect("object")
+            .clone();
+        assert!(validate_mqtt_submission(&map).is_err(), "R1.5");
+
+        // Disabled with an empty host is a legitimate half-filled form.
+        let disabled = serde_json::json!({ "mqtt_enabled": false, "mqtt_host": "" })
+            .as_object()
+            .expect("object")
+            .clone();
+        assert!(validate_mqtt_submission(&disabled).is_ok());
+    }
+
+    #[test]
+    fn public_settings_hides_the_broker_password_but_reports_that_one_exists() {
+        let mut settings = Settings::default();
+        settings.mqtt_password = Secret::from("hunter2");
+        let value = public_settings(&settings);
+        let map = value.as_object().expect("object");
+
+        assert!(map.get("mqtt_password").is_none(), "R6.1");
+        assert_eq!(map.get("mqtt_password_set"), Some(&Value::Bool(true)), "R6.2");
+        assert!(
+            !serde_json::to_string(&value).unwrap().contains("hunter2"),
+            "the password must not survive anywhere in the response body (R6.1)"
+        );
+
+        let empty = public_settings(&Settings::default());
+        assert_eq!(
+            empty.as_object().unwrap().get("mqtt_password_set"),
+            Some(&Value::Bool(false))
+        );
+    }
+
+    #[test]
+    fn omitting_the_password_preserves_it_and_clearing_it_empties_it() {
+        // The update handler merges stored settings under the incoming patch,
+        // so an omitted key arrives carrying the stored value.
+        let mut stored = Settings::default();
+        stored.mqtt_password = Secret::from("stored-secret");
+        let mut merged = serde_json::to_value(&stored)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        merged.insert("mqtt_host".to_string(), Value::String("broker.local".into()));
+        assert_eq!(validate_map(&merged).mqtt_password.expose(), "stored-secret", "R6.3");
+
+        merged.insert("mqtt_password".to_string(), Value::String(String::new()));
+        assert_eq!(validate_map(&merged).mqtt_password.expose(), "", "R6.4");
+    }
+
+    #[test]
+    fn the_broker_password_cannot_leak_through_a_debug_dump() {
+        // The realistic leak is not a literal password in a format string, it
+        // is someone adding `tracing::debug!("{:?}", settings)` while chasing
+        // an unrelated bug. The type has to refuse, not the author.
+        let mut settings = Settings::default();
+        settings.mqtt_password = Secret::from("hunter2");
+        let dumped = format!("{settings:?}");
+        assert!(
+            !dumped.contains("hunter2"),
+            "Debug output must not carry the credential (R6.6): {dumped}"
+        );
+        assert!(dumped.contains("Secret(redacted)"));
+    }
+
+    #[test]
+    fn node_id_is_minted_once_and_then_stable() {
+        let mut settings = Settings::default();
+        assert!(ensure_mqtt_node_id(&mut settings), "first call mints an id");
+        let first = settings.mqtt_node_id.clone();
+        assert!(!first.is_empty());
+
+        assert!(!ensure_mqtt_node_id(&mut settings), "second call is a no-op");
+        assert_eq!(settings.mqtt_node_id, first, "identity must be stable (R2.3)");
+
+        // Renaming the device must not disturb it.
+        settings.device_name = "Renamed".to_string();
+        assert!(!ensure_mqtt_node_id(&mut settings));
+        assert_eq!(settings.mqtt_node_id, first);
     }
 
     #[test]

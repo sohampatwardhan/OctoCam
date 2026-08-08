@@ -22,6 +22,7 @@ export const ADMIN_ONLY_SETTINGS_SLUGS = [
   "system",
   "logs",
   "ssh-keys",
+  "mqtt",
   "admin",
 ] as const
 

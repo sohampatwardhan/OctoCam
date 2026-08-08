@@ -242,6 +242,34 @@ export interface Settings {
   scheduled_reboot_day_fri?: boolean
   scheduled_reboot_day_sat?: boolean
   scheduled_reboot_day_sun?: boolean
+  // MQTT publishing to a Home Assistant broker (see settings.rs). The broker
+  // password is never returned: public_settings() strips `mqtt_password` and
+  // substitutes `mqtt_password_set` so the form can show that one exists
+  // without revealing it. `mqtt_node_id` is server-managed and read-only here.
+  mqtt_enabled: boolean
+  mqtt_host: string
+  mqtt_port: number
+  mqtt_username: string
+  // Write-only. Present in a PUT body to set/clear the password; never in a GET
+  // response. Omitting it preserves the stored value (api_settings_update
+  // merges over current settings), so only send it when the admin edits it.
+  mqtt_password?: string
+  mqtt_password_set: boolean
+  mqtt_tls: boolean
+  mqtt_client_id: string
+  mqtt_base_topic: string
+  mqtt_discovery_prefix: string
+  mqtt_node_id: string
+}
+
+// GET /api/mqtt/status — live publisher state for the MQTT settings page.
+// See mqtt::MqttStatus in rust/octocam-web/src/mqtt.rs. `state` is one of
+// "disabled" | "connecting" | "connected"; `last_error` carries the most
+// recent failure reason while a connection keeps retrying.
+export interface MqttStatus {
+  state: "disabled" | "connecting" | "connected"
+  last_error: string | null
+  connected_since: number | null
 }
 
 // A resolution/preset choice — see settings::PresetView in
@@ -311,6 +339,21 @@ export interface ResourceStatus {
   memory_summary: string | null
 }
 
+/**
+ * Liveness of the motion detector, from motion.rs.
+ *
+ * `motion_detected: false` is ambiguous on its own — it means both "nothing is
+ * moving" and "the detector is blind". `available` disambiguates; `state`
+ * carries the reason so the UI can distinguish "switched off" from "broken".
+ */
+export interface MotionHealth {
+  available: boolean
+  state: "ok" | "starting" | "reconnecting" | "down" | "disabled"
+  last_frame_age_ms: number | null
+  consecutive_failures: number
+  total_blind_ms: number
+}
+
 // The flattened SystemStatus (/api/status) — hostname, ip_addresses, uptime,
 // cpu_temp_c, resources, camera, motion_detected, services, viewers, wifi,
 // and the browser-facing stream URLs. See system.rs/streams.rs for the full
@@ -323,6 +366,7 @@ export interface Status {
   resources: ResourceStatus
   camera: CameraStatus
   motion_detected: boolean
+  motion_health: MotionHealth
   services: {
     rtsp: ServiceState
     octocam_web: ServiceState
