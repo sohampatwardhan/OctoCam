@@ -175,6 +175,45 @@ export interface Settings {
   rtsp_max_clients: number
   homekit_enabled: boolean
   matter_enabled: boolean
+  // Stream-settings page fields (see rust/octocam-web/src/settings.rs's
+  // Settings struct — names/types below match it exactly unless noted).
+  camera_enabled: boolean
+  resolution_width: number
+  resolution_height: number
+  framerate: number
+  bitrate_kbps: number
+  sub_stream_enabled: boolean
+  sub_resolution_width: number
+  sub_resolution_height: number
+  sub_framerate: number
+  sub_bitrate_kbps: number
+  rotation: number
+  hflip: boolean
+  vflip: boolean
+  brightness: number
+  contrast: number
+  noir_mode: boolean
+  motion_enabled: boolean
+  motion_sensitivity: number
+  // A u64 bitmask server-side. public_settings() (settings.rs) emits it as a
+  // decimal STRING (not a JSON number) because 64-bit values routinely
+  // exceed Number.MAX_SAFE_INTEGER and would silently lose precision in JS.
+  // Read/write it with BigInt, never Number. u64_value() (settings.rs)
+  // accepts a Value::String on the way back in via PUT.
+  motion_zones: string
+  hksv_enabled: boolean
+  text_overlay_enabled: boolean
+  text_overlay_timezone: string
+  text_overlay_clock_format: string
+  text_overlay_date_format: string
+  time_server: string
+  // `resolution`/`sub_resolution` are PUT-only virtual fields (like the
+  // scheduled_*_day_* fields below) — apply_resolution_preset() (settings.rs)
+  // consumes a preset value string (e.g. "1280x720") on the way in and
+  // expands it to the real *_width/*_height fields. GET never returns these;
+  // they exist here purely so useUpdateSettings().mutate can send one.
+  resolution?: string
+  sub_resolution?: string
   scheduled_service_restart_enabled: boolean
   scheduled_service_restart_time: string
   scheduled_service_restart_days: string
@@ -195,6 +234,27 @@ export interface Settings {
   scheduled_reboot_day_fri?: boolean
   scheduled_reboot_day_sat?: boolean
   scheduled_reboot_day_sun?: boolean
+}
+
+// A resolution/preset choice — see settings::PresetView in
+// rust/octocam-web/src/settings.rs. `selected` reflects the settings that
+// were current on the server when `/api/stream-options` was fetched; treat
+// it only as an initial default, not a live indicator of unsaved form state.
+export interface PresetOption {
+  value: string
+  label: string
+  selected: boolean
+}
+
+// `GET /api/stream-options` — select-menu options for the Stream Settings
+// page. See api_stream_options in main.rs (~line 2404). `timezones` is a
+// flat list of IANA zone name strings (time_zone_views() unwrapped to just
+// `.value`); `rotations` is the fixed [0, 90, 180, 270] choice set.
+export interface StreamOptions {
+  resolution_presets: PresetOption[]
+  sub_resolution_presets: PresetOption[]
+  timezones: string[]
+  rotations: number[]
 }
 
 // system.rs's WifiStatus, flattened into `/api/status` under `wifi` — field

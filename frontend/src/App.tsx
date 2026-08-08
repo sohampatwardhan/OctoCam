@@ -10,6 +10,7 @@ import Matter from "@/routes/Matter"
 import Rtsp from "@/routes/Rtsp"
 import Setup from "@/routes/Setup"
 import SshKeys from "@/routes/SshKeys"
+import StreamSettings from "@/routes/StreamSettings"
 import System from "@/routes/System"
 import Wifi from "@/routes/Wifi"
 
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/identity" element={<Identity />} />
         <Route path="/wifi" element={<Wifi />} />
+        <Route path="/stream-settings" element={<StreamSettings />} />
         <Route path="/rtsp" element={<Rtsp />} />
         <Route path="/homekit" element={<Homekit />} />
         <Route path="/matter" element={<Matter />} />

@@ -259,6 +259,13 @@ pub fn public_settings(settings: &Settings) -> Value {
     let mut value = serde_json::to_value(settings).unwrap_or(Value::Null);
     if let Value::Object(map) = &mut value {
         map.remove("admin_password_hash");
+        // motion_zones is a u64 bitmask; as a bare JSON number it can exceed
+        // JS's Number.MAX_SAFE_INTEGER (2^53-1) and lose precision in the
+        // browser. Emit it as a decimal string instead — u64_value() above
+        // already accepts a Value::String on the way back in via PUT.
+        if let Some(zones) = map.get("motion_zones").and_then(|v| v.as_u64()) {
+            map.insert("motion_zones".to_string(), Value::String(zones.to_string()));
+        }
     }
     value
 }
@@ -943,6 +950,32 @@ mod tests {
         };
         enforce_hksv_requires_motion(&mut s2);
         assert!(s2.hksv_enabled);
+    }
+
+    #[test]
+    fn public_settings_emits_motion_zones_as_decimal_string() {
+        // u64::MAX as a bare JSON number would lose precision once it hits a
+        // JS Number (max safe integer is 2^53-1) — public_settings() must
+        // serialize it as a decimal string instead.
+        let settings = Settings {
+            motion_zones: u64::MAX,
+            ..Settings::default()
+        };
+        let value = public_settings(&settings);
+        assert_eq!(
+            value.get("motion_zones"),
+            Some(&Value::String(u64::MAX.to_string()))
+        );
+
+        let settings = Settings {
+            motion_zones: 42,
+            ..Settings::default()
+        };
+        let value = public_settings(&settings);
+        assert_eq!(
+            value.get("motion_zones"),
+            Some(&Value::String("42".to_string()))
+        );
     }
 
     #[test]
