@@ -66,3 +66,39 @@ export function RaspberryPiIcon(props: IconProps) {
     </svg>
   )
 }
+
+// mdi:motion-sensor. Not a brand logo, but vendored here for the same reason
+// as the rest: no icon-library dependency, nothing fetched at runtime. Ships
+// on a 24x24 grid like lucide, so it sits correctly beside them.
+export function MotionSensorIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M10 .2C9 .2 8.2 1 8.2 2S9 3.8 10 3.8S11.8 3 11.8 2S11 .2 10 .2m5.67.8A7.33 7.33 0 0 0 23 8.33V7a6 6 0 0 1-6-6zm2.66 0c0 2.58 2.09 4.67 4.67 4.67V4.33c-1.84 0-3.33-1.49-3.33-3.33zM21 1a2 2 0 0 0 2 2V1zM7.92 4.03c-.17 0-.34.03-.5.08L2 5.8V11h1.8V7.33l2.11-.66L2 22h1.8l2.87-8.11L9 17v5h1.8v-6.41l-2.49-4.54l.73-2.87L10.12 10H15V8.2h-3.62l-2-3.33c-.3-.5-.84-.84-1.46-.84" />
+    </svg>
+  )
+}
+
+// selfhst:mqtt (dark variant geometry, bound to currentColor)
+export function MqttIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={24}
+      height={24}
+      viewBox="0 0 512 512"
+      fill="currentColor"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M1.5 290.2H0V486c0 14.1 11.6 25.7 25.7 25.7h201.6C225.6 389.4 125.2 290.2 1.5 290.2m0-161.5H0V212c166.3.8 301.5 134.5 303.3 299.8h86.3C388.1 300.3 214.7 128.7 1.5 128.7M512 486.3V309.4C453.5 166 335.6 52.7 189 0H25.7C11.6 0 0 11.6 0 25.7v25c255.9.8 464.1 206.9 465.6 461.3h20.7c14.3-.3 25.7-11.6 25.7-25.7M444.6 71.4c23.7 23.7 47.9 53.7 67.4 80.2V25.5c0-14-11.3-25.4-25.3-25.5H356.5c30.3 20.9 61.6 44.9 88.1 71.4" />
+    </svg>
+  )
+}

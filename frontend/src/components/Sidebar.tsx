@@ -4,7 +4,6 @@ import {
   IdCard,
   KeyRound,
   LayoutDashboard,
-  Radar,
   ScrollText,
   Server,
   Settings,
@@ -12,7 +11,7 @@ import {
   SlidersHorizontal,
   Wifi,
 } from "lucide-react"
-import { AppleHomeKitIcon, MatterIcon } from "@/components/icons/selfhst"
+import { AppleHomeKitIcon, MatterIcon, MotionSensorIcon } from "@/components/icons/selfhst"
 import { useMe } from "@/hooks/useAuth"
 import { isAdminOnlySettingsPath } from "@/lib/nav"
 import { cn } from "@/lib/utils"
@@ -44,7 +43,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Identity", to: "/settings/identity", icon: IdCard, inApp: true },
       { label: "Wi-Fi", to: "/settings/wifi", icon: Wifi, inApp: true },
       { label: "Stream Config", to: "/settings/stream", icon: SlidersHorizontal, inApp: true },
-      { label: "Motion", to: "/settings/motion", icon: Radar, inApp: true },
+      { label: "Motion", to: "/settings/motion", icon: MotionSensorIcon, inApp: true },
       { label: "HomeKit", to: "/settings/homekit", icon: AppleHomeKitIcon, inApp: true },
       { label: "Matter", to: "/settings/matter", icon: MatterIcon, inApp: true },
     ],
