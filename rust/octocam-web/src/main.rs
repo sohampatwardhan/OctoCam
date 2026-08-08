@@ -62,7 +62,10 @@ struct AppState {
     /// /matter, since the Matter daemon has no snapshot fallback.
     internal_listener_down: Arc<std::sync::atomic::AtomicBool>,
     motion_detected: Arc<std::sync::atomic::AtomicBool>,
-    motion_tx: tokio::sync::broadcast::Sender<bool>,
+    motion_tx: tokio::sync::broadcast::Sender<motion::MotionUpdate>,
+    /// Liveness of the motion detector. Distinguishes "nothing is moving" from
+    /// "the detector cannot see anything" — see motion::MotionHealth.
+    motion_health: Arc<motion::MotionHealth>,
 }
 
 #[derive(Debug)]
@@ -228,6 +231,7 @@ async fn async_main() {
         state.config_path.clone(),
         state.motion_detected.clone(),
         state.motion_tx.clone(),
+        state.motion_health.clone(),
     );
 
     let app = Router::new()
@@ -367,6 +371,7 @@ impl AppState {
             internal_listener_down: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             motion_detected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             motion_tx,
+            motion_health: Arc::new(motion::MotionHealth::default()),
         }
     }
 }
@@ -977,6 +982,8 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         status: system::SystemStatus,
         viewers: Option<streams::ViewerReport>,
         motion_detected: bool,
+        /// Whether `motion_detected` is trustworthy right now.
+        motion_health: motion::MotionHealthView,
         browser_stream_urls: BrowserStreamUrls,
     }
     let urls = stream_urls_for(&settings, request_hostname(&headers), "webrtc");
@@ -984,6 +991,7 @@ async fn api_status(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         status: status?,
         viewers,
         motion_detected: state.motion_detected.load(std::sync::atomic::Ordering::Relaxed),
+        motion_health: state.motion_health.snapshot(),
         browser_stream_urls: BrowserStreamUrls {
             main: urls.main,
             sub: urls.sub,
@@ -1288,12 +1296,19 @@ async fn api_motion_events(
     use tokio_stream::StreamExt;
 
     let rx = state.motion_tx.subscribe();
-    let initial_val = state.motion_detected.load(std::sync::atomic::Ordering::Relaxed);
-    let initial_event = Event::default().data(serde_json::json!({ "motion_detected": initial_val }).to_string());
+    // Seed with current truth so a subscriber that connects during an outage
+    // learns the sensor is blind immediately, rather than assuming it is well
+    // until the next transition.
+    let initial = motion::MotionUpdate {
+        motion_detected: state.motion_detected.load(std::sync::atomic::Ordering::Relaxed),
+        motion_available: state.motion_health.snapshot().available,
+    };
+    let initial_event = Event::default().data(serde_json::to_string(&initial).unwrap_or_default());
 
     let stream = BroadcastStream::new(rx)
         .map(|msg| match msg {
-            Ok(val) => Ok(Event::default().data(serde_json::json!({ "motion_detected": val }).to_string())),
+            Ok(update) => Ok(Event::default()
+                .data(serde_json::to_string(&update).unwrap_or_default())),
             Err(_) => Ok(Event::default().comment("keepalive")),
         });
 

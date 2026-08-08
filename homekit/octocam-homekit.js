@@ -583,9 +583,25 @@ async function writeStatus(accessory, identity, extra = {}) {
   });
 }
 
+/**
+ * Mark the motion sensor as not currently covering the scene.
+ *
+ * Deliberately does not touch MotionDetected: the last observed value is left
+ * alone, and StatusActive tells the Home app not to trust it.
+ */
+function markSensorInactive(accessory, reason) {
+  const motionService = accessory.getService(Service.MotionSensor);
+  if (!motionService) return;
+  motionService.getCharacteristic(Characteristic.StatusActive).updateValue(false);
+  console.log(`HomeKit motion sensor marked inactive: ${reason}`);
+}
+
 function startMotionListener(accessory) {
   const port = process.env.OCTOCAM_PORT || 8080;
   const url = `http://127.0.0.1:${port}/api/motion/events`;
+  // Nothing is known about coverage until the stream reports; claiming the
+  // sensor is active before then would be a guess in the unsafe direction.
+  markSensorInactive(accessory, "motion stream not yet connected");
 
   console.log(`Connecting to motion events stream at ${url}...`);
 
@@ -612,11 +628,21 @@ function startMotionListener(accessory) {
             const jsonStr = trimmed.slice(5).trim();
             const event = JSON.parse(jsonStr);
             const motionDetected = Boolean(event.motion_detected);
+            // Older payloads carried only motion_detected. Absent means the
+            // server predates the health signal, not that the sensor is blind.
+            const motionAvailable = event.motion_available === undefined
+              ? true
+              : Boolean(event.motion_available);
 
             const motionService = accessory.getService(Service.MotionSensor);
             if (motionService) {
               motionService.getCharacteristic(Characteristic.MotionDetected).updateValue(motionDetected);
-              console.log(`HomeKit motion state updated: ${motionDetected}`);
+              // StatusActive is how the Home app says "this sensor is not
+              // currently working". Without it, a dead detector reports a
+              // confident "No Motion" that is indistinguishable from a quiet
+              // room — the exact false negative this is meant to prevent.
+              motionService.getCharacteristic(Characteristic.StatusActive).updateValue(motionAvailable);
+              console.log(`HomeKit motion state updated: ${motionDetected} (active: ${motionAvailable})`);
             }
           } catch (err) {
             console.error("Failed to parse motion event:", err.message);
@@ -638,6 +664,12 @@ function startMotionListener(accessory) {
 
   let reconnectTimeout = null;
   function scheduleReconnect() {
+    // Losing the stream means this bridge no longer knows the motion state, so
+    // the sensor is not active regardless of what the detector is doing. Without
+    // this, StatusActive would stay latched at its last value — reporting a
+    // healthy sensor while octocam-web is down.
+    markSensorInactive(accessory, "motion stream disconnected");
+
     if (reconnectTimeout) return;
     console.log("Reconnecting to motion stream in 5 seconds...");
     reconnectTimeout = setTimeout(() => {

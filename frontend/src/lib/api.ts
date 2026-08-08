@@ -311,6 +311,21 @@ export interface ResourceStatus {
   memory_summary: string | null
 }
 
+/**
+ * Liveness of the motion detector, from motion.rs.
+ *
+ * `motion_detected: false` is ambiguous on its own — it means both "nothing is
+ * moving" and "the detector is blind". `available` disambiguates; `state`
+ * carries the reason so the UI can distinguish "switched off" from "broken".
+ */
+export interface MotionHealth {
+  available: boolean
+  state: "ok" | "starting" | "reconnecting" | "down" | "disabled"
+  last_frame_age_ms: number | null
+  consecutive_failures: number
+  total_blind_ms: number
+}
+
 // The flattened SystemStatus (/api/status) — hostname, ip_addresses, uptime,
 // cpu_temp_c, resources, camera, motion_detected, services, viewers, wifi,
 // and the browser-facing stream URLs. See system.rs/streams.rs for the full
@@ -323,6 +338,7 @@ export interface Status {
   resources: ResourceStatus
   camera: CameraStatus
   motion_detected: boolean
+  motion_health: MotionHealth
   services: {
     rtsp: ServiceState
     octocam_web: ServiceState

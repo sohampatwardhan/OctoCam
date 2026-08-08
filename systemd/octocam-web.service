@@ -15,6 +15,11 @@ Environment=OCTOCAM_PROJECT_DIR=__PROJECT_DIR__
 Environment=OCTOCAM_HOST=127.0.0.1
 Environment=OCTOCAM_PORT=8080
 Environment=OCTOCAM_ENABLE_CAPTIVE_PORTAL_LISTENER=0
+# EnvFilter::from_default_env() defaults to ERROR when RUST_LOG is unset, which
+# silently suppressed the motion detector's session diagnostics. Keep the global
+# default at error (journal writes cost SD wear) and raise only the motion
+# module, where reconnect churn has to stay attributable.
+Environment=RUST_LOG=error,octocam_web::motion=info
 ExecStart=/usr/local/bin/octocam-web
 Restart=on-failure
 RestartSec=3

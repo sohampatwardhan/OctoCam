@@ -39,6 +39,7 @@
     --color-foreground: var(--foreground);
     --color-background: var(--background);
     --color-success: var(--success);
+    --color-warning: var(--warning);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -65,6 +66,9 @@
     --accent-foreground: #16212b;
     --destructive: #c5462d;
     --success: #08734f;
+    /* Degraded-but-not-failed states, e.g. a motion detector that is
+       reconnecting and cannot currently see the scene. */
+    --warning: #b06a00;
     --border: #d6dee5;
     --input: #fbfcfd;
     --ring: #2f7dd3;
@@ -102,6 +106,7 @@
         --accent-foreground: #e8eef3;
         --destructive: #e0674c;
         --success: #34c98d;
+        --warning: #e0a33c;
         --border: #2a3742;
         --input: #1c2732;
         --ring: #4a9de8;
