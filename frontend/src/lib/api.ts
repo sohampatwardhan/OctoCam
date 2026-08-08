@@ -144,10 +144,25 @@ export interface Status {
   services: {
     rtsp: ServiceState
     octocam_web: ServiceState
+    homekit: ServiceState
   }
   viewers: ViewerReport | null
   browser_stream_urls: BrowserStreamUrls
   wifi: WifiStatusSummary
+}
+
+// `/api/homekit` — the HomeKit page's pairing view. Field names/types must
+// match api_homekit's response shape exactly (see main.rs, ~line 2329).
+export interface HomeKitInfo {
+  status: string
+  paired: boolean
+  has_pairing: boolean
+  pincode: string
+  setup_uri: string
+  has_qr: boolean
+  qr_data_url: string
+  error: string
+  has_error: boolean
 }
 
 // `/api/wifi/networks` + `/api/wifi/scan` — see rust/octocam-web/src/wifi.rs.

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom"
 import { AppShell } from "@/components/AppShell"
 import { AuthGate } from "@/components/AuthGate"
 import Dashboard from "@/routes/Dashboard"
+import Homekit from "@/routes/Homekit"
 import Login from "@/routes/Login"
 import Rtsp from "@/routes/Rtsp"
 import Setup from "@/routes/Setup"
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/wifi" element={<Wifi />} />
         <Route path="/rtsp" element={<Rtsp />} />
+        <Route path="/homekit" element={<Homekit />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
