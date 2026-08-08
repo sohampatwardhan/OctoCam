@@ -31,7 +31,7 @@ export default function Matter() {
   })
 
   const enabled = settings?.matter_enabled ?? false
-  const adminPasswordSet = matter?.admin_password_set ?? true
+  const adminPasswordSet = matter?.admin_password_set ?? false
   const bridgeLoading = settingsLoading || matterLoading
 
   return (
@@ -72,7 +72,7 @@ export default function Matter() {
                         <Switch
                           id="matter_enabled"
                           checked={enabled}
-                          disabled={updateSettings.isPending || !adminPasswordSet}
+                          disabled={updateSettings.isPending || settingsLoading || matterLoading || !adminPasswordSet}
                           onCheckedChange={(checked) =>
                             updateSettings.mutate(
                               { matter_enabled: checked },
