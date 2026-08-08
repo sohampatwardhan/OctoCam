@@ -2379,6 +2379,7 @@ async fn api_matter(
         "orphaned_fabrics": view.orphaned_fabrics,
         "manual_code": view.manual_code,
         "qr_svg": view.qr_svg,
+        "qr_payload": view.qr_payload,
         "stream_source": view.stream_source,
         "error": view.error,
         "has_error": view.has_error,
@@ -3581,6 +3582,7 @@ mod tests {
         assert_eq!(view.status, "disabled");
         assert_eq!(view.manual_code, "");
         assert_eq!(view.qr_svg, "");
+        assert_eq!(view.qr_payload, "");
         assert_eq!(view.commissioned, false);
         assert_eq!(view.fabric_count, 0);
         assert!(!view.orphaned_fabrics);
