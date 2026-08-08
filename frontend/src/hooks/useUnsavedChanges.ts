@@ -1,38 +1,30 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 
 export interface UnsavedSection {
   /** Stable key for the form reporting the change. */
   id: string
-  /** Human name for the form, e.g. "Stream Config". */
+  /** Human name for the form, e.g. "Stream settings". */
   label: string
   /** DOM id to scroll to when the indicator is activated. */
   anchorId: string
 }
 
-interface UnsavedChangesValue {
+export interface UnsavedChangesValue {
   sections: UnsavedSection[]
   report: (id: string, section: UnsavedSection | null) => void
 }
 
-const UnsavedChangesContext = createContext<UnsavedChangesValue | null>(null)
+export const UnsavedChangesContext = createContext<UnsavedChangesValue | null>(null)
 
 /**
- * Tracks which forms on the current page hold unsaved edits.
+ * Backing state for UnsavedChangesProvider.
  *
  * Settings pages deliberately keep independent forms and independent save
- * actions, so this deliberately does NOT submit anything — it only lets the
- * shell surface that unsaved work exists and point at it. Saving stays with
- * the form that owns the data.
+ * actions, so this never submits anything — it only lets the shell surface
+ * that unsaved work exists and point at it. Saving stays with the form that
+ * owns the data.
  */
-export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
+export function useUnsavedChangesState(): UnsavedChangesValue {
   const [registry, setRegistry] = useState<Record<string, UnsavedSection>>({})
 
   const report = useCallback((id: string, section: UnsavedSection | null) => {
@@ -52,9 +44,7 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const sections = useMemo(() => Object.values(registry), [registry])
-  const value = useMemo(() => ({ sections, report }), [sections, report])
-
-  return <UnsavedChangesContext.Provider value={value}>{children}</UnsavedChangesContext.Provider>
+  return useMemo(() => ({ sections, report }), [sections, report])
 }
 
 export function useUnsavedChanges(): UnsavedChangesValue {

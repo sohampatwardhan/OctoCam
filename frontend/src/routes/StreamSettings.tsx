@@ -8,22 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StreamSection } from "@/components/stream/StreamSection"
 import { ImageSection } from "@/components/stream/ImageSection"
-import { MotionSection } from "@/components/stream/MotionSection"
 import { HksvSection } from "@/components/stream/HksvSection"
 import { OverlaySection } from "@/components/stream/OverlaySection"
 import { RtspSection } from "@/components/stream/RtspSection"
 import type { StreamFormPatch, StreamFormState } from "@/components/stream/types"
 import { isFormDirty, useReportUnsavedChanges } from "@/hooks/useUnsavedChanges"
-
-const ALL_ZONES = (1n << 64n) - 1n
-
-function parseMotionZones(raw: string): bigint {
-  try {
-    return BigInt(raw)
-  } catch {
-    return ALL_ZONES
-  }
-}
 
 export default function StreamSettings() {
   const { data: settings, isLoading: settingsLoading, isError: settingsError } = useSettings()
@@ -73,9 +62,6 @@ export default function StreamSettings() {
         hflip: settings.hflip,
         vflip: settings.vflip,
         noirMode: settings.noir_mode,
-        motionEnabled: settings.motion_enabled,
-        motionSensitivity: String(settings.motion_sensitivity),
-        motionZones: parseMotionZones(settings.motion_zones),
         hksvEnabled: settings.hksv_enabled,
         textOverlayEnabled: settings.text_overlay_enabled,
         textOverlayTimezone: settings.text_overlay_timezone,
@@ -112,9 +98,6 @@ export default function StreamSettings() {
       hflip: form.hflip,
       vflip: form.vflip,
       noir_mode: form.noirMode,
-      motion_enabled: form.motionEnabled,
-      motion_sensitivity: Number(form.motionSensitivity) || 1,
-      motion_zones: form.motionZones.toString(),
       hksv_enabled: form.hksvEnabled,
       text_overlay_enabled: form.textOverlayEnabled,
       text_overlay_timezone: form.textOverlayTimezone,
@@ -166,8 +149,7 @@ export default function StreamSettings() {
             subResolutionPresets={options.sub_resolution_presets}
           />
           <ImageSection value={form} onChange={updateForm} rotations={options.rotations} />
-          <MotionSection value={form} onChange={updateForm} />
-          <HksvSection value={form} onChange={updateForm} />
+          <HksvSection value={form} motionEnabled={settings?.motion_enabled ?? false} onChange={updateForm} />
           <OverlaySection value={form} onChange={updateForm} timezones={options.timezones} />
 
           <Card>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
-import type { StreamFormPatch, StreamFormState } from "@/components/stream/types"
+import type { MotionFormPatch, MotionFormState } from "@/components/stream/types"
 
 const ALL_ZONES = (1n << 64n) - 1n
 const ZONE_COUNT = 64
@@ -28,15 +28,17 @@ function aspectRatioFrom(resolution: string): string {
 }
 
 interface MotionSectionProps {
-  value: StreamFormState
-  onChange: (patch: StreamFormPatch) => void
+  value: MotionFormState
+  /** Camera resolution as "WIDTHxHEIGHT"; shapes the zone grid to the scene. */
+  resolution: string
+  onChange: (patch: MotionFormPatch) => void
 }
 
 // Motion detection enable, sensitivity, and the 8x8 zone bitmask editor.
 // Bit N of `motionZones` (0..63, row-major, see motion.rs's grid_idx mapping)
 // is set when that cell is MONITORED for motion; clearing a bit excludes
 // that region (e.g. a road or a tree) from triggering detection.
-export function MotionSection({ value, onChange }: MotionSectionProps) {
+export function MotionSection({ value, resolution, onChange }: MotionSectionProps) {
   const [paintMode, setPaintMode] = useState<PaintMode>("monitor")
 
   return (
@@ -107,7 +109,7 @@ export function MotionSection({ value, onChange }: MotionSectionProps) {
             mask={value.motionZones}
             disabled={!value.motionEnabled}
             paintMode={paintMode}
-            aspectRatio={aspectRatioFrom(value.resolution)}
+            aspectRatio={aspectRatioFrom(resolution)}
             onChange={(mask) => onChange({ motionZones: mask })}
           />
         </div>

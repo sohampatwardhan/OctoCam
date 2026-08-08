@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Topbar } from "@/components/Topbar"
 import { Sidebar } from "@/components/Sidebar"
-import { UnsavedChangesProvider } from "@/hooks/useUnsavedChanges"
+import { UnsavedChangesProvider } from "@/components/UnsavedChangesProvider"
 
 // Every route except the dashboard gets the persistent settings sidebar
 // (two-column grid, ~228px + fluid content). The dashboard stays full-width,
