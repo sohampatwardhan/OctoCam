@@ -9,7 +9,6 @@ import Identity from "@/routes/Identity"
 import Logs from "@/routes/Logs"
 import Login from "@/routes/Login"
 import Matter from "@/routes/Matter"
-import Rtsp from "@/routes/Rtsp"
 import Setup from "@/routes/Setup"
 import SshKeys from "@/routes/SshKeys"
 import StreamSettings from "@/routes/StreamSettings"
@@ -29,17 +28,31 @@ export default function App() {
         }
       >
         <Route path="/" element={<Dashboard />} />
-        <Route path="/identity" element={<Identity />} />
-        <Route path="/wifi" element={<Wifi />} />
-        <Route path="/stream-settings" element={<StreamSettings />} />
-        <Route path="/rtsp" element={<Rtsp />} />
-        <Route path="/homekit" element={<Homekit />} />
-        <Route path="/matter" element={<Matter />} />
-        <Route path="/system" element={<System />} />
-        <Route path="/logs" element={<Logs />} />
-        <Route path="/ssh-keys" element={<SshKeys />} />
-        <Route path="/admin" element={<Admin />} />
-        <Route path="/settings" element={<Account />} />
+        <Route path="settings">
+          <Route index element={<Navigate to="/settings/account" replace />} />
+          <Route path="identity" element={<Identity />} />
+          <Route path="wifi" element={<Wifi />} />
+          <Route path="stream" element={<StreamSettings />} />
+          <Route path="homekit" element={<Homekit />} />
+          <Route path="matter" element={<Matter />} />
+          <Route path="system" element={<System />} />
+          <Route path="logs" element={<Logs />} />
+          <Route path="ssh-keys" element={<SshKeys />} />
+          <Route path="admin" element={<Admin />} />
+          <Route path="account" element={<Account />} />
+          <Route path="*" element={<Navigate to="/settings/account" replace />} />
+        </Route>
+
+        <Route path="identity" element={<Navigate to="/settings/identity" replace />} />
+        <Route path="wifi" element={<Navigate to="/settings/wifi" replace />} />
+        <Route path="stream-settings" element={<Navigate to="/settings/stream" replace />} />
+        <Route path="rtsp" element={<Navigate to="/settings/stream" replace />} />
+        <Route path="homekit" element={<Navigate to="/settings/homekit" replace />} />
+        <Route path="matter" element={<Navigate to="/settings/matter" replace />} />
+        <Route path="system" element={<Navigate to="/settings/system" replace />} />
+        <Route path="logs" element={<Navigate to="/settings/logs" replace />} />
+        <Route path="ssh-keys" element={<Navigate to="/settings/ssh-keys" replace />} />
+        <Route path="admin" element={<Navigate to="/settings/admin" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

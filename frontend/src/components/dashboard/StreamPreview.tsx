@@ -122,7 +122,7 @@ export function StreamPreview() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" render={<a href="/rtsp" />}>
+          <Button variant="secondary" size="sm" nativeButton={false} render={<a href="/settings/stream" />}>
             RTSP
           </Button>
           <Button variant="secondary" size="sm" onClick={togglePlaying} aria-pressed={playing}>
