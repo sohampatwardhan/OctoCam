@@ -5,53 +5,54 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
-// POST JSON, credentialed. Throws the server's `{error}` message when present,
-// otherwise falls back to a generic "<path> -> <status>" message.
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+// Shared by apiPost/apiPut/apiDelete: throws the server's `{error}` message
+// when the response body is JSON shaped that way, otherwise falls back to a
+// generic "<path> -> <status>" message.
+async function throwOnError(path: string, res: Response): Promise<void> {
+  if (res.ok) return
+  let message = `${path} -> ${res.status}`
+  try {
+    const data: unknown = await res.json()
+    if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
+      message = data.error
+    }
+  } catch {
+    // response wasn't JSON — keep the generic message
+  }
+  throw new Error(message)
+}
+
+async function apiSendJson<T>(method: "POST" | "PUT" | "DELETE", path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
-    method: "POST",
+    method,
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
-  if (!res.ok) {
-    let message = `${path} -> ${res.status}`
-    try {
-      const data: unknown = await res.json()
-      if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
-        message = data.error
-      }
-    } catch {
-      // response wasn't JSON — keep the generic message
-    }
-    throw new Error(message)
-  }
+  await throwOnError(path, res)
   return res.json() as Promise<T>
+}
+
+// POST JSON, credentialed. Throws the server's `{error}` message when present,
+// otherwise falls back to a generic "<path> -> <status>" message.
+export function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return apiSendJson<T>("POST", path, body)
+}
+
+// PUT JSON, credentialed. Same error-surfacing behavior as apiPost. Used by
+// `/api/settings`, which seeds a full settings map from the server's current
+// values then overlays the request body — callers should send only the
+// fields that changed, with native typed values (booleans/numbers, not
+// stringified), since validate_map accepts native JSON types.
+export function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiSendJson<T>("PUT", path, body)
 }
 
 // DELETE JSON, credentialed. Same error-surfacing behavior as apiPost — the
 // wifi/delete endpoint reads its request (name + source) from a JSON body
 // rather than the URL, so this isn't a bodyless DELETE.
-export async function apiDelete<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: "DELETE",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    let message = `${path} -> ${res.status}`
-    try {
-      const data: unknown = await res.json()
-      if (data && typeof data === "object" && "error" in data && typeof data.error === "string") {
-        message = data.error
-      }
-    } catch {
-      // response wasn't JSON — keep the generic message
-    }
-    throw new Error(message)
-  }
-  return res.json() as Promise<T>
+export function apiDelete<T>(path: string, body: unknown): Promise<T> {
+  return apiSendJson<T>("DELETE", path, body)
 }
 
 // `/api/me` — session/identity probe. 401s (with this same shape) when logged out.
@@ -97,6 +98,28 @@ export interface BrowserStreamUrls {
   main: string
   sub: string
   has_sub: boolean
+}
+
+// `/api/rtsp` — the RTSP page's stream URLs (rtsp:// URIs, not the browser
+// playback URLs above). See rtsp_urls in main.rs.
+export interface RtspUrls {
+  main: string
+  sub: string
+  has_sub: boolean
+}
+
+// Subset of settings::Settings (rust/octocam-web/src/settings.rs) that the
+// SPA reads/writes today. `public_settings()` is the full struct minus
+// `admin_password_hash`; field names/types must match exactly. `GET/PUT
+// /api/settings` — see api_settings_get/api_settings_put in main.rs. PUT
+// seeds a full map from the server's CURRENT settings then overlays the
+// request body, so callers should send only the changed fields.
+export interface Settings {
+  rtsp_enabled: boolean
+  rtsp_path: string
+  rtsp_max_clients: number
+  homekit_enabled: boolean
+  matter_enabled: boolean
 }
 
 // Subset of system.rs's WifiStatus the Wi-Fi page needs — field names must

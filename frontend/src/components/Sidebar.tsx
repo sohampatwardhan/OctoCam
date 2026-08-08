@@ -45,7 +45,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Identity", to: "/identity", icon: IdCard, adminOnly: true },
       { label: "Wi-Fi", to: "/wifi", icon: Wifi, adminOnly: true, inApp: true },
       { label: "Stream Config", to: "/stream-settings", icon: SlidersHorizontal, adminOnly: true },
-      { label: "RTSP", to: "/rtsp", icon: Radio, adminOnly: true },
+      { label: "RTSP", to: "/rtsp", icon: Radio, adminOnly: true, inApp: true },
       { label: "HomeKit", to: "/homekit", icon: House, adminOnly: true },
       { label: "Matter", to: "/matter", icon: Share2, adminOnly: true },
     ],
