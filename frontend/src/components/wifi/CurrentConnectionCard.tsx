@@ -31,9 +31,11 @@ export function CurrentConnectionCard() {
                 <Skeleton className="h-3 w-20" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Skeleton className="h-4 w-24" />
-              <Skeleton className="h-4 w-24" />
+            <div className="flex flex-col gap-3">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-4 w-36" />
             </div>
           </div>
         ) : isError || !data || !wifi ? (
@@ -41,12 +43,11 @@ export function CurrentConnectionCard() {
         ) : (
           <div className="flex flex-col gap-4">
             <SignalHeader connected={connected} ssid={wifi.ssid} signalDbm={wifi.signal_dbm} />
-            <dl className="grid grid-cols-2 gap-4">
+            <dl className="flex flex-col gap-3">
               <Metric label="IP address" value={wifi.ip_addresses[0] ?? "—"} />
-              <Metric
-                label="Band"
-                value={[wifi.band, wifi.wifi_generation_label].filter(Boolean).join(" · ") || "—"}
-              />
+              <Metric label="Security" value={wifi.security ?? "—"} />
+              <Metric label="Channel" value={formatChannel(wifi.channel, wifi.band)} />
+              <Metric label="PHY mode" value={wifi.wifi_generation_label ?? "—"} />
             </dl>
           </div>
         )}
@@ -84,6 +85,14 @@ function SignalHeader({
       </div>
     </div>
   )
+}
+
+// e.g. channel 6 + band "2.4 GHz" → "Channel 6 (2.4 GHz)".
+function formatChannel(channel: number | null, band: string | null): string {
+  if (channel != null && band) return `Channel ${channel} (${band})`
+  if (channel != null) return `Channel ${channel}`
+  if (band) return band
+  return "—"
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom"
-import { Camera, LogOut, Menu, Settings } from "lucide-react"
+import { LogOut, Menu, Settings } from "lucide-react"
+import { RaspberryPiIcon } from "@/components/icons/selfhst"
 import { apiPost } from "@/lib/api"
 import { useMe } from "@/hooks/useAuth"
 import { useStatus } from "@/hooks/useStatus"
@@ -53,7 +54,7 @@ export function Topbar({ showMenuButton = false, menuOpen = false, onMenuClick }
       )}
 
       <Link to="/" className="flex items-center gap-2 font-heading text-sm font-semibold tracking-tight">
-        <Camera className="size-4 text-primary" />
+        <RaspberryPiIcon className="size-4 text-primary" />
         OctoCam
       </Link>
 
