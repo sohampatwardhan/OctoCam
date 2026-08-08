@@ -90,12 +90,6 @@ pub struct Services {
     pub rtsp: ServiceStatus,
 }
 
-#[derive(Clone, Debug)]
-pub struct LabelValue {
-    pub label: String,
-    pub value: String,
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct StoredWifiProfile {
     pub name: String,
@@ -104,35 +98,6 @@ pub struct StoredWifiProfile {
     pub active: bool,
     pub can_delete: bool,
     pub delete_source: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct SystemView {
-    pub camera_available: bool,
-    pub camera_label: String,
-    pub wifi_label: String,
-    pub wifi_signal_percent: f64,
-    pub wifi_signal_level: String,
-    pub wifi_signal_label: String,
-    pub wifi_ip_addresses: String,
-    pub ip_addresses: String,
-    pub uptime: String,
-    pub cpu_temp: String,
-    pub cpu_usage: String,
-    pub cpu_usage_percent: f64,
-    pub load_average: String,
-    pub memory: String,
-    pub memory_percent: f64,
-    pub has_swap: bool,
-    pub swap: String,
-    pub swap_percent: f64,
-    pub web_state: String,
-    pub rtsp_state: String,
-    pub homekit_state: String,
-    pub wifi_details: Vec<LabelValue>,
-    pub logs: Vec<String>,
-    pub ssh_target: String,
-    pub is_admin: bool,
 }
 
 pub fn status() -> SystemStatus {
@@ -150,101 +115,6 @@ pub fn status() -> SystemStatus {
             rtsp: service_status("octocam-rtsp"),
         },
         logs: service_logs("octocam-web", 40),
-    }
-}
-
-pub fn view(status: &SystemStatus) -> SystemView {
-    let ip_addresses = if status.ip_addresses.is_empty() {
-        "Not available".to_string()
-    } else {
-        status.ip_addresses.join(", ")
-    };
-    let ssh_target = status
-        .ip_addresses
-        .first()
-        .cloned()
-        .unwrap_or_else(|| format!("{}.local", status.hostname));
-    let memory = status
-        .resources
-        .memory_summary
-        .clone()
-        .unwrap_or_else(|| "Not available".to_string());
-    let swap = format!(
-        "{} / {} MB{}",
-        status.resources.memory.swap_used_mb,
-        status.resources.memory.swap_total_mb,
-        status
-            .resources
-            .memory
-            .swap_used_percent
-            .map(|value| format!(" ({value:.1}%)"))
-            .unwrap_or_default()
-    );
-    let wifi_signal_percent = wifi_signal_percent(&status.wifi);
-    let wifi_signal_level = wifi_signal_level(wifi_signal_percent).to_string();
-    let wifi_signal_label = status
-        .wifi
-        .signal_dbm
-        .as_ref()
-        .map(|value| format!("Signal {value} ({wifi_signal_percent:.0}%)"))
-        .unwrap_or_else(|| "Signal unavailable".to_string());
-    let wifi_ip_addresses = wifi_ip_addresses_text(&status.wifi);
-
-    SystemView {
-        camera_available: status.camera.available,
-        camera_label: if status.camera.available {
-            "Camera online"
-        } else {
-            "Camera unavailable"
-        }
-        .to_string(),
-        wifi_label: status
-            .wifi
-            .ssid
-            .clone()
-            .unwrap_or_else(|| status.wifi.message.clone()),
-        wifi_signal_percent,
-        wifi_signal_level,
-        wifi_signal_label,
-        wifi_ip_addresses,
-        ip_addresses,
-        uptime: status
-            .uptime
-            .clone()
-            .unwrap_or_else(|| "Not available".to_string()),
-        cpu_temp: status
-            .cpu_temp_c
-            .map(|value| format!("{value:.1} °C"))
-            .unwrap_or_else(|| "Not available".to_string()),
-        cpu_usage: status
-            .resources
-            .cpu_usage_percent
-            .map(|value| format!("{value:.1}%"))
-            .unwrap_or_else(|| "Not available".to_string()),
-        cpu_usage_percent: clamp_percent(status.resources.cpu_usage_percent.unwrap_or_default()),
-        load_average: status
-            .resources
-            .load_average
-            .clone()
-            .unwrap_or_else(|| "Not available".to_string()),
-        memory,
-        memory_percent: clamp_percent(status.resources.memory.used_percent.unwrap_or_default()),
-        has_swap: status.resources.memory.swap_total_mb > 0,
-        swap,
-        swap_percent: clamp_percent(
-            status
-                .resources
-                .memory
-                .swap_used_percent
-                .unwrap_or_default(),
-        ),
-        web_state: status.services.octocam_web.state.clone(),
-        rtsp_state: status.services.rtsp.state.clone(),
-        homekit_state: status.services.homekit.state.clone(),
-        wifi_details: wifi_details(&status.wifi),
-        logs: status.logs.clone(),
-        ssh_target,
-        is_admin: true,
     }
 }
 
@@ -266,46 +136,6 @@ pub fn stored_wifi_profiles(active_wifi: &WifiStatus) -> Vec<StoredWifiProfile> 
         }
     });
     profiles
-}
-
-fn clamp_percent(value: f64) -> f64 {
-    value.clamp(0.0, 100.0)
-}
-
-fn wifi_signal_percent(wifi: &WifiStatus) -> f64 {
-    let Some(dbm) = wifi_signal_dbm(wifi) else {
-        return 0.0;
-    };
-    clamp_percent(((dbm + 100.0) / 50.0) * 100.0)
-}
-
-fn wifi_signal_level(percent: f64) -> &'static str {
-    if percent >= 67.0 {
-        "high"
-    } else if percent >= 34.0 {
-        "low"
-    } else {
-        "zero"
-    }
-}
-
-fn wifi_signal_dbm(wifi: &WifiStatus) -> Option<f64> {
-    wifi.signal_dbm
-        .as_deref()?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
-}
-
-fn wifi_ip_addresses_text(wifi: &WifiStatus) -> String {
-    if !wifi.ip_addresses.is_empty() {
-        wifi.ip_addresses.join(", ")
-    } else if let Some(address) = &wifi.ip_address {
-        address.clone()
-    } else {
-        "Not available".to_string()
-    }
 }
 
 pub fn set_service_enabled(unit: &str, enabled: bool) -> Result<(), String> {
@@ -1458,57 +1288,6 @@ fn camera_status() -> CameraStatus {
             tool: Some(command),
             message: error.to_string(),
         },
-    }
-}
-
-fn wifi_details(wifi: &WifiStatus) -> Vec<LabelValue> {
-    let mut rows = Vec::new();
-    push_row(&mut rows, "Interface", &wifi.interface);
-    push_row(&mut rows, "IP address", &wifi.ip_address);
-    push_row(&mut rows, "MAC address", &wifi.mac_address);
-    push_row(&mut rows, "BSSID", &wifi.bssid);
-    push_row(&mut rows, "Security", &wifi.security);
-    push_row(&mut rows, "PHY mode", &wifi.wifi_generation_label);
-    if let Some(frequency) = wifi.frequency_mhz {
-        let mut value = format!("{frequency} MHz");
-        if let Some(band) = &wifi.band {
-            value.push_str(&format!(" · {band}"));
-        }
-        if let Some(channel) = wifi.channel {
-            value.push_str(&format!(" · Channel {channel}"));
-        }
-        rows.push(LabelValue {
-            label: "Frequency".to_string(),
-            value,
-        });
-    }
-    push_row(&mut rows, "Channel width", &wifi.channel_width);
-    push_row(&mut rows, "RSSI", &wifi.signal_dbm);
-    push_row(&mut rows, "RX rate", &wifi.rx_bitrate);
-    push_row(&mut rows, "TX rate", &wifi.tx_bitrate);
-    push_row(&mut rows, "TX power", &wifi.tx_power);
-    if let Some(interface) = &wifi.default_interface {
-        let value = if let Some(gateway) = &wifi.default_gateway {
-            format!("{interface} via {gateway}")
-        } else {
-            interface.clone()
-        };
-        rows.push(LabelValue {
-            label: "Default route".to_string(),
-            value,
-        });
-    }
-    rows
-}
-
-fn push_row(rows: &mut Vec<LabelValue>, label: &str, value: &Option<String>) {
-    if let Some(value) = value {
-        if !value.is_empty() {
-            rows.push(LabelValue {
-                label: label.to_string(),
-                value: value.clone(),
-            });
-        }
     }
 }
 

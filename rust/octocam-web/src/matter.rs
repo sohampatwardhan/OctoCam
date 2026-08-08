@@ -310,7 +310,7 @@ pub fn ipv6_preflight_ok() -> bool {
     }
 }
 
-/// Everything matter.html needs, precomputed (askama templates stay logic-free).
+/// Everything the Matter UI needs, precomputed here rather than in the handler.
 #[derive(Clone, Debug)]
 pub struct MatterView {
     pub status: String,

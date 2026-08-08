@@ -15,18 +15,16 @@ mod wifi;
 mod wifi_setup;
 mod motion;
 
-use askama::Template;
 use axum::{
-    extract::{DefaultBodyLimit, Form, Multipart, Path as AxumPath, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path as AxumPath, State},
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    collections::HashMap,
     env,
     net::SocketAddr,
     path::PathBuf,
@@ -39,8 +37,6 @@ use tower_http::trace::TraceLayer;
 use settings::{preset_views, Settings, RESOLUTION_PRESETS, SUB_RESOLUTION_PRESETS};
 
 const SESSION_COOKIE: &str = "octocam_session";
-const STATIC_CACHE_CONTROL: &str = "public, max-age=604800, stale-while-revalidate=86400";
-const SERVICE_WORKER_JS: &str = include_str!("../../../static/sw.js");
 
 type AppResult = Result<Response, AppError>;
 
@@ -49,7 +45,6 @@ type SnapshotCache = Arc<tokio::sync::Mutex<Option<(std::time::Instant, Vec<u8>)
 
 #[derive(Clone)]
 struct AppState {
-    project_dir: PathBuf,
     config_path: PathBuf,
     wifi_cache_path: PathBuf,
     mediamtx_config_path: PathBuf,
@@ -76,12 +71,6 @@ struct AppError(String);
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (StatusCode::INTERNAL_SERVER_ERROR, self.0).into_response()
-    }
-}
-
-impl From<askama::Error> for AppError {
-    fn from(error: askama::Error) -> Self {
-        Self(error.to_string())
     }
 }
 
@@ -124,205 +113,8 @@ struct StreamUrls {
 }
 
 #[derive(Clone, Debug)]
-struct RotationView {
-    value: i32,
-    selected: bool,
-}
-
-#[derive(Clone, Debug)]
 struct TimeZoneView {
     value: String,
-    selected: bool,
-}
-
-#[derive(Template)]
-#[template(path = "identity.html")]
-struct IdentityTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    saved: bool,
-    active_page: &'static str,
-    return_path: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "wifi.html")]
-struct WifiTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    stored_profiles: Vec<system::StoredWifiProfile>,
-    wifi_networks: Vec<wifi::WifiNetworkView>,
-    has_wifi_networks: bool,
-    wifi_mac_address: String,
-    wifi_message: String,
-    has_wifi_message: bool,
-    saved: bool,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "stream_settings.html")]
-struct StreamSettingsTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    resolution_presets: Vec<settings::PresetView>,
-    sub_resolution_presets: Vec<settings::PresetView>,
-    time_zones: Vec<TimeZoneView>,
-    saved: bool,
-    rotations: Vec<RotationView>,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "rtsp.html")]
-struct RtspTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    rtsp_urls: StreamUrls,
-    saved: bool,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "homekit.html")]
-struct HomeKitTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    homekit: HomeKitView,
-    saved: bool,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "matter.html")]
-struct MatterTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    matter: matter::MatterView,
-    saved: bool,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "admin.html")]
-struct AdminTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    saved: bool,
-    current_username: String,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "system.html")]
-struct SystemTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    restart_days: Vec<WeekdayOption>,
-    reboot_days: Vec<WeekdayOption>,
-    saved: bool,
-    active_page: &'static str,
-    restore_message: String,
-    has_restore_message: bool,
-    restore_is_error: bool,
-}
-
-struct WeekdayOption {
-    slug: &'static str,
-    label: &'static str,
-    short_label: &'static str,
-    checked: bool,
-}
-
-#[derive(Template)]
-#[template(path = "ssh_keys.html")]
-struct SshKeysTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    active_page: &'static str,
-    keys: Vec<ssh_keys::AuthorizedKey>,
-    has_keys: bool,
-    read_error: bool,
-    message: String,
-    has_message: bool,
-    message_is_error: bool,
-    warn_fingerprint: String,
-    has_warn: bool,
-}
-
-#[derive(Template)]
-#[template(path = "logs.html")]
-struct LogsTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "terminal.html")]
-struct TerminalTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    active_page: &'static str,
-}
-
-#[derive(Template)]
-#[template(path = "stream.html")]
-struct StreamTemplate {
-    page_title: String,
-    settings: Settings,
-    system: system::SystemView,
-    browser_stream_urls: StreamUrls,
-    active_page: &'static str,
-    initial_stream: String, // "main" | "sub"
-    main_busy: bool,        // reserved for the client-side busy note; starts false
-    viewers_main_text: String,
-    viewers_sub_text: String,
-    prompt_passkey: bool,
-}
-
-#[derive(Template)]
-#[template(path = "setup.html")]
-struct SetupTemplate {
-    settings: Settings,
-    resolution_presets: Vec<settings::PresetView>,
-    wifi_networks: Vec<wifi::WifiNetworkView>,
-    has_wifi_networks: bool,
-    wifi_value: String,
-    wifi_message: String,
-    has_wifi_message: bool,
-    security_message: String,
-    has_security_message: bool,
-}
-
-#[derive(Template)]
-#[template(path = "login.html")]
-struct LoginTemplate {
-    failed: bool,
-    next_query: String,
-}
-
-#[derive(Deserialize)]
-struct SetupQuery {
-    wifi_message: Option<String>,
-    security_message: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LoginQuery {
-    failed: Option<String>,
-    next: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -346,43 +138,6 @@ struct HomeKitView {
     qr_data_url: String,
     error: String,
     has_error: bool,
-}
-
-#[derive(Deserialize)]
-struct SavedQuery {
-    saved: Option<String>,
-    wifi_message: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SshKeysQuery {
-    status: Option<String>,
-    warn: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SystemQuery {
-    saved: Option<String>,
-    restore: Option<String>,
-    keys: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SshKeyAddForm {
-    public_key: String,
-}
-
-#[derive(Deserialize)]
-struct SshKeyRevokeForm {
-    fingerprint: String,
-    confirm: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct PowerForm {
-    action: String,
-    #[serde(rename = "_return_to")]
-    return_to: Option<String>,
 }
 
 fn main() {
@@ -578,9 +333,6 @@ fn run_cli_command() -> bool {
 
 impl AppState {
     fn from_env() -> Self {
-        let project_dir = env::var_os("OCTOCAM_PROJECT_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         let config_path = settings::default_config_path();
         let wifi_cache_path = wifi::default_cache_path();
         let mediamtx_config_path = mediamtx::default_config_path();
@@ -600,7 +352,6 @@ impl AppState {
         let secret_key = load_secret_key();
         let (motion_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
-            project_dir,
             config_path,
             wifi_cache_path,
             mediamtx_config_path,
@@ -618,342 +369,6 @@ impl AppState {
             motion_tx,
         }
     }
-}
-
-async fn identity(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    render_identity_page(state, headers, uri, query, "/identity").await
-}
-
-async fn settings_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_user_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let user = authenticated_user(&state, &headers);
-    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
-    if is_admin {
-        render_identity_page(state, headers, uri, query, "/settings").await
-    } else {
-        let status = run_blocking(system::status).await?;
-        let mut system_view = system::view(&status);
-        system_view.is_admin = false;
-        let current_username = user.map(|u| u.username).unwrap_or_else(|| "user".to_string());
-        render(AdminTemplate {
-            page_title: "Account Settings".to_string(),
-            saved: query.saved.as_deref() == Some("1"),
-            current_username,
-            settings,
-            system: system_view,
-            active_page: "settings",
-        })
-    }
-}
-
-async fn render_identity_page(
-    state: Arc<AppState>,
-    headers: HeaderMap,
-    uri: Uri,
-    query: SavedQuery,
-    return_path: &'static str,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    render(IdentityTemplate {
-        page_title: settings.camera_label.clone(),
-        saved: query.saved.as_deref() == Some("1"),
-        system: system::view(&status),
-        settings,
-        active_page: "identity",
-        return_path,
-    })
-}
-
-async fn dashboard_redirect() -> Redirect {
-    Redirect::to("/dashboard")
-}
-
-async fn wifi_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    let cache = wifi::load_network_cache(&state.wifi_cache_path);
-    let wifi_networks = wifi::network_views(&cache, status.wifi.ssid.as_deref().unwrap_or(""));
-    let wifi_for_profiles = status.wifi.clone();
-    let stored_profiles =
-        run_blocking(move || system::stored_wifi_profiles(&wifi_for_profiles)).await?;
-    render(WifiTemplate {
-        page_title: "Wi-Fi".to_string(),
-        saved: query.saved.as_deref() == Some("1"),
-        stored_profiles,
-        has_wifi_networks: !wifi_networks.is_empty(),
-        wifi_networks,
-        wifi_mac_address: status
-            .wifi
-            .mac_address
-            .clone()
-            .unwrap_or_else(|| "Not available".to_string()),
-        wifi_message: query.wifi_message.clone().unwrap_or_default(),
-        has_wifi_message: query.wifi_message.is_some(),
-        settings,
-        system: system::view(&status),
-        active_page: "wifi",
-    })
-}
-
-async fn stream_settings(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let (status, time_zone_values) =
-        run_blocking(|| (system::status(), system::available_time_zones())).await?;
-    let time_zones = time_zone_views(time_zone_values, &settings.text_overlay_timezone);
-    render(StreamSettingsTemplate {
-        page_title: "Stream".to_string(),
-        resolution_presets: preset_views(RESOLUTION_PRESETS, &settings.current_resolution()),
-        sub_resolution_presets: preset_views(
-            SUB_RESOLUTION_PRESETS,
-            &settings.current_sub_resolution(),
-        ),
-        time_zones,
-        rotations: rotation_views(settings.rotation),
-        saved: query.saved.as_deref() == Some("1"),
-        system: system::view(&status),
-        settings,
-        active_page: "stream_settings",
-    })
-}
-
-async fn rtsp_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    render(RtspTemplate {
-        page_title: "RTSP".to_string(),
-        rtsp_urls: stream_urls_for(&settings, request_hostname(&headers), "rtsp"),
-        saved: query.saved.as_deref() == Some("1"),
-        system: system::view(&status),
-        settings,
-        active_page: "rtsp",
-    })
-}
-
-async fn homekit(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    render(HomeKitTemplate {
-        page_title: "HomeKit".to_string(),
-        saved: query.saved.as_deref() == Some("1"),
-        homekit: homekit_view(&state.homekit_status_path, &settings),
-        settings,
-        system: system::view(&status),
-        active_page: "homekit",
-    })
-}
-
-async fn matter_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    // Identity is only materialized once Matter has been enabled; before that
-    // the page shows the enable flow without minting a credential.
-    let identity = if settings.matter_enabled {
-        matter::load_or_generate_identity(&state.matter_identity_path).ok()
-    } else {
-        None
-    };
-    let matter_status = matter::read_status(&state.matter_status_path);
-    let mut matter_view = matter::view(&settings, identity.as_ref(), &matter_status);
-    matter_view.snapshot_endpoint_down = state
-        .internal_listener_down
-        .load(std::sync::atomic::Ordering::Relaxed);
-    render(MatterTemplate {
-        page_title: "Matter".to_string(),
-        saved: query.saved.as_deref() == Some("1"),
-        matter: matter_view,
-        settings,
-        system: system::view(&status),
-        active_page: "matter",
-    })
-}
-
-async fn matter_reset(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    let (storage, env_path, id_path) = (
-        state.matter_storage_dir.clone(),
-        state.matter_env_path.clone(),
-        state.matter_identity_path.clone(),
-    );
-    run_blocking(move || matter::reset_pairing(&settings, &storage, &env_path, &id_path)).await?;
-    Ok(Redirect::to("/matter?saved=1").into_response())
-}
-
-async fn admin(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SavedQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    let current_username = authenticated(&state, &headers)
-        .map(|(_, username)| username)
-        .unwrap_or_else(|| "admin".to_string());
-    render(AdminTemplate {
-        page_title: "Admin".to_string(),
-        saved: query.saved.as_deref() == Some("1"),
-        current_username,
-        settings,
-        system: system::view(&status),
-        active_page: "admin",
-    })
-}
-
-async fn system_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SystemQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    let (restore_message, restore_is_error) = match query.restore.as_deref() {
-        Some("ok") => {
-            let added = query.keys.as_deref().unwrap_or("0");
-            (
-                format!("Configuration restored. {added} SSH key(s) added."),
-                false,
-            )
-        }
-        Some("ok_keys_failed") => (
-            "Configuration restored, but SSH keys could not be written.".to_string(),
-            true,
-        ),
-        Some("invalid") => ("That file is not a valid OctoCam backup.".to_string(), true),
-        Some("too_large") => ("That backup file is too large.".to_string(), true),
-        Some("empty") => ("No backup file was uploaded.".to_string(), true),
-        Some("csrf") => (
-            "Restore blocked: request came from another origin.".to_string(),
-            true,
-        ),
-        _ => (String::new(), false),
-    };
-    let restart_days = weekday_options(&settings.scheduled_service_restart_days);
-    let reboot_days = weekday_options(&settings.scheduled_reboot_days);
-    render(SystemTemplate {
-        page_title: "System info".to_string(),
-        settings,
-        system: system::view(&status),
-        restart_days,
-        reboot_days,
-        saved: query.saved.as_deref() == Some("1"),
-        active_page: "system",
-        has_restore_message: !restore_message.is_empty(),
-        restore_message,
-        restore_is_error,
-    })
-}
-
-fn weekday_options(selected_days: &str) -> Vec<WeekdayOption> {
-    settings::WEEKDAYS
-        .iter()
-        .map(|(slug, label, short_label)| WeekdayOption {
-            slug: *slug,
-            label: *label,
-            short_label: *short_label,
-            checked: selected_days
-                .split(',')
-                .map(str::trim)
-                .any(|selected| selected.eq_ignore_ascii_case(*label)),
-        })
-        .collect()
 }
 
 async fn backup_download(
@@ -1003,72 +418,11 @@ async fn backup_download(
 /// envelope is a few KB; 256 KB is generous and bounds memory.
 const MAX_RESTORE_BYTES: usize = 256 * 1024;
 
-async fn restore_upload(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    mut multipart: Multipart,
-) -> AppResult {
-    let current = settings::load_settings(&state.config_path);
-    if !current.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    // Restore can inject root SSH keys — match the ssh_keys handlers' CSRF guard,
-    // which update_settings does not have.
-    if cross_origin(&headers) {
-        return Ok(Redirect::to("/system?restore=csrf").into_response());
-    }
-
-    // Read the first uploaded field's bytes. The route-scoped DefaultBodyLimit
-    // (see route registration) rejects an oversize body before we get here.
-    let field = match multipart.next_field().await {
-        Ok(Some(field)) => field,
-        Ok(None) => return Ok(Redirect::to("/system?restore=empty").into_response()),
-        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-            return Ok(Redirect::to("/system?restore=too_large").into_response());
-        }
-        Err(error) => return Err(AppError(error.to_string())),
-    };
-    let data = match field.bytes().await {
-        Ok(data) => data,
-        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
-            return Ok(Redirect::to("/system?restore=too_large").into_response());
-        }
-        Err(error) => return Err(AppError(error.to_string())),
-    };
-    let bytes = data.to_vec();
-    if bytes.len() > MAX_RESTORE_BYTES {
-        return Ok(Redirect::to("/system?restore=too_large").into_response());
-    }
-
-    let (restored, keys) = match backup::parse_restore(&bytes, &current) {
-        Ok(result) => result,
-        Err(_) => return Ok(Redirect::to("/system?restore=invalid").into_response()),
-    };
-
-    settings::save_settings(&state.config_path, &restored)
-        .map_err(|error| AppError(error.to_string()))?;
-    apply_settings_side_effects(&state, &restored).await?;
-
-    // Best-effort key merge; a key-write failure does not roll back the settings
-    // (both are individually atomic and settings are already committed).
-    let state_dir = ssh_keys_state_dir(&state);
-    let redirect = match run_blocking(move || ssh_keys::merge(&state_dir, &keys)).await? {
-        Ok((added, _skipped)) => format!("/system?restore=ok&keys={added}"),
-        Err(_) => "/system?restore=ok_keys_failed".to_string(),
-    };
-    Ok(Redirect::to(&redirect).into_response())
-}
-
-/// JSON twin of `restore_upload` for the React System page: same guards and
-/// the same `backup::parse_restore` + `ssh_keys::merge` application, but a
-/// `fetch()`-able `{success, keys_added, keys_failed}` / `{error, code}` body
-/// instead of a redirect-with-querystring. Do not fold this into
-/// `restore_upload` — the Askama route must keep returning a redirect for
-/// the plain HTML `<form>` upload.
+/// JSON-facing config restore for the React System page: validates admin auth
+/// and CSRF, parses the uploaded backup via `backup::parse_restore`, persists
+/// it, applies the same side effects as `api_settings_update`, and best-effort
+/// merges any bundled SSH keys via `ssh_keys::merge`. Returns a `fetch()`-able
+/// `{success, keys_added, keys_failed}` / `{error, code}` body.
 async fn api_restore(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1148,40 +502,6 @@ async fn api_restore(
     })))
 }
 
-async fn logs(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    render(LogsTemplate {
-        page_title: "System logs".to_string(),
-        settings,
-        system: system::view(&status),
-        active_page: "logs",
-    })
-}
-
-async fn terminal(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    render(TerminalTemplate {
-        page_title: "Terminal".to_string(),
-        settings,
-        system: system::view(&status),
-        active_page: "terminal",
-    })
-}
-
 /// State directory that holds the service-user-owned temp file used to stage an
 /// atomic authorized_keys rewrite (the parent of the settings file).
 fn ssh_keys_state_dir(state: &AppState) -> PathBuf {
@@ -1216,136 +536,6 @@ fn cross_origin(headers: &HeaderMap) -> bool {
         .map(|(_, rest)| rest.split('/').next().unwrap_or(""))
         .unwrap_or("");
     source_host != host
-}
-
-/// Canned, escape-safe message for a redirect status code. Detailed causes are
-/// logged server-side; only the enumerated code travels in the URL.
-fn ssh_key_message(status: Option<&str>, has_warn: bool) -> (String, bool) {
-    if has_warn {
-        return (
-            "This is the last key authorized for root SSH — removing it ends remote \
-             SSH access to this device. Confirm below only if you're sure."
-                .to_string(),
-            true,
-        );
-    }
-    match status {
-        Some("added") => ("SSH key authorized.".to_string(), false),
-        Some("revoked") => ("SSH key revoked.".to_string(), false),
-        Some("duplicate") => ("That key is already authorized.".to_string(), true),
-        Some("bad_key") => (
-            "That isn't a single valid public key. Paste one line like \
-             'ssh-ed25519 AAAA… comment' — options and multi-line input aren't accepted."
-                .to_string(),
-            true,
-        ),
-        Some("too_long") => ("That key is too large to store.".to_string(), true),
-        Some("write_failed") => (
-            "Couldn't update root's authorized_keys — check the service user's sudo access."
-                .to_string(),
-            true,
-        ),
-        Some("read_failed") => (
-            "Couldn't read root's authorized_keys — check the service user's sudo access."
-                .to_string(),
-            true,
-        ),
-        Some("csrf") => (
-            "Request rejected because it came from another site.".to_string(),
-            true,
-        ),
-        _ => (String::new(), false),
-    }
-}
-
-async fn ssh_keys_page(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Query(query): Query<SshKeysQuery>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let status = run_blocking(system::status).await?;
-    // ssh_keys::list returns Result<_, KeyError>, so run_blocking yields a
-    // nested Result; both the inner Err and a join failure surface as read_error.
-    let (keys, read_error) = match run_blocking(ssh_keys::list).await {
-        Ok(Ok(keys)) => (keys, false),
-        Ok(Err(_)) => (Vec::new(), true),
-        Err(_join) => (Vec::new(), true),
-    };
-    let warn_fingerprint = query.warn.unwrap_or_default();
-    let has_warn = !warn_fingerprint.is_empty();
-    let (message, message_is_error) = ssh_key_message(query.status.as_deref(), has_warn);
-    render(SshKeysTemplate {
-        page_title: "SSH keys".to_string(),
-        settings,
-        system: system::view(&status),
-        active_page: "ssh_keys",
-        has_keys: !keys.is_empty(),
-        keys,
-        read_error,
-        has_message: !message.is_empty(),
-        message,
-        message_is_error,
-        warn_fingerprint,
-        has_warn,
-    })
-}
-
-async fn ssh_keys_add(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(form): Form<SshKeyAddForm>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    if cross_origin(&headers) {
-        return Ok(Redirect::to("/ssh-keys?status=csrf").into_response());
-    }
-    let state_dir = ssh_keys_state_dir(&state);
-    let public_key = form.public_key;
-    let status = match run_blocking(move || ssh_keys::add(&state_dir, &public_key)).await {
-        Ok(Ok(())) => "added",
-        Ok(Err(error)) => error.code(),
-        Err(_join) => "write_failed",
-    };
-    Ok(Redirect::to(&format!("/ssh-keys?status={status}")).into_response())
-}
-
-async fn ssh_keys_revoke(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(form): Form<SshKeyRevokeForm>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    if cross_origin(&headers) {
-        return Ok(Redirect::to("/ssh-keys?status=csrf").into_response());
-    }
-    let state_dir = ssh_keys_state_dir(&state);
-    let confirm = form.confirm.as_deref() == Some("1");
-    let target = form.fingerprint;
-    let warn_target = target.clone();
-    let redirect = match run_blocking(move || ssh_keys::revoke(&state_dir, &target, confirm)).await
-    {
-        Ok(Ok(ssh_keys::RevokeOutcome::Revoked)) => "/ssh-keys?status=revoked".to_string(),
-        Ok(Ok(ssh_keys::RevokeOutcome::Warn)) => {
-            format!("/ssh-keys?warn={}", urlencoding::encode(&warn_target))
-        }
-        Ok(Err(error)) => format!("/ssh-keys?status={}", error.code()),
-        Err(_join) => "/ssh-keys?status=write_failed".to_string(),
-    };
-    Ok(Redirect::to(&redirect).into_response())
 }
 
 /// JSON-facing view of an `ssh_keys::AuthorizedKey`.
@@ -1455,438 +645,6 @@ async fn api_ssh_keys_delete(
     }
 }
 
-async fn service_worker() -> Response {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/javascript; charset=utf-8"),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-    );
-    (headers, SERVICE_WORKER_JS).into_response()
-}
-
-async fn static_asset(
-    State(state): State<Arc<AppState>>,
-    AxumPath(path): AxumPath<String>,
-) -> Response {
-    if path.is_empty() || path.contains("..") || path.contains('\\') || path.starts_with('/') {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
-    let asset_path = state.project_dir.join("static").join(&path);
-    let bytes = match tokio::fs::read(asset_path).await {
-        Ok(bytes) => bytes,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(content_type_for(&path)),
-    );
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(STATIC_CACHE_CONTROL),
-    );
-    (headers, bytes).into_response()
-}
-
-fn content_type_for(path: &str) -> &'static str {
-    match path.rsplit('.').next().unwrap_or_default() {
-        "css" => "text/css; charset=utf-8",
-        "js" => "application/javascript; charset=utf-8",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "ico" => "image/x-icon",
-        "woff2" => "font/woff2",
-        _ => "application/octet-stream",
-    }
-}
-
-async fn stream(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> AppResult {
-    if let Some(response) = require_user_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let settings = settings::load_settings(&state.config_path);
-    if !settings.setup_complete {
-        return Ok(Redirect::to("/setup").into_response());
-    }
-    let user = authenticated_user(&state, &headers);
-    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(true);
-    let host = request_hostname(&headers);
-    let status = run_blocking(system::status).await?;
-    let mut system_view = system::view(&status);
-    system_view.is_admin = is_admin;
-
-    let viewers = streams::viewer_report(&settings).await;
-    let initial_stream = if settings.sub_stream_enabled {
-        "sub"
-    } else {
-        "main"
-    }
-    .to_string();
-    let main_busy = false;
-    let (viewers_main_text, viewers_sub_text) = match &viewers {
-        Some(report) => (
-            format!("{} / {}", report.main.total, report.main.capacity),
-            format!("{} / {}", report.sub.total, report.sub.capacity),
-        ),
-        None => ("unavailable".to_string(), "unavailable".to_string()),
-    };
-    let query_passkey_prompt = uri
-        .query()
-        .map(|q| q.contains("prompt_passkey=1"))
-        .unwrap_or(false);
-    let user_passkeys = user
-        .as_ref()
-        .map(|u| state.db.list_passkeys_for_user(u.id).unwrap_or_default())
-        .unwrap_or_default();
-    let prompt_passkey = query_passkey_prompt || (user.is_some() && user_passkeys.is_empty());
-
-    render(StreamTemplate {
-        page_title: "Dashboard".to_string(),
-        browser_stream_urls: stream_urls_for(&settings, host, "webrtc"),
-        system: system_view,
-        settings,
-        active_page: "dashboard",
-        initial_stream,
-        main_busy,
-        viewers_main_text,
-        viewers_sub_text,
-        prompt_passkey,
-    })
-}
-
-async fn setup(State(state): State<Arc<AppState>>, Query(query): Query<SetupQuery>) -> AppResult {
-    let settings = settings::load_settings(&state.config_path);
-    let status = run_blocking(system::status).await?;
-    let cache = wifi::load_network_cache(&state.wifi_cache_path);
-    let selected = status
-        .wifi
-        .ssid
-        .clone()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| settings.wifi_ssid.clone());
-    let wifi_networks = wifi::network_views(&cache, &selected);
-    let wifi_value = if selected.is_empty() {
-        settings.wifi_ssid.clone()
-    } else {
-        selected
-    };
-    render(SetupTemplate {
-        resolution_presets: preset_views(RESOLUTION_PRESETS, &settings.current_resolution()),
-        has_wifi_networks: !wifi_networks.is_empty(),
-        wifi_networks,
-        wifi_value,
-        wifi_message: query.wifi_message.clone().unwrap_or_default(),
-        has_wifi_message: query.wifi_message.is_some(),
-        security_message: query.security_message.clone().unwrap_or_default(),
-        has_security_message: query.security_message.is_some(),
-        settings,
-    })
-}
-
-async fn complete_setup(
-    State(state): State<Arc<AppState>>,
-    Form(mut form): Form<HashMap<String, String>>,
-) -> AppResult {
-    let mut current = settings::load_settings(&state.config_path);
-    let admin_username = form
-        .remove("admin_username")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "admin".to_string());
-    let admin_password = form.remove("admin_password").unwrap_or_default();
-    let admin_password_confirm = form.remove("admin_password_confirm").unwrap_or_default();
-    let wifi_password = form.remove("wifi_password").unwrap_or_default();
-    let wifi_ssid = form.get("wifi_ssid").cloned().unwrap_or_default();
-    let cache = wifi::load_network_cache(&state.wifi_cache_path);
-    let wifi_security = wifi::cached_security_for(&cache, &wifi_ssid);
-
-    if admin_password != admin_password_confirm {
-        return Ok(
-            Redirect::to("/setup?security_message=Admin%20passwords%20do%20not%20match.")
-                .into_response(),
-        );
-    }
-    if !wifi_ssid.trim().is_empty() {
-        let (ssid, password, security) = (
-            wifi_ssid.clone(),
-            wifi_password.clone(),
-            wifi_security.clone(),
-        );
-        let (connected, message) =
-            run_blocking(move || wifi::connect_to_network(&ssid, &password, &security)).await?;
-        if !connected {
-            return Ok(Redirect::to(&format!(
-                "/setup?wifi_message={}",
-                urlencoding::encode(&message)
-            ))
-            .into_response());
-        }
-    }
-
-    let password_hash = security::hash_password(&admin_password);
-    let user = state
-        .db
-        .create_user(&admin_username, &password_hash, "admin")
-        .map_err(|error| AppError(error.to_string()))?;
-
-    form.insert("setup_complete".to_string(), "true".to_string());
-    form.insert("camera_enabled".to_string(), "true".to_string());
-    form.insert(
-        "homekit_enabled".to_string(),
-        form.contains_key("homekit_enabled").to_string(),
-    );
-    form.insert("admin_password_hash".to_string(), password_hash);
-    let validated = settings::validate_form(&form);
-    merge_settings(&mut current, validated);
-    settings::save_settings(&state.config_path, &current)
-        .map_err(|error| AppError(error.to_string()))?;
-    let homekit_settings = current.clone();
-    run_blocking(move || configure_homekit_service(&homekit_settings)).await?;
-    Ok(with_login_cookie_for_user(
-        Redirect::to("/?saved=1").into_response(),
-        &state,
-        user.id,
-        &user.username,
-    ))
-}
-
-async fn scan_wifi(State(state): State<Arc<AppState>>) -> Response {
-    let cache_path = state.wifi_cache_path.clone();
-    // scan_wifi returns Response (not AppResult), so handle the result explicitly
-    // rather than with `?` (FIX-2).
-    let message = match run_blocking(move || wifi::scan_and_cache_networks(&cache_path)).await {
-        Ok(Ok(_)) => "Wi-Fi scan complete.".to_string(),
-        Ok(Err(error)) => format!("Wi-Fi scan failed: {error}"),
-        Err(_join) => "Wi-Fi scan failed.".to_string(),
-    };
-    Redirect::to(&format!(
-        "/setup?wifi_message={}",
-        urlencoding::encode(&message)
-    ))
-    .into_response()
-}
-
-async fn connect_wifi(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(mut form): Form<HashMap<String, String>>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-
-    let wifi_ssid = form
-        .remove("wifi_ssid")
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| form.remove("wifi_ssid_manual"))
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| form.remove("wifi_ssid_scanned"))
-        .unwrap_or_default();
-    let wifi_password = form.remove("wifi_password").unwrap_or_default();
-    if wifi_ssid.trim().is_empty() {
-        return Ok(
-            Redirect::to("/wifi?wifi_message=Enter%20a%20Wi-Fi%20network%20name.").into_response(),
-        );
-    }
-
-    let cache = wifi::load_network_cache(&state.wifi_cache_path);
-    let wifi_security = form
-        .remove("wifi_security")
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| wifi::cached_security_for(&cache, &wifi_ssid));
-    let (ssid, password, security) = (
-        wifi_ssid.clone(),
-        wifi_password.clone(),
-        wifi_security.clone(),
-    );
-    let (connected, message) =
-        run_blocking(move || wifi::connect_to_network(&ssid, &password, &security)).await?;
-    if connected {
-        Ok(Redirect::to("/wifi?wifi_message=Network%20saved.").into_response())
-    } else {
-        Ok(Redirect::to(&format!(
-            "/wifi?wifi_message={}",
-            urlencoding::encode(&message)
-        ))
-        .into_response())
-    }
-}
-
-async fn delete_wifi_profile(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(mut form): Form<HashMap<String, String>>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-
-    let profile_name = form.remove("wifi_profile_name").unwrap_or_default();
-    let profile_source = form.remove("wifi_profile_source").unwrap_or_default();
-    let active_ssid = run_blocking(system::status).await?.wifi.ssid;
-    if active_ssid.as_deref() == Some(profile_name.trim()) {
-        return Ok(Redirect::to(
-            "/wifi?wifi_message=Cannot%20delete%20the%20currently%20connected%20network.",
-        )
-        .into_response());
-    }
-
-    let (name, source) = (profile_name.clone(), profile_source.clone());
-    let (deleted, message) =
-        run_blocking(move || wifi::forget_saved_profile(&name, &source)).await?;
-    if deleted {
-        Ok(Redirect::to("/wifi?wifi_message=Wi-Fi%20profile%20deleted.").into_response())
-    } else {
-        Ok(Redirect::to(&format!(
-            "/wifi?wifi_message={}",
-            urlencoding::encode(&message)
-        ))
-        .into_response())
-    }
-}
-
-async fn update_settings(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(mut form): Form<HashMap<String, String>>,
-) -> AppResult {
-    if let Some(response) = require_user_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-    let user = authenticated_user(&state, &headers);
-    let is_admin = user.as_ref().map(|u| u.is_admin()).unwrap_or(false);
-
-    let return_to = clean_return_path(
-        &form
-            .remove("_return_to")
-            .unwrap_or_else(|| if is_admin { "/identity".to_string() } else { "/settings".to_string() }),
-    );
-
-    let admin_username = form.remove("admin_username").filter(|s| !s.trim().is_empty());
-    let admin_password = form.remove("admin_password").unwrap_or_default();
-    let admin_password_confirm = form.remove("admin_password_confirm").unwrap_or_default();
-
-    if !is_admin {
-        if admin_password.is_empty() || admin_password != admin_password_confirm {
-            return Ok(Redirect::to(&format!("{return_to}?saved=0")).into_response());
-        }
-        if let Some(user) = user {
-            let new_hash = security::hash_password(&admin_password);
-            let _ = state.db.update_password(user.id, &new_hash);
-        }
-        return Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response());
-    }
-
-    let mut current = settings::load_settings(&state.config_path);
-    if !admin_password.is_empty() || admin_username.is_some() {
-        if admin_password != admin_password_confirm && !admin_password.is_empty() {
-            return Ok(Redirect::to(&format!("{return_to}?saved=0")).into_response());
-        }
-        if let Some(user) = &user {
-            let new_hash = if !admin_password.is_empty() {
-                security::hash_password(&admin_password)
-            } else {
-                user.password_hash.clone()
-            };
-            let _ = state.db.update_password(user.id, &new_hash);
-        }
-    }
-    let checkbox_fields = form.remove("_checkboxes").unwrap_or_default();
-    for checkbox in checkbox_fields
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        form.insert(
-            checkbox.to_string(),
-            form.contains_key(checkbox).to_string(),
-        );
-    }
-    let mut next_map = settings_to_map(&current)?;
-    for (key, value) in form {
-        if key.starts_with('_') {
-            continue;
-        }
-        next_map.insert(key, Value::String(value));
-    }
-    let mut validated = settings::validate_map(&next_map);
-    if admin_password.is_empty() && admin_password_confirm.is_empty() {
-        validated.admin_password_hash = current.admin_password_hash.clone();
-    } else {
-        if admin_password != admin_password_confirm {
-            return Ok(Redirect::to(&format!("{return_to}?saved=0")).into_response());
-        }
-        validated.admin_password_hash = security::hash_password(&admin_password);
-    }
-    validated.setup_complete = current.setup_complete;
-    settings::enforce_matter_requires_admin(&mut validated);
-    settings::enforce_hksv_requires_motion(&mut validated);
-    merge_settings(&mut current, validated);
-    settings::save_settings(&state.config_path, &current)
-        .map_err(|error| AppError(error.to_string()))?;
-    apply_settings_side_effects(&state, &current).await?;
-    Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
-}
-
-async fn sync_time(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(mut form): Form<HashMap<String, String>>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-
-    let return_to = clean_return_path(
-        &form
-            .remove("_return_to")
-            .unwrap_or_else(|| "/stream-settings".to_string()),
-    );
-    let mut current = settings::load_settings(&state.config_path);
-    if let Some(time_server) = form.remove("time_server") {
-        let mut next_map = settings_to_map(&current)?;
-        next_map.insert("time_server".to_string(), Value::String(time_server));
-        let mut validated = settings::validate_map(&next_map);
-        validated.setup_complete = current.setup_complete;
-        settings::enforce_matter_requires_admin(&mut validated);
-        settings::enforce_hksv_requires_motion(&mut validated);
-        merge_settings(&mut current, validated);
-        settings::save_settings(&state.config_path, &current)
-            .map_err(|error| AppError(error.to_string()))?;
-    }
-    let time_server = current.time_server.clone();
-    run_blocking(move || system::sync_clock(&time_server))
-        .await?
-        .map_err(AppError)?;
-    Ok(Redirect::to(&format!("{return_to}?saved=1")).into_response())
-}
-
-async fn power_action(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Form(form): Form<PowerForm>,
-) -> AppResult {
-    if let Some(response) = require_admin_login(&state, &headers, &uri, false)? {
-        return Ok(response);
-    }
-
-    let return_to = clean_return_path(&form.return_to.unwrap_or_else(|| "/identity".to_string()));
-    schedule_power_action(&form.action)?;
-    Ok(Redirect::to(&return_to).into_response())
-}
-
 fn schedule_power_action(action: &str) -> Result<(), AppError> {
     let args: &[&str] = match action {
         "restart_service" => &["restart", "octocam-web.service"],
@@ -1929,73 +687,9 @@ fn schedule_systemctl(args: &[&str]) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn login(Query(query): Query<LoginQuery>) -> AppResult {
-    render(LoginTemplate {
-        failed: query.failed.as_deref() == Some("1"),
-        next_query: query.next.unwrap_or_default(),
-    })
-}
-
-async fn authenticate(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<LoginQuery>,
-    Form(form): Form<HashMap<String, String>>,
-) -> Response {
-    let username = form
-        .get("username")
-        .or_else(|| form.get("admin_username"))
-        .cloned()
-        .unwrap_or_else(|| "admin".to_string());
-    let password = form
-        .get("password")
-        .or_else(|| form.get("admin_password"))
-        .cloned()
-        .unwrap_or_default();
-
-    if let Ok(Some(user)) = state.db.get_user_by_username(&username) {
-        if security::verify_password(&password, &user.password_hash) {
-            let has_passkeys = !state
-                .db
-                .list_passkeys_for_user(user.id)
-                .unwrap_or_default()
-                .is_empty();
-            let next_base = query
-                .next
-                .filter(|value| value.starts_with('/'))
-                .unwrap_or_else(|| "/".to_string());
-            let next = if !has_passkeys {
-                if next_base.contains('?') {
-                    format!("{next_base}&prompt_passkey=1")
-                } else {
-                    format!("{next_base}?prompt_passkey=1")
-                }
-            } else {
-                next_base
-            };
-            return with_login_cookie_for_user(
-                Redirect::to(&next).into_response(),
-                &state,
-                user.id,
-                &user.username,
-            );
-        }
-    }
-    Redirect::to("/login?failed=1").into_response()
-}
-
-async fn logout() -> Response {
-    let mut response = Redirect::to("/login").into_response();
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        HeaderValue::from_static("octocam_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"),
-    );
-    response
-}
-
-/// JSON counterpart of `login`/`authenticate`. Mirrors `authenticate`'s
-/// credential check exactly (`verify_password(password, hash)` order) but
-/// returns a JSON body instead of a redirect, and 401s on bad credentials
-/// instead of redirecting to `/login?failed=1`.
+/// JSON counterpart of the removed Askama login/authenticate handlers. Mirrors
+/// the same credential check exactly (`verify_password(password, hash)` order)
+/// but returns a JSON body instead of a redirect, and 401s on bad credentials.
 #[derive(Deserialize)]
 struct LoginReq {
     username: String,
@@ -2022,7 +716,8 @@ async fn api_login(State(state): State<Arc<AppState>>, Json(req): Json<LoginReq>
     }
 }
 
-/// JSON counterpart of `logout`. Clears the same session cookie, verbatim.
+/// Clears the session cookie (same cookie string the old Askama `/logout`
+/// route used, kept verbatim for any lingering clients).
 async fn api_logout() -> Response {
     let mut response = Json(serde_json::json!({ "success": true })).into_response();
     response.headers_mut().append(
@@ -2032,29 +727,25 @@ async fn api_logout() -> Response {
     response
 }
 
-/// JSON counterpart of `setup` (GET). No auth — used by the pre-setup wizard
-/// to decide whether to show the setup flow at all.
+/// No auth — used by the pre-setup wizard to decide whether to show the
+/// setup flow at all.
 async fn api_setup_get(State(state): State<Arc<AppState>>) -> Response {
     let settings = settings::load_settings(&state.config_path);
     let needed = !settings.setup_complete || !state.db.has_users().unwrap_or(false);
     api::ok_json(serde_json::json!({ "setup_required": needed }))
 }
 
-/// JSON counterpart of `complete_setup`. Mirrors its 7-step sequence in the
-/// same order: password-match check, blocking Wi-Fi join (if an SSID was
-/// given), hash + create the first admin user, inject the
+/// Completes first-run setup: password-match check, blocking Wi-Fi join (if an
+/// SSID was given), hash + create the first admin user, inject the
 /// setup_complete/camera_enabled/homekit_enabled/admin_password_hash fields
 /// into the settings map, validate/merge/save, configure the HomeKit
 /// service, then set the session cookie.
 ///
-/// Differs from `complete_setup` only in how the settings map is built: the
-/// form handler stringifies every field into a `HashMap<String, String>`
-/// and calls `validate_form`; here the body already arrives as typed JSON
-/// (bools/numbers), so we merge it into a `Map<String, Value>` and call
-/// `validate_map` directly — the same native-JSON path `api_settings_update`
-/// already uses above. `homekit_enabled` still uses *presence* of the key
-/// (not its value) to match the HTML checkbox semantics `complete_setup`
-/// relies on.
+/// The body arrives as typed JSON (bools/numbers), so we merge it into a
+/// `Map<String, Value>` and call `validate_map` directly — the same
+/// native-JSON path `api_settings_update` already uses above.
+/// `homekit_enabled` uses *presence* of the key (not its value), matching
+/// HTML checkbox semantics.
 async fn api_setup_post(
     State(state): State<Arc<AppState>>,
     Json(mut body): Json<serde_json::Map<String, serde_json::Value>>,
@@ -2158,23 +849,20 @@ async fn api_settings(
     .into_response())
 }
 
-/// JSON counterpart of `update_settings` (the `/settings` form handler).
-/// Mirrors its two branches exactly:
+/// Updates settings from a JSON body, with two branches:
 ///   - non-admin: may only change their own password (admin_password /
 ///     admin_password_confirm), everything else is ignored.
-///   - admin: full dynamic-map merge, run through the same invariant
-///     pipeline in the same order as the form handler.
+///   - admin: full dynamic-map merge, run through the settings invariant
+///     pipeline (validate_map -> enforce_matter_requires_admin ->
+///     enforce_hksv_requires_motion -> merge_settings).
 ///
 /// Incoming JSON values are merged directly into the settings map without
 /// any string coercion: `settings::validate_map`'s field readers
 /// (`bool_value`/`int_value`/`string_value`/...) already accept
 /// `Value::Bool`/`Value::Number`/`Value::String` natively (see settings.rs),
 /// so a JSON client sending real booleans/numbers works out of the box.
-/// This differs from the HTML form path only in that HTML forms omit
-/// unchecked checkboxes entirely (handled there via the `_checkboxes` CSV
-/// hack) — a JSON client instead sends an explicit `false`, so no
-/// checkbox-presence translation is needed here. Keys prefixed with `_` are
-/// skipped, mirroring the form handler's control-key filtering.
+/// Keys prefixed with `_` are skipped (reserved for client-side control
+/// fields).
 async fn api_settings_update(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -3124,10 +1812,6 @@ async fn serve_snapshot(state: &Arc<AppState>) -> AppResult {
     }
 }
 
-fn render<T: Template>(template: T) -> AppResult {
-    Ok(Html(template.render()?).into_response())
-}
-
 fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
     let status = std::fs::read_to_string(path)
         .ok()
@@ -3159,7 +1843,7 @@ fn homekit_view(path: &PathBuf, settings: &Settings) -> HomeKitView {
 
 /// Reconfigure the downstream services from the current settings: mediamtx RTSP,
 /// the HomeKit accessory daemon, and the Matter sidecar. Shared by
-/// `update_settings` and `restore_upload` so the two paths cannot drift. Assumes
+/// `api_settings_update` and `api_restore` so the two paths cannot drift. Assumes
 /// settings have already been persisted with `save_settings`.
 async fn apply_settings_side_effects(
     state: &Arc<AppState>,
@@ -3208,14 +1892,6 @@ fn settings_to_map<T: Serialize>(settings: &T) -> Result<Map<String, Value>, App
         _ => Err(AppError(
             "settings did not serialize to an object".to_string(),
         )),
-    }
-}
-
-fn clean_return_path(path: &str) -> String {
-    if path.starts_with('/') && !path.starts_with("//") && !path.contains('?') {
-        path.to_string()
-    } else {
-        "/identity".to_string()
     }
 }
 
@@ -3372,29 +2048,13 @@ fn request_hostname(headers: &HeaderMap) -> String {
     }
 }
 
-fn rotation_views(current: i32) -> Vec<RotationView> {
-    [0, 90, 180, 270]
-        .into_iter()
-        .map(|value| RotationView {
-            value,
-            selected: value == current,
-        })
-        .collect()
-}
-
 fn time_zone_views(mut values: Vec<String>, current: &str) -> Vec<TimeZoneView> {
     if !values.iter().any(|value| value == current) {
         values.push(current.to_string());
     }
     values.sort();
     values.dedup();
-    values
-        .into_iter()
-        .map(|value| TimeZoneView {
-            selected: value == current,
-            value,
-        })
-        .collect()
+    values.into_iter().map(|value| TimeZoneView { value }).collect()
 }
 
 fn merge_settings(current: &mut Settings, next: Settings) {

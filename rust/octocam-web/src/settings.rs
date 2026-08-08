@@ -270,14 +270,6 @@ pub fn public_settings(settings: &Settings) -> Value {
     value
 }
 
-pub fn validate_form(fields: &std::collections::HashMap<String, String>) -> Settings {
-    let mut map = Map::new();
-    for (key, value) in fields {
-        map.insert(key.clone(), Value::String(value.clone()));
-    }
-    validate_map(&map)
-}
-
 pub fn validate_map(raw: &Map<String, Value>) -> Settings {
     let mut settings = Settings::default();
     let mut map = raw.clone();

@@ -20,14 +20,6 @@ pub struct WifiNetwork {
     pub signal: i32,
 }
 
-#[derive(Clone, Debug)]
-pub struct WifiNetworkView {
-    pub ssid: String,
-    pub label: String,
-    pub security: String,
-    pub selected: bool,
-}
-
 pub fn default_cache_path() -> PathBuf {
     env::var_os("OCTOCAM_WIFI_CACHE_PATH")
         .map(PathBuf::from)
@@ -359,24 +351,6 @@ pub fn cached_security_for(cache: &WifiCache, ssid: &str) -> String {
         .find(|network| network.ssid == ssid)
         .map(|network| network.security.clone())
         .unwrap_or_else(|| "wpa2".to_string())
-}
-
-pub fn network_views(cache: &WifiCache, selected_ssid: &str) -> Vec<WifiNetworkView> {
-    cache
-        .networks
-        .iter()
-        .map(|network| WifiNetworkView {
-            ssid: network.ssid.clone(),
-            label: format!(
-                "{} · {} · {}%",
-                network.ssid,
-                network.security.to_uppercase(),
-                network.signal
-            ),
-            security: network.security.clone(),
-            selected: network.ssid == selected_ssid,
-        })
-        .collect()
 }
 
 pub fn parse_nmcli_wifi_list(output: &str) -> Vec<WifiNetwork> {

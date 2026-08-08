@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn unknown_client_route_falls_back_to_index() {
-        // A client-side route like /app/settings is not a real file; SPA must
+        // A client-side route like /settings is not a real file; SPA must
         // return index.html (200) so the router can take over in the browser.
         let r = resolve_spa("settings");
         assert_eq!(r.status, axum::http::StatusCode::OK);
