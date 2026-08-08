@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
-import { Aperture, Pause, Play } from "lucide-react"
+import { Aperture, Play, Square } from "lucide-react"
 import { useStatus } from "@/hooks/useStatus"
+import { useMe } from "@/hooks/useAuth"
 import { Button } from "@/components/ui/button"
+import { RtspUrlsDialog } from "@/components/stream/RtspUrlsDialog"
 import { cn } from "@/lib/utils"
 
 type StreamKey = "main" | "sub"
@@ -40,6 +42,8 @@ function writeCache(prefs: PreviewPrefs) {
 // it exists, since that's the version most likely to be waiting for someone.
 export function StreamPreview() {
   const { data: status, isLoading } = useStatus()
+  const { data: me } = useMe()
+  const isAdmin = me?.is_admin ?? false
   const hasSub = status?.browser_stream_urls.has_sub ?? false
 
   const [prefs, setPrefs] = useState<PreviewPrefs | null>(() => readCache())
@@ -122,11 +126,10 @@ export function StreamPreview() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" nativeButton={false} render={<a href="/settings/stream" />}>
-            RTSP
-          </Button>
+          {/* `/api/rtsp` is admin-only, so non-admins never see the trigger. */}
+          {isAdmin && <RtspUrlsDialog />}
           <Button variant="secondary" size="sm" onClick={togglePlaying} aria-pressed={playing}>
-            {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+            {playing ? <Square className="size-3.5" /> : <Play className="size-3.5" />}
             {playing ? "Stop" : "Start"}
           </Button>
         </div>
