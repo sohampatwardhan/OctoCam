@@ -165,6 +165,26 @@ export interface HomeKitInfo {
   has_error: boolean
 }
 
+// `/api/matter` — the Matter page's status/pairing view. Field names/types
+// must match api_matter's response shape exactly (see main.rs, ~line 2354).
+// `qr_payload` is the raw Matter onboarding payload string encoded by
+// `qr_svg`, shown in small text below the manual code.
+export interface MatterInfo {
+  status: string
+  commissioned: boolean
+  fabric_count: number
+  orphaned_fabrics: boolean
+  manual_code: string
+  qr_svg: string
+  qr_payload: string
+  stream_source: string
+  error: string
+  has_error: boolean
+  ipv6_ok: boolean
+  admin_password_set: boolean
+  snapshot_endpoint_down: boolean
+}
+
 // `/api/wifi/networks` + `/api/wifi/scan` — see rust/octocam-web/src/wifi.rs.
 export interface WifiNetwork {
   ssid: string

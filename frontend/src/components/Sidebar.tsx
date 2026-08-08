@@ -47,7 +47,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Stream Config", to: "/stream-settings", icon: SlidersHorizontal, adminOnly: true },
       { label: "RTSP", to: "/rtsp", icon: Radio, adminOnly: true, inApp: true },
       { label: "HomeKit", to: "/homekit", icon: House, adminOnly: true, inApp: true },
-      { label: "Matter", to: "/matter", icon: Share2, adminOnly: true },
+      { label: "Matter", to: "/matter", icon: Share2, adminOnly: true, inApp: true },
     ],
   },
   {

@@ -4,6 +4,7 @@ import { AuthGate } from "@/components/AuthGate"
 import Dashboard from "@/routes/Dashboard"
 import Homekit from "@/routes/Homekit"
 import Login from "@/routes/Login"
+import Matter from "@/routes/Matter"
 import Rtsp from "@/routes/Rtsp"
 import Setup from "@/routes/Setup"
 import Wifi from "@/routes/Wifi"
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/wifi" element={<Wifi />} />
         <Route path="/rtsp" element={<Rtsp />} />
         <Route path="/homekit" element={<Homekit />} />
+        <Route path="/matter" element={<Matter />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
