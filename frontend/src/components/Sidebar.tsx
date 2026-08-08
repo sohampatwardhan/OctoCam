@@ -53,7 +53,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: "Advanced Settings",
     items: [
-      { label: "System info", to: "/system", icon: Server, adminOnly: true },
+      { label: "System info", to: "/system", icon: Server, adminOnly: true, inApp: true },
       { label: "System logs", to: "/logs", icon: ScrollText, adminOnly: true },
       { label: "SSH keys", to: "/ssh-keys", icon: KeyRound, adminOnly: true },
       { label: "Admin", to: "/admin", icon: Shield, adminOnly: true },

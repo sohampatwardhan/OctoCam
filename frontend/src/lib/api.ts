@@ -39,6 +39,23 @@ export function apiPost<T>(path: string, body: unknown): Promise<T> {
   return apiSendJson<T>("POST", path, body)
 }
 
+// POST a multipart FormData body, credentialed. Used by /api/restore. Do NOT
+// set a Content-Type header — the browser must generate the multipart
+// boundary itself; setting one manually (even to the right-looking value)
+// breaks the boundary and the server sees an empty/invalid part. Error
+// surfacing matches apiSendJson: server errors come back as `{error, code?}`
+// (see api::ApiError in rust/octocam-web/src/api.rs) and throwOnError
+// extracts `error` into the thrown message.
+export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    body: formData,
+  })
+  await throwOnError(path, res)
+  return res.json() as Promise<T>
+}
+
 // PUT JSON, credentialed. Same error-surfacing behavior as apiPost. Used by
 // `/api/settings`, which seeds a full settings map from the server's current
 // values then overlays the request body — callers should send only the
@@ -114,31 +131,100 @@ export interface RtspUrls {
 // /api/settings` — see api_settings_get/api_settings_put in main.rs. PUT
 // seeds a full map from the server's CURRENT settings then overlays the
 // request body, so callers should send only the changed fields.
+//
+// The `scheduled_*_days` fields are what GET actually returns — a CSV of
+// systemd weekday abbreviations (e.g. "Mon,Tue,Wed"), per
+// `scheduled_service_restart_days`/`scheduled_reboot_days` in Settings. The
+// `scheduled_*_day_<mon..sun>` fields below are NOT struct fields and are
+// never present in a GET response — they're form-only keys that
+// `weekdays_value()` (settings.rs ~610-643) recognizes on PUT and converts
+// back into the CSV, taking priority over `scheduled_*_days` when present.
+// They're included here (all optional) purely so `useUpdateSettings().mutate`
+// can send per-day booleans in a properly-typed patch.
 export interface Settings {
   rtsp_enabled: boolean
   rtsp_path: string
   rtsp_max_clients: number
   homekit_enabled: boolean
   matter_enabled: boolean
+  scheduled_service_restart_enabled: boolean
+  scheduled_service_restart_time: string
+  scheduled_service_restart_days: string
+  scheduled_service_restart_day_mon?: boolean
+  scheduled_service_restart_day_tue?: boolean
+  scheduled_service_restart_day_wed?: boolean
+  scheduled_service_restart_day_thu?: boolean
+  scheduled_service_restart_day_fri?: boolean
+  scheduled_service_restart_day_sat?: boolean
+  scheduled_service_restart_day_sun?: boolean
+  scheduled_reboot_enabled: boolean
+  scheduled_reboot_time: string
+  scheduled_reboot_days: string
+  scheduled_reboot_day_mon?: boolean
+  scheduled_reboot_day_tue?: boolean
+  scheduled_reboot_day_wed?: boolean
+  scheduled_reboot_day_thu?: boolean
+  scheduled_reboot_day_fri?: boolean
+  scheduled_reboot_day_sat?: boolean
+  scheduled_reboot_day_sun?: boolean
 }
 
-// Subset of system.rs's WifiStatus the Wi-Fi page needs — field names must
-// match exactly (see rust/octocam-web/src/system.rs).
+// system.rs's WifiStatus, flattened into `/api/status` under `wifi` — field
+// names must match exactly (see rust/octocam-web/src/system.rs). Originally a
+// smaller subset for the Wi-Fi page; extended with the raw fields the System
+// page's Wi-Fi details list needs (mirrors `wifi_details()` in system.rs).
 export interface WifiStatusSummary {
   ssid: string | null
   state: string
-  signal_dbm: string | null
-  ip_addresses: string[]
+  message: string
+  interface: string | null
+  bssid: string | null
+  frequency_mhz: number | null
+  channel: number | null
   band: string | null
+  channel_width: string | null
+  signal_dbm: string | null
+  rx_bitrate: string | null
+  tx_bitrate: string | null
+  tx_power: string | null
   wifi_generation_label: string | null
+  security: string | null
+  ip_address: string | null
+  ip_addresses: string[]
+  mac_address: string | null
+  default_gateway: string | null
+  default_interface: string | null
 }
 
-// Subset of the flattened SystemStatus (/api/status) the shell needs today —
-// hostname, uptime, camera, motion_detected, services, viewers, wifi, and the
-// browser-facing stream URLs. See system.rs/streams.rs for the full shape.
+// MemoryStatus/ResourceStatus from system.rs — field names must match
+// exactly. Swap fields live under `memory`, not `resources` directly.
+export interface MemoryStatus {
+  total_mb: number
+  available_mb: number
+  used_mb: number
+  used_percent: number | null
+  swap_total_mb: number
+  swap_used_mb: number
+  swap_used_percent: number | null
+}
+
+export interface ResourceStatus {
+  cpu_usage_percent: number | null
+  load_average: string | null
+  memory: MemoryStatus
+  memory_summary: string | null
+}
+
+// The flattened SystemStatus (/api/status) — hostname, ip_addresses, uptime,
+// cpu_temp_c, resources, camera, motion_detected, services, viewers, wifi,
+// and the browser-facing stream URLs. See system.rs/streams.rs for the full
+// shape (this omits `logs`, which no SPA page reads yet).
 export interface Status {
   hostname: string
+  ip_addresses: string[]
   uptime: string | null
+  cpu_temp_c: number | null
+  resources: ResourceStatus
   camera: CameraStatus
   motion_detected: boolean
   services: {
@@ -149,6 +235,19 @@ export interface Status {
   viewers: ViewerReport | null
   browser_stream_urls: BrowserStreamUrls
   wifi: WifiStatusSummary
+}
+
+// `POST /api/restore` response — see api_restore in main.rs. On success
+// (HTTP 200) the body is `{success:true, keys_added, keys_failed}`. Errors
+// (e.g. the 256 KiB cap's `too_large`) come back as a non-2xx status with
+// `{error, code?}`, which `apiUpload` throws as an `Error` before this type
+// is ever seen — `error`/`code` are included here for completeness only.
+export interface RestoreResult {
+  success: boolean
+  keys_added?: number
+  keys_failed?: number
+  error?: string
+  code?: string
 }
 
 // `/api/homekit` — the HomeKit page's pairing view. Field names/types must
