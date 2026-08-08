@@ -13,6 +13,7 @@ import Logs from "@/routes/Logs"
 import Login from "@/routes/Login"
 import Matter from "@/routes/Matter"
 import MotionSettings from "@/routes/MotionSettings"
+import MqttSettings from "@/routes/MqttSettings"
 import Setup from "@/routes/Setup"
 import SshKeys from "@/routes/SshKeys"
 import StreamSettings from "@/routes/StreamSettings"
@@ -32,6 +33,7 @@ const ADMIN_ONLY_PAGES: Record<AdminOnlySettingsSlug, ReactElement> = {
   system: <System />,
   logs: <Logs />,
   "ssh-keys": <SshKeys />,
+  mqtt: <MqttSettings />,
   admin: <Admin />,
 }
 

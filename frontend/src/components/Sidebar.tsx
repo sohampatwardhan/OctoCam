@@ -11,7 +11,7 @@ import {
   SlidersHorizontal,
   Wifi,
 } from "lucide-react"
-import { AppleHomeKitIcon, MatterIcon, MotionSensorIcon } from "@/components/icons/selfhst"
+import { AppleHomeKitIcon, MatterIcon, MotionSensorIcon, MqttIcon } from "@/components/icons/selfhst"
 import { useMe } from "@/hooks/useAuth"
 import { isAdminOnlySettingsPath } from "@/lib/nav"
 import { cn } from "@/lib/utils"
@@ -54,6 +54,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "System info", to: "/settings/system", icon: Server, inApp: true },
       { label: "System logs", to: "/settings/logs", icon: ScrollText, inApp: true },
       { label: "SSH keys", to: "/settings/ssh-keys", icon: KeyRound, inApp: true },
+      { label: "MQTT", to: "/settings/mqtt", icon: MqttIcon, inApp: true },
       { label: "Admin", to: "/settings/admin", icon: Shield, inApp: true },
     ],
   },
