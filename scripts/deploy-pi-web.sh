@@ -95,12 +95,9 @@ ssh "$SSH_TARGET" "mkdir -p '$REMOTE_TMP'"
 rsync -az "$ARTIFACT" "$SSH_TARGET:$REMOTE_TMP/octocam-web"
 rsync -az "$LOCAL_TMP/octocam-web.service" "$LOCAL_TMP/octocam-wifi-setup.service" "$LOCAL_TMP/octocam-matter.service" "$LOCAL_TMP/octocam-web.nginx.conf" "$LOCAL_TMP/octocam-homekit.service" "$SSH_TARGET:$REMOTE_TMP/"
 
-ssh "$SSH_TARGET" "sudo -n mkdir -p '$REMOTE_DIR/static' '$REMOTE_DIR/homekit'"
-rsync -az --delete \
-  --exclude '._*' \
-  --exclude '.DS_Store' \
-  --rsync-path='sudo -n rsync' \
-  "$PROJECT_DIR/static/" "$SSH_TARGET:$REMOTE_DIR/static/"
+# The React SPA is embedded in the binary and served at / — no more static/
+# assets shipped to the Pi. Remove any stale static/ left from earlier deploys.
+ssh "$SSH_TARGET" "sudo -n mkdir -p '$REMOTE_DIR/homekit'; sudo -n rm -rf '$REMOTE_DIR/static'"
 
 rsync -az --delete \
   --exclude 'node_modules' \
@@ -164,8 +161,8 @@ ssh "$SSH_TARGET" "bash -lc 'set -euo pipefail
   # reconcile can restart octocam-rtsp (bounded ~10s) BEFORE the listener binds.
   healthy=false
   for _ in \$(seq 1 15); do
-    if curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\" \
-       && curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/app\"; then
+    if curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/\" \
+       && curl -fsS -m 4 -o /dev/null \"http://127.0.0.1:$HEALTH_PORT/login\"; then
       healthy=true
       break
     fi
