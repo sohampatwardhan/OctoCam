@@ -1,6 +1,9 @@
+import type { ReactElement } from "react"
 import { Navigate, Route, Routes } from "react-router-dom"
+import { AdminGate } from "@/components/AdminGate"
 import { AppShell } from "@/components/AppShell"
 import { AuthGate } from "@/components/AuthGate"
+import { ADMIN_ONLY_SETTINGS_SLUGS, type AdminOnlySettingsSlug } from "@/lib/nav"
 import Account from "@/routes/Account"
 import Admin from "@/routes/Admin"
 import Dashboard from "@/routes/Dashboard"
@@ -14,6 +17,21 @@ import SshKeys from "@/routes/SshKeys"
 import StreamSettings from "@/routes/StreamSettings"
 import System from "@/routes/System"
 import Wifi from "@/routes/Wifi"
+
+// Total in its key type: every admin-only slug must have a page here, and a
+// page here must be a declared admin-only slug. That is what keeps the guarded
+// group and the sidebar's hidden entries from drifting apart.
+const ADMIN_ONLY_PAGES: Record<AdminOnlySettingsSlug, ReactElement> = {
+  identity: <Identity />,
+  wifi: <Wifi />,
+  stream: <StreamSettings />,
+  homekit: <Homekit />,
+  matter: <Matter />,
+  system: <System />,
+  logs: <Logs />,
+  "ssh-keys": <SshKeys />,
+  admin: <Admin />,
+}
 
 export default function App() {
   return (
@@ -30,15 +48,11 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="settings">
           <Route index element={<Navigate to="/settings/account" replace />} />
-          <Route path="identity" element={<Identity />} />
-          <Route path="wifi" element={<Wifi />} />
-          <Route path="stream" element={<StreamSettings />} />
-          <Route path="homekit" element={<Homekit />} />
-          <Route path="matter" element={<Matter />} />
-          <Route path="system" element={<System />} />
-          <Route path="logs" element={<Logs />} />
-          <Route path="ssh-keys" element={<SshKeys />} />
-          <Route path="admin" element={<Admin />} />
+          <Route element={<AdminGate />}>
+            {ADMIN_ONLY_SETTINGS_SLUGS.map((slug) => (
+              <Route key={slug} path={slug} element={ADMIN_ONLY_PAGES[slug]} />
+            ))}
+          </Route>
           <Route path="account" element={<Account />} />
           <Route path="*" element={<Navigate to="/settings/account" replace />} />
         </Route>
