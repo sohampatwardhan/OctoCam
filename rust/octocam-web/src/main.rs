@@ -2021,10 +2021,22 @@ fn stream_url_for(settings: &Settings, stream: &str, protocol: &str, host: &str)
     }
     .trim_matches('/');
     match protocol {
+        // Consumed by external players (VLC, NVRs) that talk to mediamtx
+        // directly, so this stays an absolute URL on mediamtx's own port.
         "rtsp" => format!("rtsp://{host}:8554/{path}"),
-        "hls" => format!("http://{host}:8888/{path}/index.m3u8"),
-        "webrtc" => format!("http://{host}:8889/{path}"),
-        "browser" => format!("http://{host}:8888/{path}/"),
+        // Browser-facing URLs are same-origin paths that nginx proxies to
+        // mediamtx. mediamtx serves plain HTTP on 8889/8888, so an absolute
+        // `http://` URL is blocked as mixed content the moment the UI is
+        // served over HTTPS — which is how it is normally reached. A relative
+        // path inherits the page's scheme instead, so it works on both without
+        // needing TLS on mediamtx itself.
+        //
+        // The trailing slash is mediamtx's canonical form. Requesting it
+        // directly avoids a redirect whose absolute `Location` would escape
+        // the proxy prefix.
+        "hls" => format!("/hls/{path}/index.m3u8"),
+        "webrtc" => format!("/webrtc/{path}/"),
+        "browser" => format!("/hls/{path}/"),
         _ => String::new(),
     }
 }
@@ -2186,18 +2198,45 @@ mod tests {
     #[test]
     fn browser_stream_urls_dto_serializes_with_expected_field_names() {
         let urls = BrowserStreamUrls {
-            main: "http://octocam.local:8889/main".to_string(),
-            sub: "http://octocam.local:8889/sub".to_string(),
+            main: "/webrtc/main/".to_string(),
+            sub: "/webrtc/sub/".to_string(),
             has_sub: true,
         };
         let value = serde_json::to_value(&urls).expect("serialize BrowserStreamUrls");
         assert_eq!(
             value,
             serde_json::json!({
-                "main": "http://octocam.local:8889/main",
-                "sub": "http://octocam.local:8889/sub",
+                "main": "/webrtc/main/",
+                "sub": "/webrtc/sub/",
                 "has_sub": true,
             })
+        );
+    }
+
+    // Regression guard: an absolute `http://` stream URL is blocked as mixed
+    // content on the HTTPS dashboard, which shows up as a black player with a
+    // perfectly healthy camera behind it. Browser-facing URLs must stay
+    // same-origin; only RTSP, which external players fetch directly, is absolute.
+    #[test]
+    fn browser_stream_urls_are_same_origin_and_rtsp_stays_absolute() {
+        let settings = Settings::default();
+
+        for protocol in ["webrtc", "hls", "browser"] {
+            let url = stream_url_for(&settings, "main", protocol, "octocam.local");
+            assert!(
+                url.starts_with('/'),
+                "{protocol} URL must be a same-origin path, got {url}"
+            );
+            assert!(
+                !url.contains("://"),
+                "{protocol} URL must not pin a scheme, got {url}"
+            );
+        }
+
+        let rtsp = stream_url_for(&settings, "main", "rtsp", "octocam.local");
+        assert!(
+            rtsp.starts_with("rtsp://octocam.local:8554/"),
+            "rtsp URL must stay absolute, got {rtsp}"
         );
     }
 
