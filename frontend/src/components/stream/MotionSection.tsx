@@ -1,7 +1,6 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
@@ -9,6 +8,8 @@ import type { StreamFormPatch, StreamFormState } from "@/components/stream/types
 
 const ALL_ZONES = (1n << 64n) - 1n
 const ZONE_COUNT = 64
+const SNAPSHOT_ATTEMPTS = 3
+const SNAPSHOT_RETRY_MS = 1500
 
 interface MotionSectionProps {
   value: StreamFormState
@@ -37,16 +38,19 @@ export function MotionSection({ value, onChange }: MotionSectionProps) {
         </label>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="motion_sensitivity">Sensitivity (1-100)</Label>
-          <Input
+          <div className="flex items-center justify-between">
+            <Label htmlFor="motion_sensitivity">Sensitivity</Label>
+            <span className="text-sm text-muted-foreground tabular-nums">{value.motionSensitivity}</span>
+          </div>
+          <input
             id="motion_sensitivity"
-            type="number"
+            type="range"
             min={1}
             max={100}
             value={value.motionSensitivity}
             disabled={!value.motionEnabled}
             onChange={(event) => onChange({ motionSensitivity: event.target.value })}
-            className="max-w-32"
+            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-input accent-primary disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
 
@@ -99,7 +103,23 @@ function MotionZoneGrid({
 }) {
   const isDrawingRef = useRef(false)
   const drawModeRef = useRef(true)
+  // One snapshot per page load, but the capture is CPU-bound on the device and
+  // times out under load, so a single 503 shouldn't cost the backdrop for the
+  // whole visit. Retry a couple of times, spaced out, before falling back.
+  const [attempt, setAttempt] = useState(0)
   const [snapshotFailed, setSnapshotFailed] = useState(false)
+  const retryRef = useRef<number | undefined>(undefined)
+
+  useEffect(() => () => window.clearTimeout(retryRef.current), [])
+
+  function handleSnapshotError() {
+    if (attempt + 1 >= SNAPSHOT_ATTEMPTS) {
+      setSnapshotFailed(true)
+      return
+    }
+    // Pause before retrying rather than piling onto the same contention.
+    retryRef.current = window.setTimeout(() => setAttempt((n) => n + 1), SNAPSHOT_RETRY_MS)
+  }
 
   function setCell(index: number, active: boolean) {
     const bit = 1n << BigInt(index)
@@ -133,15 +153,15 @@ function MotionZoneGrid({
       }}
     >
       {!snapshotFailed && (
-        // Best-effort live backdrop so zones can be lined up against the
-        // actual scene. Silently falls back to a plain grid if the camera is
-        // unavailable or the snapshot route 404s/errors.
+        // Best-effort backdrop so zones can be lined up against the actual
+        // scene. Falls back to a plain grid once retries are exhausted.
         <img
-          src="/snapshot.jpg"
+          key={attempt}
+          src={attempt === 0 ? "/snapshot.jpg" : `/snapshot.jpg?attempt=${attempt}`}
           alt=""
           aria-hidden="true"
           className="absolute inset-0 size-full object-cover opacity-70"
-          onError={() => setSnapshotFailed(true)}
+          onError={handleSnapshotError}
         />
       )}
       <div className="relative grid size-full grid-cols-8 grid-rows-8">
