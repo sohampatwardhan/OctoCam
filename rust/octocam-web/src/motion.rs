@@ -110,24 +110,53 @@ fn now_ms() -> u64 {
 }
 
 impl MotionHealth {
+    /// Record a decoded frame within an already-streaming session.
     fn mark_frame(&self) {
         self.last_frame_ms.store(now_ms(), Ordering::Relaxed);
         self.streaming.store(true, Ordering::Relaxed);
         self.consecutive_failures.store(0, Ordering::Relaxed);
     }
 
+    /// Record the FIRST frame of a session, folding any real coverage gap since
+    /// the previous frame into `total_blind_ms`, and return that gap for logging.
+    ///
+    /// This is the accurate blind-time source. The gap is measured from the last
+    /// frame of the previous session to this one, so it captures the WHOLE
+    /// outage — the deliberate backoff *and* the ~8.5s RTSP reconnect. The old
+    /// accounting added only the backoff sleep, which badly under-reported real
+    /// coverage loss (a 30s startup-timeout outage showed as 0.25s). `last_frame_ms`
+    /// persists across the gap because only frames write it, so it still holds the
+    /// pre-outage timestamp when we get here.
+    fn mark_first_frame(&self) -> Option<Duration> {
+        let now = now_ms();
+        let prev = self.last_frame_ms.load(Ordering::Relaxed);
+        // prev == 0 => no prior coverage to measure against: first frame since
+        // boot, or since an intentional disable cleared the marker. Not an outage.
+        let gap = (prev != 0).then(|| Duration::from_millis(now.saturating_sub(prev)));
+        if let Some(gap) = gap {
+            self.total_blind_ms
+                .fetch_add(gap.as_millis() as u64, Ordering::Relaxed);
+        }
+        self.last_frame_ms.store(now, Ordering::Relaxed);
+        self.streaming.store(true, Ordering::Relaxed);
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+        gap
+    }
+
     fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
         if !enabled {
             self.streaming.store(false, Ordering::Relaxed);
+            // Clear the last-frame marker so an intentional off-period is not
+            // later charged as blind time: the next first frame then measures no
+            // gap. (Blind time tracks failures, not deliberate disables.)
+            self.last_frame_ms.store(0, Ordering::Relaxed);
         }
     }
 
-    fn mark_session_ended(&self, failures: u32, blind: Duration) {
+    fn mark_session_ended(&self, failures: u32) {
         self.streaming.store(false, Ordering::Relaxed);
         self.consecutive_failures.store(failures, Ordering::Relaxed);
-        self.total_blind_ms
-            .fetch_add(blind.as_millis() as u64, Ordering::Relaxed);
     }
 
     pub fn snapshot(&self) -> MotionHealthView {
@@ -226,7 +255,6 @@ pub fn spawn_motion_detector(
         // missed coverage is measurable rather than inferred from the journal.
         let mut session_id: u64 = 0;
         let mut consecutive_failures: usize = 0;
-        let mut blind_time = Duration::ZERO;
 
         loop {
             // Load settings
@@ -310,8 +338,11 @@ pub fn spawn_motion_detector(
                 Err(e) => {
                     tracing::error!("Failed to spawn ffmpeg for motion detection: {e}");
                     consecutive_failures += 1;
+                    health.mark_session_ended(consecutive_failures as u32);
+                    // No blind-time accrual here: last_frame_ms still holds the
+                    // pre-outage frame, so the full gap (including these failed
+                    // spawns) is measured when a frame finally arrives.
                     let backoff = reconnect_delay(consecutive_failures);
-                    blind_time += backoff;
                     tokio::time::sleep(backoff).await;
                     continue;
                 }
@@ -381,14 +412,27 @@ pub fn spawn_motion_detector(
 
                 match read {
                     Ok(_) => {
-                        health.mark_frame();
                         if frames_read == 0 {
                             let startup = session_start.elapsed();
                             first_frame_at = Some(std::time::Instant::now());
-                            tracing::info!(
-                                "Motion session {session_id} streaming; first frame after {:.1}s",
-                                startup.as_secs_f64(),
-                            );
+                            // Fold the real coverage gap into total_blind_ms and
+                            // report it — this, not the backoff, is the true cost.
+                            match health.mark_first_frame() {
+                                Some(gap) => tracing::info!(
+                                    "Motion session {session_id} streaming; first frame after \
+                                     {:.1}s (blind {:.1}s while reconnecting; cumulative {:.1}s \
+                                     since boot)",
+                                    startup.as_secs_f64(),
+                                    gap.as_secs_f64(),
+                                    health.snapshot().total_blind_ms as f64 / 1000.0,
+                                ),
+                                None => tracing::info!(
+                                    "Motion session {session_id} streaming; first frame after {:.1}s",
+                                    startup.as_secs_f64(),
+                                ),
+                            }
+                        } else {
+                            health.mark_frame();
                         }
                         frames_read += 1;
 
@@ -494,7 +538,7 @@ pub fn spawn_motion_detector(
                     elapsed.as_secs_f64(),
                 );
                 consecutive_failures = 0;
-                health.mark_session_ended(0, Duration::ZERO);
+                health.mark_session_ended(0);
                 continue;
             }
 
@@ -505,11 +549,7 @@ pub fn spawn_motion_detector(
             }
             consecutive_failures += 1;
             let backoff = reconnect_delay(consecutive_failures);
-            // The reconnect also costs the ~8.5s RTSP startup, so the true gap
-            // is larger than the backoff; the frame-age signal reflects that
-            // even though this counter only accrues the deliberate wait.
-            blind_time += backoff;
-            health.mark_session_ended(consecutive_failures as u32, backoff);
+            health.mark_session_ended(consecutive_failures as u32);
 
             // Availability just dropped. Publish before sleeping so consumers
             // see the outage at its start, not after the reconnect completes.
@@ -518,14 +558,15 @@ pub fn spawn_motion_detector(
                 publish(previous_state);
             }
 
+            // The blind interval is measured and logged on recovery (see
+            // mark_first_frame), since its true length isn't known until a frame
+            // returns — the reconnect keeps costing after this backoff.
             tracing::warn!(
                 "Motion session {session_id} ended after {:.1}s: {session_end}. \
                  Read {frames_read} frames (expected ~{expected_frames:.0}); \
-                 failure #{consecutive_failures}, reconnecting in {:.0}ms. \
-                 Cumulative blind time since boot: {:.1}s",
+                 failure #{consecutive_failures}, reconnecting in {:.0}ms",
                 elapsed.as_secs_f64(),
                 backoff.as_secs_f64() * 1000.0,
-                blind_time.as_secs_f64(),
             );
 
             tokio::time::sleep(backoff).await;
@@ -594,12 +635,72 @@ mod tests {
         let health = MotionHealth::default();
         health.set_enabled(true);
         health.mark_frame();
-        health.mark_session_ended(1, Duration::from_millis(250));
+        health.mark_session_ended(1);
 
         let view = health.snapshot();
         assert!(!view.available);
         assert_eq!(view.state, "reconnecting");
         assert_eq!(view.consecutive_failures, 1);
+    }
+
+    #[test]
+    fn blind_time_measures_the_full_gap_not_the_backoff() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        // Establish coverage, then pretend the last frame was 30s ago (a
+        // startup-timeout-sized outage that the old backoff-only accounting
+        // would have logged as a fraction of a second).
+        health.mark_first_frame();
+        with_frame_age(&health, Duration::from_secs(30));
+
+        let gap = health.mark_first_frame().expect("a gap should be measured");
+        assert!(gap >= Duration::from_secs(29), "gap was {gap:?}");
+
+        let view = health.snapshot();
+        assert!(view.total_blind_ms >= 29_000 && view.total_blind_ms <= 31_000);
+        assert!(view.available);
+        assert_eq!(view.consecutive_failures, 0);
+    }
+
+    #[test]
+    fn first_frame_since_boot_is_not_counted_as_blind() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        // No prior frame exists, so the initial startup is not an outage.
+        assert!(health.mark_first_frame().is_none());
+        assert_eq!(health.snapshot().total_blind_ms, 0);
+    }
+
+    #[test]
+    fn an_intentional_disable_period_is_not_charged_as_blind() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        health.mark_first_frame();
+        // Long off-period, then re-enable and stream again.
+        with_frame_age(&health, Duration::from_secs(600));
+        health.set_enabled(false);
+        health.set_enabled(true);
+
+        assert!(
+            health.mark_first_frame().is_none(),
+            "re-enabling after a disable must not measure the off-period as a gap",
+        );
+        assert_eq!(health.snapshot().total_blind_ms, 0);
+    }
+
+    #[test]
+    fn blind_intervals_accumulate_across_outages() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        health.mark_first_frame();
+
+        with_frame_age(&health, Duration::from_secs(10));
+        health.mark_first_frame(); // +~10s
+        with_frame_age(&health, Duration::from_secs(5));
+        health.mark_first_frame(); // +~5s
+
+        let total = health.snapshot().total_blind_ms;
+        assert!(total >= 14_000 && total <= 16_000, "total was {total}ms");
     }
 
     #[test]
@@ -620,17 +721,18 @@ mod tests {
     fn recovery_clears_failures_and_restores_availability() {
         let health = MotionHealth::default();
         health.set_enabled(true);
-        health.mark_session_ended(4, Duration::from_secs(10));
+        health.mark_session_ended(4);
         assert_eq!(health.snapshot().state, "starting");
 
-        health.mark_frame();
+        // First frame of the recovered session. No prior frame existed, so this
+        // recovery contributes no blind time, but it must clear the failure
+        // count and restore availability.
+        health.mark_first_frame();
 
         let view = health.snapshot();
         assert!(view.available);
         assert_eq!(view.state, "ok");
         assert_eq!(view.consecutive_failures, 0);
-        // Blind time is cumulative and must survive recovery.
-        assert_eq!(view.total_blind_ms, 10_000);
     }
 
     #[test]
