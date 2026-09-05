@@ -172,3 +172,12 @@ gantt
     section Stage 5
     5.1 attempt 1 (verified, 265s) :done, b_5_1_attempt1, 2026-09-05T16:55:53, 2026-09-05T17:00:18
 ```
+
+## Integration Decision
+
+- Status: pull-request
+- Base: `main`
+- Result: https://github.com/sohampatwardhan/OctoCam/pull/6 (commit `9951638`)
+- Post-integration verification: pending (device already deployed and health-checked ahead of
+  merge, per Stage 5/Final Review above; awaiting PR review/merge for repository history to
+  match what's running)
