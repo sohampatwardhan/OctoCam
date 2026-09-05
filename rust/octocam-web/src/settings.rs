@@ -89,6 +89,7 @@ pub struct Settings {
     pub matter_enabled: bool,
     pub motion_enabled: bool,
     pub motion_sensitivity: i32,
+    pub motion_use_secondary_stream: bool,
     pub scheduled_service_restart_enabled: bool,
     pub scheduled_service_restart_time: String,
     pub scheduled_service_restart_days: String,
@@ -263,6 +264,7 @@ impl Default for Settings {
             matter_enabled: false,
             motion_enabled: false,
             motion_sensitivity: 50,
+            motion_use_secondary_stream: false,
             scheduled_service_restart_enabled: false,
             scheduled_service_restart_time: "03:00".to_string(),
             scheduled_service_restart_days: default_weekdays(),
@@ -534,6 +536,11 @@ pub fn validate_map(raw: &Map<String, Value>) -> Settings {
         100,
     );
     settings.motion_zones = u64_value(&map, "motion_zones", settings.motion_zones);
+    settings.motion_use_secondary_stream = bool_value(
+        &map,
+        "motion_use_secondary_stream",
+        settings.motion_use_secondary_stream,
+    );
     settings.mqtt_enabled = bool_value(&map, "mqtt_enabled", settings.mqtt_enabled);
     settings.mqtt_host = string_value(&map, "mqtt_host", &settings.mqtt_host, 255);
     settings.mqtt_port = int_value(&map, "mqtt_port", settings.mqtt_port, 1, 65535);
@@ -919,6 +926,25 @@ mod tests {
         assert_eq!(settings.device_name, "OctoCam");
         assert!(!settings.mqtt_enabled);
         assert_eq!(settings.mqtt_discovery_prefix, "homeassistant");
+    }
+
+    #[test]
+    fn motion_use_secondary_stream_defaults_off_for_settings_written_before_it_existed() {
+        // A stored file from before this feature has no motion_use_secondary_stream key —
+        // upgrading an existing installation must not silently opt it into the new stream (R6.2).
+        let raw = serde_json::json!({ "device_name": "OctoCam", "motion_enabled": true });
+        let map = raw.as_object().expect("object").clone();
+        let settings = validate_map(&map);
+        assert!(!settings.motion_use_secondary_stream);
+    }
+
+    #[test]
+    fn motion_use_secondary_stream_round_trips_through_validate_map() {
+        let map = serde_json::json!({ "motion_use_secondary_stream": true })
+            .as_object()
+            .expect("object")
+            .clone();
+        assert!(validate_map(&map).motion_use_secondary_stream);
     }
 
     #[test]

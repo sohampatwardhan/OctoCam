@@ -1,0 +1,350 @@
+{
+  "concurrency": {
+    "active_stage": null,
+    "blocked": {},
+    "parallel_candidates": [],
+    "ready": [],
+    "serial_candidates": [],
+    "waves": []
+  },
+  "generated_from": {
+    "file": "04_tasks.md",
+    "sha256": "10effbd2c0dbac1960b04aff5c692380979b43bdb4d060b79d3f844b4df7f66d"
+  },
+  "requirement_count": 16,
+  "schema_version": 1,
+  "stages": {
+    "1": [
+      "1.1",
+      "1.2",
+      "1.3",
+      "1.4"
+    ],
+    "2": [
+      "2.1",
+      "2.2",
+      "2.3"
+    ],
+    "3": [
+      "3.1",
+      "3.2"
+    ],
+    "4": [
+      "4.1"
+    ],
+    "5": [
+      "5.1"
+    ]
+  },
+  "tasks": [
+    {
+      "capability_tier": "balanced",
+      "checked": true,
+      "delegation": "controller",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [],
+      "files": [
+        "none (read-only SSH session; findings recorded in [`execution/`](execution))"
+      ],
+      "id": "1.1",
+      "interfaces": "Consumes: SSH access to the device; Produces: a recorded snapshot of `sub_stream_enabled`, `text_overlay_enabled`, current `/etc/mediamtx.yml` secondary-path codec, and installed mediamtx version, used to scope tasks 2.1 and 3.1's blast radius",
+      "optional": false,
+      "reasoning_level": "medium",
+      "requirements": [
+        "3.1"
+      ],
+      "resolved_model": "claude-sonnet-5",
+      "risk": "low; read-only, no device state changes",
+      "stage": 1,
+      "task_category": "review",
+      "title": "Confirm device's secondary stream + mediamtx version",
+      "verification": "the three findings above are captured in the task's execution report"
+    },
+    {
+      "capability_tier": "balanced",
+      "checked": true,
+      "delegation": "parallel-safe",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [],
+      "files": [
+        "rust/octocam-web/src/settings.rs",
+        "rust/octocam-web/src/backup.rs"
+      ],
+      "id": "1.2",
+      "interfaces": "Consumes: none (new field, no prior task output); Produces: `Settings.motion_use_secondary_stream: bool` (default `false`), a JSON-serializable key named `motion_use_secondary_stream`, and a `validate_map()` entry that participates in the existing settings-overlay merge",
+      "optional": false,
+      "reasoning_level": "medium",
+      "requirements": [
+        "6.2"
+      ],
+      "resolved_model": "claude-sonnet-5",
+      "risk": "low",
+      "stage": 1,
+      "task_category": "code_analysis",
+      "title": "Add `motion_use_secondary_stream` setting",
+      "verification": "`cargo test -p octocam-web settings::` passes, including `json_overlay_preserves_untouched_fields_from_current_settings` (unmodified, confirming the new field participates correctly); a new test asserts a settings JSON payload missing this key defaults to `false`"
+    },
+    {
+      "capability_tier": "frontier",
+      "checked": true,
+      "delegation": "parallel-safe",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [],
+      "files": [
+        "rust/octocam-web/src/mediamtx.rs"
+      ],
+      "id": "1.3",
+      "interfaces": "Consumes: none; Produces: corrected `mediamtx_camera_path()` output (primary-path output byte-for-byte unchanged; secondary-path output now MJPEG-coded), plus the new public `MIN_SECONDARY_SAFE_VERSION`/`default_version_check_path`/`default_binary_path`/`VersionCheckResult`/`check_and_write_mediamtx_version` symbols for tasks 2.2/2.3 to consume",
+      "optional": false,
+      "reasoning_level": "high",
+      "requirements": [
+        "2.1",
+        "2.2",
+        "2.3",
+        "3.2"
+      ],
+      "resolved_model": "claude-opus-5",
+      "risk": "medium; touches config generation for an existing, already-live path (`sub`) \u2014 mitigated by the golden-output test locking the primary path unchanged and by task 3.1's on-device confirmation that the corrected secondary output doesn't crash",
+      "stage": 1,
+      "task_category": "code_analysis",
+      "title": "Fix secondary-path codec and add the mediamtx version check",
+      "verification": "unit tests assert `mediamtx_camera_path(secondary: true, ...)` contains `rpiCameraCodec: auto` and `rpiCameraMJPEGQuality: 60`; a golden-output test asserts `mediamtx_camera_path(secondary: false, ...)` is byte-for-byte identical to its pre-change output (Property 3); unit tests for `check_and_write_mediamtx_version` cover a supported version string, an old version string, a malformed string, and a non-zero/missing-binary exit, asserting `supports_secondary_fix` matches expectation and always fails closed on error (Property 5); a documentation review confirms the required comments above are present"
+    },
+    {
+      "capability_tier": "balanced",
+      "checked": true,
+      "delegation": "parallel-safe",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [],
+      "files": [
+        "frontend/src/components/stream/MotionSection.tsx",
+        "frontend/src/lib/api.ts",
+        "frontend/src/components/stream/types.ts"
+      ],
+      "id": "1.4",
+      "interfaces": "Consumes: the JSON field name `motion_use_secondary_stream` fixed by task 1.2's design (not its compiled output \u2014 frontend and backend build independently); Produces: a settings-page control that reads/writes `motion_use_secondary_stream` through the existing partial-update mutation",
+      "optional": false,
+      "reasoning_level": "medium",
+      "requirements": [
+        "6.1"
+      ],
+      "resolved_model": "claude-sonnet-5",
+      "risk": "low",
+      "stage": 1,
+      "task_category": "code_analysis",
+      "title": "Add motion_use_secondary_stream toggle to frontend",
+      "verification": "`npm run build` succeeds; manual check in the dev server that toggling the control round-trips through a settings save"
+    },
+    {
+      "capability_tier": "frontier",
+      "checked": true,
+      "delegation": "controller",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "1.1"
+      ],
+      "files": [
+        "none in this repo (device binary upgrade only)"
+      ],
+      "id": "2.1",
+      "interfaces": "Consumes: task 1.1's finding (installed version `v1.19.2`, confirmed GitHub-release reachability); Produces: the device's `mediamtx` binary at `>= v1.20.1`, the actual precondition task 3.1's restart test needs",
+      "optional": false,
+      "reasoning_level": "high",
+      "requirements": [
+        "3.1"
+      ],
+      "resolved_model": "claude-opus-5",
+      "risk": "medium; replaces the binary the live camera's only streaming service runs on \u2014 mitigated by a full binary backup and an immediate binary-only rollback path (no config change in this step, so a failure here is isolated to \"which mediamtx binary runs,\" not \"what it's configured to do\")",
+      "stage": 2,
+      "task_category": "review",
+      "title": "Upgrade device mediamtx binary to >= v1.20.1",
+      "verification": "`mediamtx --version` reports `v1.20.1`; `octocam-rtsp` is `active`; `main` stream still works against the unmodified existing config"
+    },
+    {
+      "capability_tier": "balanced",
+      "checked": true,
+      "delegation": "parallel-safe",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "1.2"
+      ],
+      "files": [
+        "rust/octocam-web/src/motion.rs"
+      ],
+      "id": "2.2",
+      "interfaces": "Consumes: `Settings.motion_use_secondary_stream` (task 1.2), `VersionCheckResult`'s on-disk JSON shape (task 1.3, consumed structurally via the same field names, not a compiled dependency since this function takes a bare `&Path`); Produces: `MotionSource`, `resolve_motion_source()`, `motion_source_path()`, and `MotionHealthView.active_source`, for task 3.2 to wire into the reconnect loop",
+      "optional": false,
+      "reasoning_level": "medium",
+      "requirements": [
+        "1.1",
+        "1.2",
+        "1.5",
+        "3.2",
+        "5.1",
+        "5.2"
+      ],
+      "resolved_model": "claude-sonnet-5",
+      "risk": "low; new, additive functions with no existing call site touched yet",
+      "stage": 2,
+      "task_category": "code_analysis",
+      "title": "Add motion source resolution and active-source diagnostics",
+      "verification": "a 24-case table test (2^3 settings-gate combinations x 3 version-check outcomes: supported / unsupported / missing-file) asserts `Secondary` only when all four conditions hold (Property 1); a determinism test asserts repeated calls with unchanged inputs return the same source (Property 2's \"no spurious flip\" half); existing `MotionHealthView` serialization tests still pass unmodified aside from the new field; a documentation review confirms the required comments above"
+    },
+    {
+      "capability_tier": "balanced",
+      "checked": true,
+      "delegation": "parallel-safe",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "1.3"
+      ],
+      "files": [
+        "rust/octocam-web/src/mediamtx.rs"
+      ],
+      "id": "2.3",
+      "interfaces": "Consumes: `check_and_write_mediamtx_version`/`default_binary_path`/`default_version_check_path` (task 1.3); Produces: an up-to-date `VersionCheckResult` cache file refreshed on every `configure_rtsp_service()` call, which task 2.2's `mediamtx_supports_secondary_fix()` reads",
+      "optional": false,
+      "reasoning_level": "medium",
+      "requirements": [
+        "3.2"
+      ],
+      "resolved_model": "claude-sonnet-5",
+      "risk": "low",
+      "stage": 2,
+      "task_category": "code_analysis",
+      "title": "Wire the version check into settings-apply",
+      "verification": "a test on `configure_rtsp_service()` (or an integration test around it) confirms the version-check file is written/refreshed on each call; existing `configure_rtsp_service`/`write_mediamtx_config` tests still pass unmodified"
+    },
+    {
+      "capability_tier": "frontier",
+      "checked": true,
+      "delegation": "controller",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "2.1"
+      ],
+      "files": [
+        "none in this repo (temporary",
+        "restored device-side config only)"
+      ],
+      "id": "3.1",
+      "interfaces": "Consumes: task 1.1's snapshot (which path is secondary) and task 2.1's upgraded mediamtx (`>= v1.20.1`); Produces: a pass/fail verdict for R3.1 (10/10 crash-free) and R4.1/R4.2 (no regression for existing secondary-stream consumers), gating the final deploy task",
+      "optional": false,
+      "reasoning_level": "high",
+      "requirements": [
+        "3.1",
+        "4.1",
+        "4.2"
+      ],
+      "resolved_model": "claude-opus-5",
+      "risk": "medium; temporarily alters the live camera's secondary stream and restarts a service the operator depends on \u2014 mitigated by a backup/restore of the exact original file and a fail-fast abort-and-restore on the first crash",
+      "stage": 3,
+      "task_category": "review",
+      "title": "On-device restart test of corrected secondary config",
+      "verification": "10/10 restarts crash-free; Matter and web UI live view both confirmed working while the synthetic persistent reader is attached; MJPEG-quality frame sanity check shows no detection-relevant artifacts at quality 60; no H264-field warnings observed (or a follow-up fix noted if there are); device restored to its original config afterward"
+    },
+    {
+      "capability_tier": "frontier",
+      "checked": true,
+      "delegation": "sequential subagent",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "1.3",
+        "2.2"
+      ],
+      "files": [
+        "rust/octocam-web/src/motion.rs"
+      ],
+      "id": "3.2",
+      "interfaces": "Consumes: `resolve_motion_source`/`motion_source_path` (task 2.2), `mediamtx::default_version_check_path` (task 1.3); Produces: the outer reconnect loop's frame-source URL is now settings-and-version-gated instead of hardcoded to `settings.rtsp_path`, and `MotionHealthView.active_source` reflects the live session's source",
+      "optional": false,
+      "reasoning_level": "high",
+      "requirements": [
+        "1.3",
+        "1.4",
+        "5.1"
+      ],
+      "resolved_model": "claude-opus-5",
+      "risk": "medium; this is the one call site that changes motion's real runtime behavior \u2014 mitigated by task 3.1's on-device confirmation and by R6.2's default-off toggle meaning this code path is inert until an operator opts in",
+      "stage": 3,
+      "task_category": "code_analysis",
+      "title": "Wire resolved source into motion detector call site",
+      "verification": "an integration-style test (or a refactor of the existing motion-loop tests, if any exist at this call site) confirms the built URL matches `main`'s path when the gates are closed and `sub`'s path when all four conditions hold; manual trace confirms a mid-session ffmpeg failure re-enters the same outer iteration without a source change when settings are unchanged (Property 2); the old rationale comment no longer contradicts the new conditional behavior"
+    },
+    {
+      "capability_tier": "balanced",
+      "checked": true,
+      "delegation": "controller",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "1.4",
+        "2.2",
+        "2.3",
+        "3.2"
+      ],
+      "files": [
+        "none (verification only)"
+      ],
+      "id": "4.1",
+      "interfaces": "Consumes: all code changes from tasks 1.2-3.2; Produces: a passing local build/test run, the precondition for the final deploy task",
+      "optional": false,
+      "reasoning_level": "medium",
+      "requirements": [
+        "1.1",
+        "1.2",
+        "1.5",
+        "2.1",
+        "2.2",
+        "2.3",
+        "3.2",
+        "5.1",
+        "5.2",
+        "6.1",
+        "6.2"
+      ],
+      "resolved_model": "claude-sonnet-5",
+      "risk": "low",
+      "stage": 4,
+      "task_category": "code_analysis",
+      "title": "Full local build and test pass",
+      "verification": "`npm run build && cargo build && cargo test` exits 0 with zero failing tests"
+    },
+    {
+      "capability_tier": "frontier",
+      "checked": true,
+      "delegation": "controller",
+      "dependency_delivery": "none",
+      "dependency_resolution": "none",
+      "depends_on": [
+        "3.1",
+        "4.1"
+      ],
+      "files": [
+        "none in this repo (deployment action)"
+      ],
+      "id": "5.1",
+      "interfaces": "Consumes: task 4.1's verified build, task 3.1's on-device pass/fail verdict (must be a pass to proceed); Produces: the feature live on the device, inert by default (R6.2), ready for the operator to opt in via the new Settings_UI toggle",
+      "optional": false,
+      "reasoning_level": "high",
+      "requirements": [
+        "6.2"
+      ],
+      "resolved_model": "claude-opus-5",
+      "risk": "high; a production deploy to the operator's only camera \u2014 rollback is a redeploy of the previous binary (no data migration, no schema change) or, if needed, disabling the systemd unit temporarily; gated on task 3.1's crash-free verdict specifically to avoid deploying an unverified config-generation change",
+      "stage": 5,
+      "task_category": "review",
+      "title": "Cross-build, deploy, confirm device unaffected by default",
+      "verification": "device health/status endpoint shows `motion_use_secondary_stream: false` and `active_source: \"main\"` post-deploy; no crash or restart loop observed"
+    }
+  ]
+}

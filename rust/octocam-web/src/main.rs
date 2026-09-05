@@ -1932,7 +1932,12 @@ async fn apply_settings_side_effects(
     state: &Arc<AppState>,
     settings: &Settings,
 ) -> Result<(), AppError> {
-    let _ = mediamtx::configure_rtsp_service(settings, &state.mediamtx_config_path);
+    let rtsp_settings = settings.clone();
+    let rtsp_config_path = state.mediamtx_config_path.clone();
+    let _ = run_blocking(move || {
+        mediamtx::configure_rtsp_service(&rtsp_settings, &rtsp_config_path)
+    })
+    .await?;
     let timezone = settings.text_overlay_timezone.clone();
     let _ = run_blocking(move || system::set_timezone(&timezone))
         .await?

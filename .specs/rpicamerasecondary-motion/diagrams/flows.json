@@ -1,0 +1,21 @@
+{
+  "diagram": "state-machine",
+  "target": "stateDiagram-v2",
+  "initial": "Resolving",
+  "states": [
+    { "id": "Resolving", "kind": "choice" },
+    { "id": "UsingMain", "label": "Using main (H264)" },
+    { "id": "UsingSecondary", "label": "Using secondary (sub, MJPEG)" }
+  ],
+  "transitions": [
+    { "from": "Resolving", "to": "UsingSecondary", "label": "toggle on AND sub_stream_enabled AND NOT text_overlay_enabled AND mediamtx version check passed" },
+    { "from": "Resolving", "to": "UsingMain", "label": "otherwise (any gate fails, including a failed or unavailable version check)" },
+    { "from": "UsingMain", "to": "UsingMain", "label": "frame source fails: reconnect/backoff on the same source" },
+    { "from": "UsingSecondary", "to": "UsingSecondary", "label": "frame source fails: reconnect/backoff on the same source" },
+    { "from": "UsingMain", "to": "Resolving", "label": "settings changed: re-resolve at next reconnect" },
+    { "from": "UsingSecondary", "to": "Resolving", "label": "settings changed: re-resolve at next reconnect" }
+  ],
+  "notes": [
+    { "state": "Resolving", "side": "right", "text": "Runs once per outer reconnect loop iteration in spawn_motion_detector, reading freshly-loaded settings each time" }
+  ]
+}

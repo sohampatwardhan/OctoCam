@@ -1,7 +1,9 @@
-use crate::settings;
+use crate::mediamtx::VersionCheckResult;
+use crate::settings::{self, Settings};
 use serde::Serialize;
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::broadcast;
@@ -73,6 +75,9 @@ pub struct MotionHealth {
     enabled: AtomicBool,
     /// Whether a session is currently producing frames.
     streaming: AtomicBool,
+    /// Which RTSP path the current/most recent session resolved to: `0` = not yet
+    /// resolved this run, `1` = `main`, `2` = secondary. See [`MotionSource`].
+    active_source: AtomicU8,
 }
 
 /// Point-in-time view of [`MotionHealth`], safe to serialize to API clients.
@@ -88,6 +93,9 @@ pub struct MotionHealthView {
     pub last_frame_age_ms: Option<u64>,
     pub consecutive_failures: u32,
     pub total_blind_ms: u64,
+    /// Which frame source the detector is currently (or most recently) using:
+    /// `"unknown"` before the first resolution, else `"main"` or `"secondary"` (R5.1).
+    pub active_source: &'static str,
 }
 
 impl Default for MotionHealth {
@@ -98,6 +106,7 @@ impl Default for MotionHealth {
             total_blind_ms: AtomicU64::new(0),
             enabled: AtomicBool::new(false),
             streaming: AtomicBool::new(false),
+            active_source: AtomicU8::new(0),
         }
     }
 }
@@ -159,6 +168,15 @@ impl MotionHealth {
         self.consecutive_failures.store(failures, Ordering::Relaxed);
     }
 
+    /// Record which source the current/next session resolved to (R5.1).
+    fn set_active_source(&self, source: MotionSource) {
+        let code = match source {
+            MotionSource::Main => 1,
+            MotionSource::Secondary => 2,
+        };
+        self.active_source.store(code, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> MotionHealthView {
         let last = self.last_frame_ms.load(Ordering::Relaxed);
         let age_ms = (last != 0).then(|| now_ms().saturating_sub(last));
@@ -177,13 +195,71 @@ impl MotionHealth {
             (true, ..) => (false, "down"),
         };
 
+        let active_source = match self.active_source.load(Ordering::Relaxed) {
+            1 => "main",
+            2 => "secondary",
+            _ => "unknown",
+        };
+
         MotionHealthView {
             available,
             state,
             last_frame_age_ms: age_ms,
             consecutive_failures: self.consecutive_failures.load(Ordering::Relaxed),
             total_blind_ms: self.total_blind_ms.load(Ordering::Relaxed),
+            active_source,
         }
+    }
+}
+
+/// Which RTSP path motion detection is reading from.
+///
+/// Resolved once per outer reconnect loop iteration by [`resolve_motion_source`], never
+/// re-evaluated mid-session: a source's own failure only ever retries that same source
+/// (R1.4) — switching sources is exclusively a response to a settings change, picked up
+/// at the next reconnect (R1.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionSource {
+    Main,
+    Secondary,
+}
+
+/// Decides whether motion detection may use mediamtx's hardware secondary (MJPEG) stream
+/// this session, or must stay on `main`.
+///
+/// Fails closed on every axis: the three settings gates must all hold (the operator opted
+/// in, the hardware secondary path actually exists as a hardware stream today, and it isn't
+/// occupied by the software transcoder), AND the cached mediamtx-version check must confirm
+/// the installed binary is known to fix the `rpiCameraSecondary` startup crash. Any of these
+/// being false, missing, or unreadable resolves to `Main` — never a panic, never an
+/// unresolved state (R1.5).
+pub fn resolve_motion_source(settings: &Settings, version_check_path: &Path) -> MotionSource {
+    let gates_open = settings.motion_use_secondary_stream
+        && settings.sub_stream_enabled
+        && !settings.text_overlay_enabled;
+    if gates_open && mediamtx_supports_secondary_fix(version_check_path) {
+        MotionSource::Secondary
+    } else {
+        MotionSource::Main
+    }
+}
+
+/// Reads the cached [`VersionCheckResult`] written by
+/// `mediamtx::check_and_write_mediamtx_version`. Fails closed (`false`) on any I/O error,
+/// malformed JSON, or missing file — motion must never assume the hardware secondary
+/// stream is safe without positive, current evidence that it is.
+fn mediamtx_supports_secondary_fix(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<VersionCheckResult>(&raw).ok())
+        .is_some_and(|result| result.supports_secondary_fix)
+}
+
+/// Maps a resolved [`MotionSource`] to the RTSP path name to connect to.
+pub fn motion_source_path<'a>(settings: &'a Settings, source: MotionSource) -> &'a str {
+    match source {
+        MotionSource::Main => &settings.rtsp_path,
+        MotionSource::Secondary => &settings.sub_rtsp_path,
     }
 }
 
@@ -273,24 +349,22 @@ pub fn spawn_motion_detector(
             }
             health.set_enabled(true);
 
-            // Always read the main path, never sub — even when sub is enabled.
+            // Resolved once per outer iteration (i.e. once per reconnect), from freshly
+            // reloaded settings above — this is what makes a settings change take effect
+            // at the next reconnect (R1.3) without any extra polling. See
+            // `resolve_motion_source`'s own doc comment for the fail-closed gating logic
+            // and why a mid-session failure never crosses to the other source (R1.4).
             //
-            // `sub` is a derived, on-demand stream: mediamtx spawns a software
-            // x264 transcoder (runOnDemand) to produce it, and that transcoder
-            // measured at ~2.4 cores on the Pi Zero 2 W. Because motion is
-            // otherwise the only 24/7 reader of `sub`, reading it here forced
-            // that transcoder to run continuously — pushing load average past
-            // the core count, which in turn starved the hardware encoder
-            // (`VIDIOC_QBUF` failures) and tore `sub` down, the actual cause of
-            // the frequent `early eof` reconnects.
-            //
-            // `main` is the always-on hardware-encoded source, so reading it
-            // removes both the fragile second hop and the transcoder's CPU cost
-            // (it now only runs when a human is actually viewing sub). Decoding
-            // the larger main frame costs this detector's own ffmpeg more, but
-            // that is a fraction of the ~2.4 cores freed. The reader reserve in
-            // mediamtx.rs already budgets motion's slot on every path.
-            let path = &settings.rtsp_path;
+            // Historically this always read `main`, never `sub`: reading `sub` forced
+            // mediamtx's *software* x264 transcoder to run 24/7 (~2.4 cores on the Pi Zero
+            // 2 W), which starved the hardware encoder and caused the `early eof` reconnect
+            // storms this detector's backoff ladder exists to survive. That risk is specific
+            // to the software-transcoded `sub` variant — `resolve_motion_source` only ever
+            // selects the *hardware* secondary stream, and only once the settings gates and
+            // the mediamtx version check both confirm it's actually that variant.
+            let source = resolve_motion_source(&settings, &crate::mediamtx::default_version_check_path());
+            health.set_active_source(source);
+            let path = motion_source_path(&settings, source);
             let url = format!("rtsp://127.0.0.1:8554/{}", path.trim_start_matches('/'));
 
             session_id += 1;
@@ -742,5 +816,119 @@ mod tests {
         assert_eq!(reconnect_delay(2), Duration::from_millis(500));
         // Saturates rather than growing without bound.
         assert_eq!(reconnect_delay(99), *RECONNECT_BACKOFF.last().unwrap());
+    }
+
+    #[test]
+    fn active_source_defaults_unknown_and_reflects_the_last_set_value() {
+        let health = MotionHealth::default();
+        assert_eq!(health.snapshot().active_source, "unknown");
+
+        health.set_active_source(MotionSource::Secondary);
+        assert_eq!(health.snapshot().active_source, "secondary");
+
+        health.set_active_source(MotionSource::Main);
+        assert_eq!(health.snapshot().active_source, "main");
+    }
+
+    fn write_version_check(dir: &std::path::Path, supports_secondary_fix: bool) -> std::path::PathBuf {
+        let path = dir.join("version-check.json");
+        let result = VersionCheckResult {
+            supports_secondary_fix,
+            checked_version: Some("v1.20.1".to_string()),
+            checked_at: "unix:0".to_string(),
+        };
+        std::fs::write(&path, serde_json::to_string(&result).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn resolve_motion_source_requires_all_four_gates() {
+        // Property 1 / R1.1, R1.2, R1.5: every one of 2^3 settings-gate combinations,
+        // crossed with all three version-check outcomes (supported / unsupported /
+        // missing file), must resolve to `Secondary` in exactly one case and to `Main`
+        // (never unresolved) in every other case.
+        let dir = tempfile::tempdir().unwrap();
+        let supported_path = write_version_check(dir.path(), true);
+        let unsupported_dir = dir.path().join("unsupported");
+        std::fs::create_dir_all(&unsupported_dir).unwrap();
+        let unsupported_path = write_version_check(&unsupported_dir, false);
+        let missing_path = dir.path().join("does-not-exist.json");
+
+        for toggle in [false, true] {
+            for sub_enabled in [false, true] {
+                for overlay_enabled in [false, true] {
+                    let settings = Settings {
+                        motion_use_secondary_stream: toggle,
+                        sub_stream_enabled: sub_enabled,
+                        text_overlay_enabled: overlay_enabled,
+                        ..Settings::default()
+                    };
+                    let gates_open = toggle && sub_enabled && !overlay_enabled;
+
+                    for (label, version_path, version_ok) in [
+                        ("supported", &supported_path, true),
+                        ("unsupported", &unsupported_path, false),
+                        ("missing", &missing_path, false),
+                    ] {
+                        let resolved = resolve_motion_source(&settings, version_path);
+                        let expected = if gates_open && version_ok {
+                            MotionSource::Secondary
+                        } else {
+                            MotionSource::Main
+                        };
+                        assert_eq!(
+                            resolved, expected,
+                            "toggle={toggle} sub={sub_enabled} overlay={overlay_enabled} version={label}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_motion_source_is_deterministic_for_unchanged_inputs() {
+        // Property 2: a mid-session failure re-enters the same outer iteration and must
+        // resolve to the same source again when nothing about settings or the version
+        // cache changed — expressed here as plain determinism, since the real reconnect
+        // loop isn't driven directly by this unit test.
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_version_check(dir.path(), true);
+        let settings = Settings {
+            motion_use_secondary_stream: true,
+            sub_stream_enabled: true,
+            text_overlay_enabled: false,
+            ..Settings::default()
+        };
+        let first = resolve_motion_source(&settings, &path);
+        let second = resolve_motion_source(&settings, &path);
+        assert_eq!(first, second);
+        assert_eq!(first, MotionSource::Secondary);
+    }
+
+    #[test]
+    fn mediamtx_supports_secondary_fix_fails_closed_on_missing_or_malformed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!mediamtx_supports_secondary_fix(
+            &dir.path().join("missing.json")
+        ));
+
+        let malformed = dir.path().join("malformed.json");
+        std::fs::write(&malformed, "not json").unwrap();
+        assert!(!mediamtx_supports_secondary_fix(&malformed));
+    }
+
+    #[test]
+    fn motion_source_path_maps_main_and_secondary() {
+        let settings = Settings {
+            rtsp_path: "main".to_string(),
+            sub_rtsp_path: "sub".to_string(),
+            ..Settings::default()
+        };
+        assert_eq!(motion_source_path(&settings, MotionSource::Main), "main");
+        assert_eq!(
+            motion_source_path(&settings, MotionSource::Secondary),
+            "sub"
+        );
     }
 }

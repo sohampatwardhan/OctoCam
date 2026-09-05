@@ -202,6 +202,7 @@ export interface Settings {
   contrast: number
   noir_mode: boolean
   motion_enabled: boolean
+  motion_use_secondary_stream: boolean
   motion_sensitivity: number
   // A u64 bitmask server-side. public_settings() (settings.rs) emits it as a
   // decimal STRING (not a JSON number) because 64-bit values routinely

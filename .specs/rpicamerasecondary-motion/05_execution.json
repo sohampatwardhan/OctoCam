@@ -1,0 +1,275 @@
+{
+  "gantt": {
+    "axisFormat": "%m-%d %H:%M",
+    "dateFormat": "YYYY-MM-DDTHH:mm:ss",
+    "diagram": "timeline",
+    "sections": [
+      {
+        "bars": [
+          {
+            "end": "2026-09-05T17:08:57",
+            "id": "run_20260905T161220Z",
+            "label": "run-20260905T161220Z (complete, 3397s)",
+            "start": "2026-09-05T16:12:20",
+            "tags": [
+              "done"
+            ]
+          }
+        ],
+        "name": "Execution Runs"
+      },
+      {
+        "bars": [
+          {
+            "end": "2026-09-05T16:22:38",
+            "id": "b_1_1_attempt1",
+            "label": "1.1 attempt 1 (verified, 171s)",
+            "start": "2026-09-05T16:19:47",
+            "tags": [
+              "done"
+            ]
+          },
+          {
+            "end": "2026-09-05T16:28:36",
+            "id": "b_1_2_attempt1",
+            "label": "1.2 attempt 1 (verified, 79s)",
+            "start": "2026-09-05T16:27:17",
+            "tags": [
+              "done"
+            ]
+          },
+          {
+            "end": "2026-09-05T16:33:04",
+            "id": "b_1_3_attempt1",
+            "label": "1.3 attempt 1 (verified, 254s)",
+            "start": "2026-09-05T16:28:50",
+            "tags": [
+              "done"
+            ]
+          },
+          {
+            "end": "2026-09-05T16:38:07",
+            "id": "b_1_4_attempt1",
+            "label": "1.4 attempt 1 (verified, 276s)",
+            "start": "2026-09-05T16:33:31",
+            "tags": [
+              "done"
+            ]
+          }
+        ],
+        "name": "Stage 1"
+      },
+      {
+        "bars": [
+          {
+            "end": "2026-09-05T16:40:29",
+            "id": "b_2_1_attempt1",
+            "label": "2.1 attempt 1 (verified, 110s)",
+            "start": "2026-09-05T16:38:39",
+            "tags": [
+              "done"
+            ]
+          },
+          {
+            "end": "2026-09-05T16:42:49",
+            "id": "b_2_2_attempt1",
+            "label": "2.2 attempt 1 (verified, 115s)",
+            "start": "2026-09-05T16:40:54",
+            "tags": [
+              "done"
+            ]
+          },
+          {
+            "end": "2026-09-05T16:44:30",
+            "id": "b_2_3_attempt1",
+            "label": "2.3 attempt 1 (verified, 88s)",
+            "start": "2026-09-05T16:43:02",
+            "tags": [
+              "done"
+            ]
+          }
+        ],
+        "name": "Stage 2"
+      },
+      {
+        "bars": [
+          {
+            "end": "2026-09-05T16:52:20",
+            "id": "b_3_1_attempt1",
+            "label": "3.1 attempt 1 (verified, 453s)",
+            "start": "2026-09-05T16:44:47",
+            "tags": [
+              "done"
+            ]
+          },
+          {
+            "end": "2026-09-05T16:54:25",
+            "id": "b_3_2_attempt1",
+            "label": "3.2 attempt 1 (verified, 63s)",
+            "start": "2026-09-05T16:53:22",
+            "tags": [
+              "done"
+            ]
+          }
+        ],
+        "name": "Stage 3"
+      },
+      {
+        "bars": [
+          {
+            "end": "2026-09-05T16:55:15",
+            "id": "b_4_1_attempt1",
+            "label": "4.1 attempt 1 (verified, 35s)",
+            "start": "2026-09-05T16:54:40",
+            "tags": [
+              "done"
+            ]
+          }
+        ],
+        "name": "Stage 4"
+      },
+      {
+        "bars": [
+          {
+            "end": "2026-09-05T17:00:18",
+            "id": "b_5_1_attempt1",
+            "label": "5.1 attempt 1 (verified, 265s)",
+            "start": "2026-09-05T16:55:53",
+            "tags": [
+              "done"
+            ]
+          }
+        ],
+        "name": "Stage 5"
+      }
+    ],
+    "target": "gantt"
+  },
+  "generated_from": {
+    "file": "05_execution.md",
+    "sha256": "a4a254433798a67b98504a4822120c3581deec6b9a00d2be6aafe7dcff8192ab"
+  },
+  "runs": [
+    {
+      "elapsed_seconds": 3397,
+      "outcome": "complete",
+      "run_id": "run-20260905T161220Z",
+      "started_utc": "2026-09-05T16:12:20Z",
+      "stopped_utc": "2026-09-05T17:08:57Z"
+    }
+  ],
+  "schema_version": 1,
+  "task_attempts": [
+    {
+      "attempt": 1,
+      "elapsed_seconds": 171,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 1",
+      "started_utc": "2026-09-05T16:19:47Z",
+      "stopped_utc": "2026-09-05T16:22:38Z",
+      "task": "1.1"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 79,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 1",
+      "started_utc": "2026-09-05T16:27:17Z",
+      "stopped_utc": "2026-09-05T16:28:36Z",
+      "task": "1.2"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 254,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 1",
+      "started_utc": "2026-09-05T16:28:50Z",
+      "stopped_utc": "2026-09-05T16:33:04Z",
+      "task": "1.3"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 276,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 1",
+      "started_utc": "2026-09-05T16:33:31Z",
+      "stopped_utc": "2026-09-05T16:38:07Z",
+      "task": "1.4"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 110,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 2",
+      "started_utc": "2026-09-05T16:38:39Z",
+      "stopped_utc": "2026-09-05T16:40:29Z",
+      "task": "2.1"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 115,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 2",
+      "started_utc": "2026-09-05T16:40:54Z",
+      "stopped_utc": "2026-09-05T16:42:49Z",
+      "task": "2.2"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 88,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 2",
+      "started_utc": "2026-09-05T16:43:02Z",
+      "stopped_utc": "2026-09-05T16:44:30Z",
+      "task": "2.3"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 453,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 3",
+      "started_utc": "2026-09-05T16:44:47Z",
+      "stopped_utc": "2026-09-05T16:52:20Z",
+      "task": "3.1"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 63,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 3",
+      "started_utc": "2026-09-05T16:53:22Z",
+      "stopped_utc": "2026-09-05T16:54:25Z",
+      "task": "3.2"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 35,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 4",
+      "started_utc": "2026-09-05T16:54:40Z",
+      "stopped_utc": "2026-09-05T16:55:15Z",
+      "task": "4.1"
+    },
+    {
+      "attempt": 1,
+      "elapsed_seconds": 265,
+      "outcome": "verified",
+      "run_id": "run-20260905T161220Z",
+      "stage_wave": "Stage 5",
+      "started_utc": "2026-09-05T16:55:53Z",
+      "stopped_utc": "2026-09-05T17:00:18Z",
+      "task": "5.1"
+    }
+  ],
+  "unresolved": []
+}

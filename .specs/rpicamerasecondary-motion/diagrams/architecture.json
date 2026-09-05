@@ -1,0 +1,34 @@
+{
+  "diagram": "graph",
+  "target": "block",
+  "columns": 3,
+  "groups": [
+    { "id": "settings_apply", "label": "On settings save/restore (apply_settings_side_effects)" },
+    { "id": "motion", "label": "Motion detector (octocam-web, same process)" },
+    { "id": "runtime", "label": "mediamtx (octocam-rtsp)" }
+  ],
+  "nodes": [
+    { "id": "settings", "label": "Settings (motion_use_secondary_stream, sub_stream_enabled, text_overlay_enabled)", "kind": "store", "group": "settings_apply" },
+    { "id": "version_checker", "label": "mediamtx version checker (new): runs `mediamtx --version` via proc::run", "kind": "process", "group": "settings_apply" },
+    { "id": "version_check_file", "label": "/var/lib/octocam/mediamtx-version-check.json (new)", "kind": "store", "group": "settings_apply" },
+    { "id": "config_generator", "label": "Mediamtx_Config_Generator: secondary path now emits rpiCameraCodec auto + rpiCameraMJPEGQuality", "kind": "process", "group": "settings_apply" },
+    { "id": "source_resolver", "label": "resolve_motion_source() (new)", "kind": "decision", "group": "motion" },
+    { "id": "motion_detector", "label": "spawn_motion_detector (existing reconnect/backoff, blind-time metric)", "kind": "process", "group": "motion" },
+    { "id": "mediamtx_process", "label": "mediamtx process", "kind": "process", "group": "runtime" },
+    { "id": "main_path", "label": "main path (hardwareH264, unchanged)", "kind": "process", "group": "runtime" },
+    { "id": "secondary_path", "label": "sub path (rpiCameraSecondary, now MJPEG)", "kind": "process", "group": "runtime" }
+  ],
+  "edges": [
+    { "from": "settings", "to": "version_checker", "label": "triggers check" },
+    { "from": "version_checker", "to": "version_check_file", "label": "writes result" },
+    { "from": "settings", "to": "config_generator" },
+    { "from": "config_generator", "to": "mediamtx_process", "label": "writes /etc/mediamtx.yml" },
+    { "from": "mediamtx_process", "to": "main_path" },
+    { "from": "mediamtx_process", "to": "secondary_path" },
+    { "from": "settings", "to": "source_resolver", "label": "3 settings gates" },
+    { "from": "version_check_file", "to": "source_resolver", "label": "read each reconnect" },
+    { "from": "source_resolver", "to": "motion_detector", "label": "resolved source (main | secondary)" },
+    { "from": "motion_detector", "to": "main_path", "label": "fallback" },
+    { "from": "motion_detector", "to": "secondary_path", "label": "primary (new)" }
+  ]
+}

@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "generated_from": {
+    "file": "02_requirements.md",
+    "sha256": "cc7ffe24c318dde16ec3ce9632fa89fcac4def225e0f65a9641e902d40c2efcd"
+  },
+  "requirements": [
+    {
+      "id": "1",
+      "user_story": {
+        "role": "OctoCam operator",
+        "capability": "motion detection to use the fast hardware secondary stream whenever it's safely available",
+        "benefit": "the camera recovers visibility faster after a reconnect without ever losing motion coverage"
+      },
+      "criteria": [
+        {
+          "id": "1.1",
+          "kind": "event",
+          "trigger": "motion detection starts a new capture session AND `motion_use_secondary_stream` is enabled AND `sub_stream_enabled` is enabled AND `text_overlay_enabled` is disabled",
+          "actor": "Motion_Detector",
+          "behavior": "connect to the secondary (`sub`) RTSP path as its frame source"
+        },
+        {
+          "id": "1.2",
+          "kind": "unwanted",
+          "trigger": "`motion_use_secondary_stream` is disabled, OR `sub_stream_enabled` is disabled, OR `text_overlay_enabled` is enabled",
+          "actor": "Motion_Detector",
+          "behavior": "connect to the `main` RTSP path as its frame source"
+        },
+        {
+          "id": "1.3",
+          "kind": "event",
+          "trigger": "a settings change updates `motion_use_secondary_stream`, `sub_stream_enabled`, or `text_overlay_enabled` while motion detection is running",
+          "actor": "Motion_Detector",
+          "behavior": "apply the resulting source-selection outcome (R1.1 or R1.2) starting from its next reconnect"
+        },
+        {
+          "id": "1.4",
+          "kind": "unwanted",
+          "trigger": "the frame source selected for the current session disconnects or fails",
+          "actor": "Motion_Detector",
+          "behavior": "apply its existing reconnect/backoff behavior against that same source, and SHALL NOT switch to the other source mid-session"
+        },
+        {
+          "id": "1.5",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Motion_Detector",
+          "behavior": "always resolve to exactly one of `main` or the secondary (`sub`) path as its frame source; no code path SHALL leave the source unresolved"
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "user_story": {
+        "role": "OctoCam operator",
+        "capability": "the generated mediamtx configuration to request an MJPEG secondary stream (not hardware H264)",
+        "benefit": "the secondary stream actually delivers the fast-reconnect, low-decode-cost behavior motion detection depends on"
+      },
+      "criteria": [
+        {
+          "id": "2.1",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Mediamtx_Config_Generator",
+          "behavior": "render any path configured with `rpiCameraSecondary: true` using the codec configuration that yields an MJPEG stream, never the hardware H264 codec"
+        },
+        {
+          "id": "2.2",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Mediamtx_Config_Generator",
+          "behavior": "include an explicit MJPEG quality setting on any path configured with `rpiCameraSecondary: true`"
+        },
+        {
+          "id": "2.3",
+          "kind": "unwanted",
+          "trigger": "a path is the primary (non-secondary) `rpiCamera` path",
+          "actor": "Mediamtx_Config_Generator",
+          "behavior": "continue to render it with the hardware H264 codec, unchanged from today's behavior"
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "user_story": {
+        "role": "OctoCam operator",
+        "capability": "the camera service to start reliably every time the secondary stream is configured",
+        "benefit": "enabling this feature can never turn into a boot-loop on my device"
+      },
+      "criteria": [
+        {
+          "id": "3.1",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Octocam_RTSP_Service",
+          "behavior": "start successfully, with no startup crash, when its configuration includes a secondary `rpiCamera` path, across at least 10 consecutive restarts"
+        },
+        {
+          "id": "3.2",
+          "kind": "unwanted",
+          "trigger": "the running mediamtx instance does not reliably satisfy R3.1 with the corrected secondary-stream configuration in place",
+          "actor": "Octocam_Web",
+          "behavior": "prevent `motion_use_secondary_stream` from taking effect and SHALL keep the Motion_Detector on the `main` source"
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "user_story": {
+        "role": "OctoCam operator",
+        "capability": "the Matter/HomeKit live view and the web UI's live view to keep working exactly as they do today",
+        "benefit": "adding motion detection as a new reader of the secondary stream doesn't cost me an existing feature"
+      },
+      "criteria": [
+        {
+          "id": "4.1",
+          "kind": "state",
+          "trigger": "the Motion_Detector is reading the secondary stream",
+          "actor": "secondary path",
+          "behavior": "continue to serve the Matter/HomeKit bridge's live-view stream and JPEG snapshot capture without interruption attributable to the additional reader"
+        },
+        {
+          "id": "4.2",
+          "kind": "state",
+          "trigger": "the Motion_Detector is reading the secondary stream",
+          "actor": "secondary path",
+          "behavior": "continue to serve the web UI's live-view stream without interruption attributable to the additional reader"
+        }
+      ]
+    },
+    {
+      "id": "5",
+      "user_story": {
+        "role": "OctoCam operator",
+        "capability": "to see which video source motion detection is currently using and trust its existing health metrics",
+        "benefit": "I can troubleshoot latency or reliability issues without guessing"
+      },
+      "criteria": [
+        {
+          "id": "5.1",
+          "kind": "event",
+          "trigger": "the Motion_Detector connects to a frame source",
+          "actor": "Motion_Detector",
+          "behavior": "include which source (`main` or secondary) is currently active in its existing status/health output"
+        },
+        {
+          "id": "5.2",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Motion_Detector's existing blind-time and availability measurements",
+          "behavior": "remain accurate regardless of whether `main` or the secondary path is the active source"
+        }
+      ]
+    },
+    {
+      "id": "6",
+      "user_story": {
+        "role": "OctoCam operator",
+        "capability": "an explicit setting to control whether motion detection may use the secondary stream",
+        "benefit": "I can roll back to the known-good `main`-only behavior without a code change if something looks wrong"
+      },
+      "criteria": [
+        {
+          "id": "6.1",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Settings_UI",
+          "behavior": "expose a user-configurable control for `motion_use_secondary_stream` in the motion-detection settings area"
+        },
+        {
+          "id": "6.2",
+          "kind": "unconditional",
+          "trigger": "",
+          "actor": "Octocam_Web",
+          "behavior": "default `motion_use_secondary_stream` to disabled (false) for both new and existing installations, so behavior does not change until an operator explicitly opts in"
+        }
+      ]
+    }
+  ]
+}

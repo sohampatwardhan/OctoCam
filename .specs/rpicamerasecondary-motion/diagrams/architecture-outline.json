@@ -1,0 +1,32 @@
+{
+  "diagram": "graph",
+  "target": "block",
+  "columns": 3,
+  "groups": [
+    { "id": "hw", "label": "Camera hardware" },
+    { "id": "paths", "label": "mediamtx paths (one physical camera, ONE secondary slot)" },
+    { "id": "consumers", "label": "Consumers" }
+  ],
+  "nodes": [
+    { "id": "camera", "label": "Pi Camera (rpiCameraCamID 0)", "kind": "store", "group": "hw" },
+    { "id": "mediamtx", "label": "mediamtx (owns the single libcamera consumer)", "kind": "process", "group": "hw" },
+    { "id": "main_path", "label": "main: source rpiCamera, hardwareH264 (primary)", "kind": "process", "group": "paths" },
+    { "id": "secondary_path", "label": "sub: source rpiCamera, rpiCameraSecondary true (MJPEG when text_overlay_enabled is false)", "kind": "process", "group": "paths" },
+    { "id": "motion", "label": "motion detector (new: secondary; fallback: main)", "kind": "process", "group": "consumers" },
+    { "id": "matter", "label": "Matter/HomeKit bridge (live view + snapshot)", "kind": "process", "group": "consumers" },
+    { "id": "frontend", "label": "Web UI live view", "kind": "process", "group": "consumers" },
+    { "id": "hksv", "label": "HKSV recording", "kind": "process", "group": "consumers" }
+  ],
+  "edges": [
+    { "from": "camera", "to": "mediamtx", "label": "single consumer" },
+    { "from": "mediamtx", "to": "main_path" },
+    { "from": "mediamtx", "to": "secondary_path" },
+    { "from": "main_path", "to": "hksv" },
+    { "from": "main_path", "to": "frontend" },
+    { "from": "main_path", "to": "matter", "label": "fallback: sub disabled" },
+    { "from": "main_path", "to": "motion", "label": "fallback: sub disabled or overlay on" },
+    { "from": "secondary_path", "to": "matter", "label": "default: live view + snapshot" },
+    { "from": "secondary_path", "to": "frontend", "label": "when sub enabled" },
+    { "from": "secondary_path", "to": "motion", "label": "primary source (new), when sub enabled and overlay off" }
+  ]
+}

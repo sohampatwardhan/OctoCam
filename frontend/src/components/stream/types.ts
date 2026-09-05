@@ -38,6 +38,7 @@ export type StreamFormPatch = Partial<StreamFormState>
 // own form state rather than riding along in the stream patch.
 export interface MotionFormState {
   motionEnabled: boolean
+  motionUseSecondaryStream: boolean
   motionSensitivity: string
   // A u64 bitmask. Kept as BigInt end-to-end in the UI — Number can't
   // represent all 64 bits without precision loss (see api.ts's

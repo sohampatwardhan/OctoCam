@@ -1,0 +1,41 @@
+{
+  "change_control": [
+    "2026-09-05: Feature initiated after a scheduled watcher routine confirmed mediamtx v1.20.1",
+    "2026-09-05: Discovery approved. Proceeding to requirements.",
+    "2026-09-05: Requirements approved (`motion_use_secondary_stream` defaults to disabled,",
+    "2026-09-05: Design approved. Proceeding to tasks.",
+    "2026-09-05: Tasks approved (10 tasks, 5 stages; user directive: auto-approve all spec gates",
+    "2026-09-05: Execution complete. Mid-execution repair added task 2.1 (mediamtx binary upgrade"
+  ],
+  "gates": {
+    "audit": {
+      "evidence": "",
+      "status": "not_run"
+    },
+    "design": {
+      "evidence": "2026-09-05",
+      "status": "approved"
+    },
+    "discovery": {
+      "evidence": "2026-09-05",
+      "status": "approved"
+    },
+    "execution": {
+      "evidence": "All 11 tasks verified and checked; deployed to device 2026-09-05",
+      "status": "complete"
+    },
+    "requirements": {
+      "evidence": "2026-09-05",
+      "status": "approved"
+    },
+    "tasks": {
+      "evidence": "2026-09-05",
+      "status": "approved"
+    }
+  },
+  "generated_from": {
+    "file": "00_state.md",
+    "sha256": "76a831636447a30b5d21799d2ec02794ae94a236b7352a2495c5743a61b00e8e"
+  },
+  "schema_version": 1
+}

@@ -1,6 +1,11 @@
-use crate::{settings::Settings, system};
-use serde::Serialize;
-use std::{env, fs, path::PathBuf};
+use crate::{proc, settings::Settings, system};
+use serde::{Deserialize, Serialize};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ConfigureResult {
@@ -30,8 +35,111 @@ pub fn default_timezone_dropin_path() -> PathBuf {
         })
 }
 
+/// The first mediamtx release confirmed to fix the `rpiCameraSecondary` startup crash
+/// (bluenviron/mediamtx#6060, "rpiCamera source crash (nil pointer, SIGSEGV) since 1.19.2",
+/// fixed by PR #6061 / commit `8e46f37`). Below this, enabling a secondary rpiCamera stream
+/// is expected to crash mediamtx on startup — never treat it as safe.
+pub const MIN_SECONDARY_SAFE_VERSION: (u32, u32, u32) = (1, 20, 1);
+
+pub fn default_version_check_path() -> PathBuf {
+    env::var_os("OCTOCAM_MEDIAMTX_VERSION_CHECK_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/octocam/mediamtx-version-check.json"))
+}
+
+pub fn default_binary_path() -> PathBuf {
+    env::var_os("OCTOCAM_MEDIAMTX_BINARY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("mediamtx"))
+}
+
+/// Cached result of checking whether the installed mediamtx binary satisfies
+/// [`MIN_SECONDARY_SAFE_VERSION`]. Written by [`check_and_write_mediamtx_version`] on every
+/// settings apply; read by `motion::mediamtx_supports_secondary_fix` on every reconnect, so
+/// motion never has to shell out to the binary itself.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct VersionCheckResult {
+    /// Whether the checked binary is `>= MIN_SECONDARY_SAFE_VERSION`. `false` on any check
+    /// failure too (missing binary, non-zero exit, unparseable output) — always fail closed.
+    pub supports_secondary_fix: bool,
+    /// The raw `mediamtx --version` output, trimmed, when it could be parsed; `None` if the
+    /// check couldn't determine a version at all (not necessarily "version unknown but old").
+    pub checked_version: Option<String>,
+    /// When this check ran, for operator inspection only — not parsed by any code.
+    pub checked_at: String,
+}
+
+/// Parses the leading `major.minor.patch` out of a `mediamtx --version` line (e.g. `"v1.20.1"`).
+/// Tolerates a missing leading `v` and a non-digit suffix after the patch number; returns
+/// `None` for anything that doesn't yield all three components, which callers must treat as
+/// "unknown version" (fail closed), never as "version 0.0.0".
+fn parse_mediamtx_version(output: &str) -> Option<(u32, u32, u32)> {
+    let first_line = output.lines().next()?.trim();
+    let version_str = first_line.strip_prefix('v').unwrap_or(first_line);
+    let mut parts = version_str.split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    let patch_str = parts.next()?;
+    let patch_digits: String = patch_str.chars().take_while(char::is_ascii_digit).collect();
+    let patch: u32 = patch_digits.parse().ok()?;
+    Some((major, minor, patch))
+}
+
+fn now_rfc3339_ish() -> String {
+    // No chrono dependency in this crate; a plain Unix-seconds string is enough for an
+    // operator-inspectable "when was this last checked" field — not parsed by any code.
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("unix:{secs}")
+}
+
+/// Runs `<binary_path> --version`, compares it against [`MIN_SECONDARY_SAFE_VERSION`], and
+/// writes the result to `out_path` as JSON.
+///
+/// Fails closed: a missing binary, non-zero exit, or unparseable version output all resolve
+/// `supports_secondary_fix: false` rather than propagating an error — a settings save must
+/// never fail just because this compatibility check couldn't run. The `Err` case here is
+/// reserved for "couldn't even write the result file," which the caller surfaces as a normal
+/// settings-apply failure like any other.
+pub fn check_and_write_mediamtx_version(
+    binary_path: &Path,
+    out_path: &Path,
+) -> std::io::Result<VersionCheckResult> {
+    let mut command = Command::new(binary_path);
+    command.arg("--version");
+    let (supports_secondary_fix, checked_version) = match proc::run(&mut command, proc::DEFAULT_TIMEOUT)
+    {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match parse_mediamtx_version(&stdout) {
+                Some(version) => (version >= MIN_SECONDARY_SAFE_VERSION, Some(stdout.trim().to_string())),
+                None => (false, None),
+            }
+        }
+        Ok(_) | Err(_) => (false, None),
+    };
+    let result = VersionCheckResult {
+        supports_secondary_fix,
+        checked_version,
+        checked_at: now_rfc3339_ish(),
+    };
+    if let Some(parent) = out_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(out_path, serde_json::to_string_pretty(&result)?)?;
+    Ok(result)
+}
+
 pub fn configure_rtsp_service(settings: &Settings, path: &PathBuf) -> ConfigureResult {
     let mut should_restart = false;
+    // Refresh the cached mediamtx-version compatibility check on every settings apply, so
+    // motion's per-reconnect read (`motion::mediamtx_supports_secondary_fix`) always has a
+    // current answer without shelling out itself. Best-effort: a failure here (e.g. can't
+    // write the cache file) must not block the rest of settings apply — it only means the
+    // secondary-stream gate stays fail-closed until the next successful check.
+    let _ = check_and_write_mediamtx_version(&default_binary_path(), &default_version_check_path());
     let config = match write_mediamtx_config(settings, path) {
         Ok(changed) => {
             should_restart |= changed;
@@ -255,6 +363,13 @@ pub fn render_timezone_dropin(settings: &Settings) -> String {
     )
 }
 
+/// mediamtx's own documented example value for a secondary stream's JPEG quality
+/// (docs/3-publish/14-raspberry-pi-cameras.md, "Configure Secondary Stream"). Provisional,
+/// not tuned: pending on-device confirmation that it doesn't introduce compression artifacts
+/// that would degrade motion detection at the downstream 80x60 grayscale resolution (see
+/// `03_design.md`'s note on `DEFAULT_SECONDARY_MJPEG_QUALITY`).
+const DEFAULT_SECONDARY_MJPEG_QUALITY: i32 = 60;
+
 pub fn mediamtx_camera_path(
     name: &str,
     secondary: bool,
@@ -269,8 +384,21 @@ pub fn mediamtx_camera_path(
     max_readers: i32,
     tuning_file: Option<&str>,
 ) -> String {
+    // A secondary rpiCamera stream must not request the hardware H264 codec: mediamtx's own
+    // docs say a secondary stream defaults to (and is meant to use) M-JPEG, and the primary's
+    // hardware encoder is a single-instance resource already claimed by `main`. `auto` lets
+    // mediamtx pick MJPEG for the secondary case while leaving the primary path's codec
+    // untouched.
+    let codec_line = if secondary {
+        format!(
+            "rpiCameraCodec: auto\n    rpiCameraMJPEGQuality: {}",
+            DEFAULT_SECONDARY_MJPEG_QUALITY
+        )
+    } else {
+        "rpiCameraCodec: hardwareH264".to_string()
+    };
     let mut config = format!(
-        "  {name}:\n    source: rpiCamera\n    rpiCameraSecondary: {secondary}\n    rpiCameraCodec: hardwareH264\n    rpiCameraH264Profile: baseline\n    rpiCameraIDRPeriod: {idr_period}\n    rpiCameraTextOverlayEnable: {text_overlay_enabled}\n    rpiCameraTextOverlay: {text_overlay}\n    rpiCameraWidth: {width}\n    rpiCameraHeight: {height}\n    rpiCameraFPS: {fps}\n    rpiCameraBitrate: {bitrate}\n    maxReaders: {max_readers}",
+        "  {name}:\n    source: rpiCamera\n    rpiCameraSecondary: {secondary}\n    {codec_line}\n    rpiCameraH264Profile: baseline\n    rpiCameraIDRPeriod: {idr_period}\n    rpiCameraTextOverlayEnable: {text_overlay_enabled}\n    rpiCameraTextOverlay: {text_overlay}\n    rpiCameraWidth: {width}\n    rpiCameraHeight: {height}\n    rpiCameraFPS: {fps}\n    rpiCameraBitrate: {bitrate}\n    maxReaders: {max_readers}",
         name = yaml_quote(name),
         secondary = if secondary { "true" } else { "false" },
         idr_period = fps.max(1),
@@ -377,6 +505,36 @@ mod tests {
         assert!(content.contains("rpiCameraTextOverlayEnable: false"));
         assert!(content.contains("rpiCameraH264Profile: baseline"));
         assert!(content.contains("maxReaders: 1"));
+        // Primary (non-secondary) paths must keep the hardware H264 codec, unaffected by the
+        // secondary-path MJPEG fix below (design Property 3 / R2.3).
+        assert!(content.contains("rpiCameraCodec: hardwareH264"));
+        assert!(!content.contains("rpiCameraMJPEGQuality"));
+    }
+
+    #[test]
+    fn secondary_path_uses_mjpeg_codec_not_hardware_h264() {
+        // R2.1/R2.2/Property 4: a secondary rpiCamera path must request the MJPEG-yielding
+        // `auto` codec plus an explicit quality, never the hardware H264 codec mediamtx
+        // reserves for the primary stream.
+        let settings = Settings::default();
+        let content = mediamtx_camera_path(
+            &settings.sub_rtsp_path,
+            true,
+            settings.text_overlay_enabled,
+            &settings.camera_label,
+            &settings.text_overlay_clock_format,
+            &settings.text_overlay_date_format,
+            640,
+            480,
+            10,
+            600,
+            1,
+            None,
+        );
+        assert!(content.contains("rpiCameraSecondary: true"));
+        assert!(content.contains("rpiCameraCodec: auto"));
+        assert!(content.contains("rpiCameraMJPEGQuality: 60"));
+        assert!(!content.contains("rpiCameraCodec: hardwareH264"));
     }
 
     #[test]
@@ -483,6 +641,120 @@ mod tests {
             render_timezone_dropin(&settings),
             "[Service]\nEnvironment=TZ=America/New_York\n"
         );
+    }
+
+    #[test]
+    fn parses_typical_and_prefixed_versions() {
+        assert_eq!(parse_mediamtx_version("v1.20.1"), Some((1, 20, 1)));
+        assert_eq!(parse_mediamtx_version("1.20.1"), Some((1, 20, 1)));
+        assert_eq!(parse_mediamtx_version("v1.19.2\n"), Some((1, 19, 2)));
+        // A build-suffix on the patch number is tolerated (leading digits only).
+        assert_eq!(parse_mediamtx_version("v1.20.1-dirty"), Some((1, 20, 1)));
+    }
+
+    #[test]
+    fn parse_mediamtx_version_fails_closed_on_malformed_input() {
+        assert_eq!(parse_mediamtx_version(""), None);
+        assert_eq!(parse_mediamtx_version("not a version"), None);
+        assert_eq!(parse_mediamtx_version("v1.20"), None);
+    }
+
+    /// Writes a tiny shell script that ignores its arguments and prints `output`,
+    /// exiting with `exit_code`, so tests can stand in for the real `mediamtx` binary
+    /// without depending on it being installed.
+    #[cfg(unix)]
+    fn fake_binary(dir: &std::path::Path, name: &str, output: &str, exit_code: i32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' '{output}'\nexit {exit_code}\n"))
+            .unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_and_write_mediamtx_version_accepts_a_supported_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_binary(dir.path(), "mediamtx-new", "v1.20.1", 0);
+        let out_path = dir.path().join("version-check.json");
+        let result = check_and_write_mediamtx_version(&binary, &out_path).unwrap();
+        assert!(result.supports_secondary_fix);
+        assert_eq!(result.checked_version.as_deref(), Some("v1.20.1"));
+        let persisted: VersionCheckResult =
+            serde_json::from_str(&fs::read_to_string(&out_path).unwrap()).unwrap();
+        assert!(persisted.supports_secondary_fix);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_and_write_mediamtx_version_rejects_an_old_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_binary(dir.path(), "mediamtx-old", "v1.19.2", 0);
+        let out_path = dir.path().join("version-check.json");
+        let result = check_and_write_mediamtx_version(&binary, &out_path).unwrap();
+        assert!(!result.supports_secondary_fix);
+        assert_eq!(result.checked_version.as_deref(), Some("v1.19.2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_and_write_mediamtx_version_fails_closed_on_malformed_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_binary(dir.path(), "mediamtx-weird", "not a version at all", 0);
+        let out_path = dir.path().join("version-check.json");
+        let result = check_and_write_mediamtx_version(&binary, &out_path).unwrap();
+        assert!(!result.supports_secondary_fix);
+        assert_eq!(result.checked_version, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_and_write_mediamtx_version_fails_closed_on_nonzero_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = fake_binary(dir.path(), "mediamtx-broken", "v1.20.1", 1);
+        let out_path = dir.path().join("version-check.json");
+        let result = check_and_write_mediamtx_version(&binary, &out_path).unwrap();
+        assert!(!result.supports_secondary_fix);
+    }
+
+    #[test]
+    fn check_and_write_mediamtx_version_fails_closed_on_missing_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("definitely-not-a-real-binary-xyz");
+        let out_path = dir.path().join("version-check.json");
+        let result = check_and_write_mediamtx_version(&missing, &out_path).unwrap();
+        assert!(!result.supports_secondary_fix);
+        assert_eq!(result.checked_version, None);
+    }
+
+    #[test]
+    fn configure_rtsp_service_refreshes_the_version_check_cache() {
+        // R3.2 / Property 5's write side: every settings apply must refresh the cached
+        // compatibility check, independent of whether the rest of the apply succeeds
+        // (this test's environment has no real `mediamtx` binary or systemd unit).
+        let dir = tempfile::tempdir().unwrap();
+        let version_check_path = dir.path().join("mediamtx-version-check.json");
+        // SAFETY: test-only, scoped to a uniquely-named path this test alone reads.
+        unsafe {
+            std::env::set_var("OCTOCAM_MEDIAMTX_VERSION_CHECK_PATH", &version_check_path);
+            std::env::set_var("OCTOCAM_MEDIAMTX_BINARY_PATH", "definitely-not-a-real-binary-xyz");
+        }
+        let config_path = dir.path().join("mediamtx.yml");
+        let _ = configure_rtsp_service(&Settings::default(), &config_path);
+        assert!(
+            version_check_path.exists(),
+            "configure_rtsp_service must refresh the version-check cache even when other side effects fail"
+        );
+        let persisted: VersionCheckResult =
+            serde_json::from_str(&fs::read_to_string(&version_check_path).unwrap()).unwrap();
+        assert!(!persisted.supports_secondary_fix);
+        unsafe {
+            std::env::remove_var("OCTOCAM_MEDIAMTX_VERSION_CHECK_PATH");
+            std::env::remove_var("OCTOCAM_MEDIAMTX_BINARY_PATH");
+        }
     }
 
     #[test]
