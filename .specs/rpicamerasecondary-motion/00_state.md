@@ -32,3 +32,6 @@
   `apply_settings_side_effects`) before the feature was deployed to the device with
   `motion_use_secondary_stream` defaulted off (R6.2) — no behavior change until an operator
   opts in. See [05_execution.md](05_execution.md) for full evidence.
+- 2026-09-05: Pushed `feat/rpicamerasecondary-motion` and opened
+  https://github.com/sohampatwardhan/OctoCam/pull/6 against `main`, per user's chosen
+  integration path.
