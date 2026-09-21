@@ -39,6 +39,21 @@ pub fn capture_jpeg_via_rtsp(settings: &Settings) -> Result<Vec<u8>, String> {
         Command::new("ffmpeg").args([
             "-hide_banner",
             "-nostdin",
+            // The source is a local RTSP stream whose SDP already describes it, so
+            // ffmpeg's default multi-second probe buys nothing but latency — the
+            // same reasoning already applied to the scaled RTSP path in
+            // mediamtx.rs's mediamtx_scaled_path(). Without this, capturing from
+            // `main` (full-resolution H264, needing a real decode) could run past
+            // CAPTURE_TIMEOUT under concurrent load from motion detection's own
+            // decode of the same stream.
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
             "-rtsp_transport",
             "tcp",
             "-i",
