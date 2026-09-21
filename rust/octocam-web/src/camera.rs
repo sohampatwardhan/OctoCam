@@ -8,22 +8,52 @@ pub fn snapshot_is_fresh(captured: Instant, now: Instant) -> bool {
     now.duration_since(captured) < SNAPSHOT_TTL
 }
 
-/// Grab one JPEG frame through mediamtx. While mediamtx runs, its rpiCamera
-/// source owns the camera continuously and libcamera allows a single
-/// consumer — `rpicam-still` CANNOT acquire the device then, so direct capture
-/// would always fail. Pull a frame off the sub stream instead (same pattern the
-/// HomeKit daemon already uses for its snapshots).
-pub fn capture_jpeg_via_rtsp(settings: &Settings) -> Result<Vec<u8>, String> {
-    let path = if settings.sub_stream_enabled {
+/// Picks which RTSP path a one-shot snapshot capture should pull from.
+///
+/// `sub` is only free to grab from when it's the always-running *hardware*
+/// secondary stream — when `text_overlay_enabled` is on, `sub` is instead an
+/// on-demand *software* transcoder (`mediamtx::mediamtx_scaled_path`):
+/// capturing from it would cold-start that transcoder just to grab one JPEG,
+/// competing with motion detection's own read of `main` for CPU and starving
+/// it — the same regression class `motion.rs`'s `resolve_motion_source`
+/// already guards against for persistent reads. Mirrors that exact condition
+/// rather than falling into the trap it was built to avoid.
+fn snapshot_source_path(settings: &Settings) -> &str {
+    if settings.sub_stream_enabled && !settings.text_overlay_enabled {
         &settings.sub_rtsp_path
     } else {
         &settings.rtsp_path
-    };
+    }
+}
+
+/// Grab one JPEG frame through mediamtx. While mediamtx runs, its rpiCamera
+/// source owns the camera continuously and libcamera allows a single
+/// consumer — `rpicam-still` CANNOT acquire the device then, so direct capture
+/// would always fail. Pull a frame off the sub stream instead (same pattern
+/// the HomeKit daemon already uses for its snapshots) whenever
+/// [`snapshot_source_path`] says it's safe to.
+pub fn capture_jpeg_via_rtsp(settings: &Settings) -> Result<Vec<u8>, String> {
+    let path = snapshot_source_path(settings);
     let url = format!("rtsp://127.0.0.1:8554/{}", path.trim_start_matches('/'));
     let output = crate::proc::run(
         Command::new("ffmpeg").args([
             "-hide_banner",
             "-nostdin",
+            // The source is a local RTSP stream whose SDP already describes it, so
+            // ffmpeg's default multi-second probe buys nothing but latency — the
+            // same reasoning already applied to the scaled RTSP path in
+            // mediamtx.rs's mediamtx_scaled_path(). Without this, capturing from
+            // `main` (full-resolution H264, needing a real decode) could run past
+            // CAPTURE_TIMEOUT under concurrent load from motion detection's own
+            // decode of the same stream.
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
             "-rtsp_transport",
             "tcp",
             "-i",
@@ -162,5 +192,42 @@ mod tests {
         let now = Instant::now();
         assert!(snapshot_is_fresh(now, now + Duration::from_millis(1900)));
         assert!(!snapshot_is_fresh(now, now + Duration::from_millis(2100)));
+    }
+
+    #[test]
+    fn snapshot_uses_sub_only_when_it_is_the_hardware_secondary_stream() {
+        // sub enabled + no overlay => sub is the free-running hardware secondary
+        // stream (mediamtx.rs's rpiCameraSecondary path) — cheap to grab from.
+        let hardware_sub = Settings {
+            sub_stream_enabled: true,
+            text_overlay_enabled: false,
+            ..Settings::default()
+        };
+        assert_eq!(snapshot_source_path(&hardware_sub), "sub");
+
+        // sub enabled + overlay on => sub is the on-demand SOFTWARE transcoder.
+        // Capturing from it would cold-start that transcoder just for one JPEG,
+        // starving motion detection's read of `main` — must fall back to `main`.
+        let software_sub = Settings {
+            sub_stream_enabled: true,
+            text_overlay_enabled: true,
+            ..Settings::default()
+        };
+        assert_eq!(snapshot_source_path(&software_sub), "main");
+
+        // sub disabled entirely => always main, regardless of overlay.
+        let sub_disabled = Settings {
+            sub_stream_enabled: false,
+            text_overlay_enabled: false,
+            ..Settings::default()
+        };
+        assert_eq!(snapshot_source_path(&sub_disabled), "main");
+
+        let sub_disabled_overlay_on = Settings {
+            sub_stream_enabled: false,
+            text_overlay_enabled: true,
+            ..Settings::default()
+        };
+        assert_eq!(snapshot_source_path(&sub_disabled_overlay_on), "main");
     }
 }
