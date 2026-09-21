@@ -1,7 +1,9 @@
-use crate::settings;
+use crate::mediamtx::VersionCheckResult;
+use crate::settings::{self, Settings};
 use serde::Serialize;
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::broadcast;
@@ -73,6 +75,9 @@ pub struct MotionHealth {
     enabled: AtomicBool,
     /// Whether a session is currently producing frames.
     streaming: AtomicBool,
+    /// Which RTSP path the current/most recent session resolved to: `0` = not yet
+    /// resolved this run, `1` = `main`, `2` = secondary. See [`MotionSource`].
+    active_source: AtomicU8,
 }
 
 /// Point-in-time view of [`MotionHealth`], safe to serialize to API clients.
@@ -88,6 +93,9 @@ pub struct MotionHealthView {
     pub last_frame_age_ms: Option<u64>,
     pub consecutive_failures: u32,
     pub total_blind_ms: u64,
+    /// Which frame source the detector is currently (or most recently) using:
+    /// `"unknown"` before the first resolution, else `"main"` or `"secondary"` (R5.1).
+    pub active_source: &'static str,
 }
 
 impl Default for MotionHealth {
@@ -98,6 +106,7 @@ impl Default for MotionHealth {
             total_blind_ms: AtomicU64::new(0),
             enabled: AtomicBool::new(false),
             streaming: AtomicBool::new(false),
+            active_source: AtomicU8::new(0),
         }
     }
 }
@@ -110,24 +119,62 @@ fn now_ms() -> u64 {
 }
 
 impl MotionHealth {
+    /// Record a decoded frame within an already-streaming session.
     fn mark_frame(&self) {
         self.last_frame_ms.store(now_ms(), Ordering::Relaxed);
         self.streaming.store(true, Ordering::Relaxed);
         self.consecutive_failures.store(0, Ordering::Relaxed);
     }
 
+    /// Record the FIRST frame of a session, folding any real coverage gap since
+    /// the previous frame into `total_blind_ms`, and return that gap for logging.
+    ///
+    /// This is the accurate blind-time source. The gap is measured from the last
+    /// frame of the previous session to this one, so it captures the WHOLE
+    /// outage — the deliberate backoff *and* the ~8.5s RTSP reconnect. The old
+    /// accounting added only the backoff sleep, which badly under-reported real
+    /// coverage loss (a 30s startup-timeout outage showed as 0.25s). `last_frame_ms`
+    /// persists across the gap because only frames write it, so it still holds the
+    /// pre-outage timestamp when we get here.
+    fn mark_first_frame(&self) -> Option<Duration> {
+        let now = now_ms();
+        let prev = self.last_frame_ms.load(Ordering::Relaxed);
+        // prev == 0 => no prior coverage to measure against: first frame since
+        // boot, or since an intentional disable cleared the marker. Not an outage.
+        let gap = (prev != 0).then(|| Duration::from_millis(now.saturating_sub(prev)));
+        if let Some(gap) = gap {
+            self.total_blind_ms
+                .fetch_add(gap.as_millis() as u64, Ordering::Relaxed);
+        }
+        self.last_frame_ms.store(now, Ordering::Relaxed);
+        self.streaming.store(true, Ordering::Relaxed);
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+        gap
+    }
+
     fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
         if !enabled {
             self.streaming.store(false, Ordering::Relaxed);
+            // Clear the last-frame marker so an intentional off-period is not
+            // later charged as blind time: the next first frame then measures no
+            // gap. (Blind time tracks failures, not deliberate disables.)
+            self.last_frame_ms.store(0, Ordering::Relaxed);
         }
     }
 
-    fn mark_session_ended(&self, failures: u32, blind: Duration) {
+    fn mark_session_ended(&self, failures: u32) {
         self.streaming.store(false, Ordering::Relaxed);
         self.consecutive_failures.store(failures, Ordering::Relaxed);
-        self.total_blind_ms
-            .fetch_add(blind.as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Record which source the current/next session resolved to (R5.1).
+    fn set_active_source(&self, source: MotionSource) {
+        let code = match source {
+            MotionSource::Main => 1,
+            MotionSource::Secondary => 2,
+        };
+        self.active_source.store(code, Ordering::Relaxed);
     }
 
     pub fn snapshot(&self) -> MotionHealthView {
@@ -148,13 +195,71 @@ impl MotionHealth {
             (true, ..) => (false, "down"),
         };
 
+        let active_source = match self.active_source.load(Ordering::Relaxed) {
+            1 => "main",
+            2 => "secondary",
+            _ => "unknown",
+        };
+
         MotionHealthView {
             available,
             state,
             last_frame_age_ms: age_ms,
             consecutive_failures: self.consecutive_failures.load(Ordering::Relaxed),
             total_blind_ms: self.total_blind_ms.load(Ordering::Relaxed),
+            active_source,
         }
+    }
+}
+
+/// Which RTSP path motion detection is reading from.
+///
+/// Resolved once per outer reconnect loop iteration by [`resolve_motion_source`], never
+/// re-evaluated mid-session: a source's own failure only ever retries that same source
+/// (R1.4) — switching sources is exclusively a response to a settings change, picked up
+/// at the next reconnect (R1.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionSource {
+    Main,
+    Secondary,
+}
+
+/// Decides whether motion detection may use mediamtx's hardware secondary (MJPEG) stream
+/// this session, or must stay on `main`.
+///
+/// Fails closed on every axis: the three settings gates must all hold (the operator opted
+/// in, the hardware secondary path actually exists as a hardware stream today, and it isn't
+/// occupied by the software transcoder), AND the cached mediamtx-version check must confirm
+/// the installed binary is known to fix the `rpiCameraSecondary` startup crash. Any of these
+/// being false, missing, or unreadable resolves to `Main` — never a panic, never an
+/// unresolved state (R1.5).
+pub fn resolve_motion_source(settings: &Settings, version_check_path: &Path) -> MotionSource {
+    let gates_open = settings.motion_use_secondary_stream
+        && settings.sub_stream_enabled
+        && !settings.text_overlay_enabled;
+    if gates_open && mediamtx_supports_secondary_fix(version_check_path) {
+        MotionSource::Secondary
+    } else {
+        MotionSource::Main
+    }
+}
+
+/// Reads the cached [`VersionCheckResult`] written by
+/// `mediamtx::check_and_write_mediamtx_version`. Fails closed (`false`) on any I/O error,
+/// malformed JSON, or missing file — motion must never assume the hardware secondary
+/// stream is safe without positive, current evidence that it is.
+fn mediamtx_supports_secondary_fix(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<VersionCheckResult>(&raw).ok())
+        .is_some_and(|result| result.supports_secondary_fix)
+}
+
+/// Maps a resolved [`MotionSource`] to the RTSP path name to connect to.
+pub fn motion_source_path<'a>(settings: &'a Settings, source: MotionSource) -> &'a str {
+    match source {
+        MotionSource::Main => &settings.rtsp_path,
+        MotionSource::Secondary => &settings.sub_rtsp_path,
     }
 }
 
@@ -226,7 +331,6 @@ pub fn spawn_motion_detector(
         // missed coverage is measurable rather than inferred from the journal.
         let mut session_id: u64 = 0;
         let mut consecutive_failures: usize = 0;
-        let mut blind_time = Duration::ZERO;
 
         loop {
             // Load settings
@@ -245,24 +349,22 @@ pub fn spawn_motion_detector(
             }
             health.set_enabled(true);
 
-            // Always read the main path, never sub — even when sub is enabled.
+            // Resolved once per outer iteration (i.e. once per reconnect), from freshly
+            // reloaded settings above — this is what makes a settings change take effect
+            // at the next reconnect (R1.3) without any extra polling. See
+            // `resolve_motion_source`'s own doc comment for the fail-closed gating logic
+            // and why a mid-session failure never crosses to the other source (R1.4).
             //
-            // `sub` is a derived, on-demand stream: mediamtx spawns a software
-            // x264 transcoder (runOnDemand) to produce it, and that transcoder
-            // measured at ~2.4 cores on the Pi Zero 2 W. Because motion is
-            // otherwise the only 24/7 reader of `sub`, reading it here forced
-            // that transcoder to run continuously — pushing load average past
-            // the core count, which in turn starved the hardware encoder
-            // (`VIDIOC_QBUF` failures) and tore `sub` down, the actual cause of
-            // the frequent `early eof` reconnects.
-            //
-            // `main` is the always-on hardware-encoded source, so reading it
-            // removes both the fragile second hop and the transcoder's CPU cost
-            // (it now only runs when a human is actually viewing sub). Decoding
-            // the larger main frame costs this detector's own ffmpeg more, but
-            // that is a fraction of the ~2.4 cores freed. The reader reserve in
-            // mediamtx.rs already budgets motion's slot on every path.
-            let path = &settings.rtsp_path;
+            // Historically this always read `main`, never `sub`: reading `sub` forced
+            // mediamtx's *software* x264 transcoder to run 24/7 (~2.4 cores on the Pi Zero
+            // 2 W), which starved the hardware encoder and caused the `early eof` reconnect
+            // storms this detector's backoff ladder exists to survive. That risk is specific
+            // to the software-transcoded `sub` variant — `resolve_motion_source` only ever
+            // selects the *hardware* secondary stream, and only once the settings gates and
+            // the mediamtx version check both confirm it's actually that variant.
+            let source = resolve_motion_source(&settings, &crate::mediamtx::default_version_check_path());
+            health.set_active_source(source);
+            let path = motion_source_path(&settings, source);
             let url = format!("rtsp://127.0.0.1:8554/{}", path.trim_start_matches('/'));
 
             session_id += 1;
@@ -310,8 +412,11 @@ pub fn spawn_motion_detector(
                 Err(e) => {
                     tracing::error!("Failed to spawn ffmpeg for motion detection: {e}");
                     consecutive_failures += 1;
+                    health.mark_session_ended(consecutive_failures as u32);
+                    // No blind-time accrual here: last_frame_ms still holds the
+                    // pre-outage frame, so the full gap (including these failed
+                    // spawns) is measured when a frame finally arrives.
                     let backoff = reconnect_delay(consecutive_failures);
-                    blind_time += backoff;
                     tokio::time::sleep(backoff).await;
                     continue;
                 }
@@ -381,14 +486,27 @@ pub fn spawn_motion_detector(
 
                 match read {
                     Ok(_) => {
-                        health.mark_frame();
                         if frames_read == 0 {
                             let startup = session_start.elapsed();
                             first_frame_at = Some(std::time::Instant::now());
-                            tracing::info!(
-                                "Motion session {session_id} streaming; first frame after {:.1}s",
-                                startup.as_secs_f64(),
-                            );
+                            // Fold the real coverage gap into total_blind_ms and
+                            // report it — this, not the backoff, is the true cost.
+                            match health.mark_first_frame() {
+                                Some(gap) => tracing::info!(
+                                    "Motion session {session_id} streaming; first frame after \
+                                     {:.1}s (blind {:.1}s while reconnecting; cumulative {:.1}s \
+                                     since boot)",
+                                    startup.as_secs_f64(),
+                                    gap.as_secs_f64(),
+                                    health.snapshot().total_blind_ms as f64 / 1000.0,
+                                ),
+                                None => tracing::info!(
+                                    "Motion session {session_id} streaming; first frame after {:.1}s",
+                                    startup.as_secs_f64(),
+                                ),
+                            }
+                        } else {
+                            health.mark_frame();
                         }
                         frames_read += 1;
 
@@ -494,7 +612,7 @@ pub fn spawn_motion_detector(
                     elapsed.as_secs_f64(),
                 );
                 consecutive_failures = 0;
-                health.mark_session_ended(0, Duration::ZERO);
+                health.mark_session_ended(0);
                 continue;
             }
 
@@ -505,11 +623,7 @@ pub fn spawn_motion_detector(
             }
             consecutive_failures += 1;
             let backoff = reconnect_delay(consecutive_failures);
-            // The reconnect also costs the ~8.5s RTSP startup, so the true gap
-            // is larger than the backoff; the frame-age signal reflects that
-            // even though this counter only accrues the deliberate wait.
-            blind_time += backoff;
-            health.mark_session_ended(consecutive_failures as u32, backoff);
+            health.mark_session_ended(consecutive_failures as u32);
 
             // Availability just dropped. Publish before sleeping so consumers
             // see the outage at its start, not after the reconnect completes.
@@ -518,14 +632,15 @@ pub fn spawn_motion_detector(
                 publish(previous_state);
             }
 
+            // The blind interval is measured and logged on recovery (see
+            // mark_first_frame), since its true length isn't known until a frame
+            // returns — the reconnect keeps costing after this backoff.
             tracing::warn!(
                 "Motion session {session_id} ended after {:.1}s: {session_end}. \
                  Read {frames_read} frames (expected ~{expected_frames:.0}); \
-                 failure #{consecutive_failures}, reconnecting in {:.0}ms. \
-                 Cumulative blind time since boot: {:.1}s",
+                 failure #{consecutive_failures}, reconnecting in {:.0}ms",
                 elapsed.as_secs_f64(),
                 backoff.as_secs_f64() * 1000.0,
-                blind_time.as_secs_f64(),
             );
 
             tokio::time::sleep(backoff).await;
@@ -594,12 +709,72 @@ mod tests {
         let health = MotionHealth::default();
         health.set_enabled(true);
         health.mark_frame();
-        health.mark_session_ended(1, Duration::from_millis(250));
+        health.mark_session_ended(1);
 
         let view = health.snapshot();
         assert!(!view.available);
         assert_eq!(view.state, "reconnecting");
         assert_eq!(view.consecutive_failures, 1);
+    }
+
+    #[test]
+    fn blind_time_measures_the_full_gap_not_the_backoff() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        // Establish coverage, then pretend the last frame was 30s ago (a
+        // startup-timeout-sized outage that the old backoff-only accounting
+        // would have logged as a fraction of a second).
+        health.mark_first_frame();
+        with_frame_age(&health, Duration::from_secs(30));
+
+        let gap = health.mark_first_frame().expect("a gap should be measured");
+        assert!(gap >= Duration::from_secs(29), "gap was {gap:?}");
+
+        let view = health.snapshot();
+        assert!(view.total_blind_ms >= 29_000 && view.total_blind_ms <= 31_000);
+        assert!(view.available);
+        assert_eq!(view.consecutive_failures, 0);
+    }
+
+    #[test]
+    fn first_frame_since_boot_is_not_counted_as_blind() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        // No prior frame exists, so the initial startup is not an outage.
+        assert!(health.mark_first_frame().is_none());
+        assert_eq!(health.snapshot().total_blind_ms, 0);
+    }
+
+    #[test]
+    fn an_intentional_disable_period_is_not_charged_as_blind() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        health.mark_first_frame();
+        // Long off-period, then re-enable and stream again.
+        with_frame_age(&health, Duration::from_secs(600));
+        health.set_enabled(false);
+        health.set_enabled(true);
+
+        assert!(
+            health.mark_first_frame().is_none(),
+            "re-enabling after a disable must not measure the off-period as a gap",
+        );
+        assert_eq!(health.snapshot().total_blind_ms, 0);
+    }
+
+    #[test]
+    fn blind_intervals_accumulate_across_outages() {
+        let health = MotionHealth::default();
+        health.set_enabled(true);
+        health.mark_first_frame();
+
+        with_frame_age(&health, Duration::from_secs(10));
+        health.mark_first_frame(); // +~10s
+        with_frame_age(&health, Duration::from_secs(5));
+        health.mark_first_frame(); // +~5s
+
+        let total = health.snapshot().total_blind_ms;
+        assert!(total >= 14_000 && total <= 16_000, "total was {total}ms");
     }
 
     #[test]
@@ -620,17 +795,18 @@ mod tests {
     fn recovery_clears_failures_and_restores_availability() {
         let health = MotionHealth::default();
         health.set_enabled(true);
-        health.mark_session_ended(4, Duration::from_secs(10));
+        health.mark_session_ended(4);
         assert_eq!(health.snapshot().state, "starting");
 
-        health.mark_frame();
+        // First frame of the recovered session. No prior frame existed, so this
+        // recovery contributes no blind time, but it must clear the failure
+        // count and restore availability.
+        health.mark_first_frame();
 
         let view = health.snapshot();
         assert!(view.available);
         assert_eq!(view.state, "ok");
         assert_eq!(view.consecutive_failures, 0);
-        // Blind time is cumulative and must survive recovery.
-        assert_eq!(view.total_blind_ms, 10_000);
     }
 
     #[test]
@@ -640,5 +816,119 @@ mod tests {
         assert_eq!(reconnect_delay(2), Duration::from_millis(500));
         // Saturates rather than growing without bound.
         assert_eq!(reconnect_delay(99), *RECONNECT_BACKOFF.last().unwrap());
+    }
+
+    #[test]
+    fn active_source_defaults_unknown_and_reflects_the_last_set_value() {
+        let health = MotionHealth::default();
+        assert_eq!(health.snapshot().active_source, "unknown");
+
+        health.set_active_source(MotionSource::Secondary);
+        assert_eq!(health.snapshot().active_source, "secondary");
+
+        health.set_active_source(MotionSource::Main);
+        assert_eq!(health.snapshot().active_source, "main");
+    }
+
+    fn write_version_check(dir: &std::path::Path, supports_secondary_fix: bool) -> std::path::PathBuf {
+        let path = dir.join("version-check.json");
+        let result = VersionCheckResult {
+            supports_secondary_fix,
+            checked_version: Some("v1.20.1".to_string()),
+            checked_at: "unix:0".to_string(),
+        };
+        std::fs::write(&path, serde_json::to_string(&result).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn resolve_motion_source_requires_all_four_gates() {
+        // Property 1 / R1.1, R1.2, R1.5: every one of 2^3 settings-gate combinations,
+        // crossed with all three version-check outcomes (supported / unsupported /
+        // missing file), must resolve to `Secondary` in exactly one case and to `Main`
+        // (never unresolved) in every other case.
+        let dir = tempfile::tempdir().unwrap();
+        let supported_path = write_version_check(dir.path(), true);
+        let unsupported_dir = dir.path().join("unsupported");
+        std::fs::create_dir_all(&unsupported_dir).unwrap();
+        let unsupported_path = write_version_check(&unsupported_dir, false);
+        let missing_path = dir.path().join("does-not-exist.json");
+
+        for toggle in [false, true] {
+            for sub_enabled in [false, true] {
+                for overlay_enabled in [false, true] {
+                    let settings = Settings {
+                        motion_use_secondary_stream: toggle,
+                        sub_stream_enabled: sub_enabled,
+                        text_overlay_enabled: overlay_enabled,
+                        ..Settings::default()
+                    };
+                    let gates_open = toggle && sub_enabled && !overlay_enabled;
+
+                    for (label, version_path, version_ok) in [
+                        ("supported", &supported_path, true),
+                        ("unsupported", &unsupported_path, false),
+                        ("missing", &missing_path, false),
+                    ] {
+                        let resolved = resolve_motion_source(&settings, version_path);
+                        let expected = if gates_open && version_ok {
+                            MotionSource::Secondary
+                        } else {
+                            MotionSource::Main
+                        };
+                        assert_eq!(
+                            resolved, expected,
+                            "toggle={toggle} sub={sub_enabled} overlay={overlay_enabled} version={label}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_motion_source_is_deterministic_for_unchanged_inputs() {
+        // Property 2: a mid-session failure re-enters the same outer iteration and must
+        // resolve to the same source again when nothing about settings or the version
+        // cache changed — expressed here as plain determinism, since the real reconnect
+        // loop isn't driven directly by this unit test.
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_version_check(dir.path(), true);
+        let settings = Settings {
+            motion_use_secondary_stream: true,
+            sub_stream_enabled: true,
+            text_overlay_enabled: false,
+            ..Settings::default()
+        };
+        let first = resolve_motion_source(&settings, &path);
+        let second = resolve_motion_source(&settings, &path);
+        assert_eq!(first, second);
+        assert_eq!(first, MotionSource::Secondary);
+    }
+
+    #[test]
+    fn mediamtx_supports_secondary_fix_fails_closed_on_missing_or_malformed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!mediamtx_supports_secondary_fix(
+            &dir.path().join("missing.json")
+        ));
+
+        let malformed = dir.path().join("malformed.json");
+        std::fs::write(&malformed, "not json").unwrap();
+        assert!(!mediamtx_supports_secondary_fix(&malformed));
+    }
+
+    #[test]
+    fn motion_source_path_maps_main_and_secondary() {
+        let settings = Settings {
+            rtsp_path: "main".to_string(),
+            sub_rtsp_path: "sub".to_string(),
+            ..Settings::default()
+        };
+        assert_eq!(motion_source_path(&settings, MotionSource::Main), "main");
+        assert_eq!(
+            motion_source_path(&settings, MotionSource::Secondary),
+            "sub"
+        );
     }
 }

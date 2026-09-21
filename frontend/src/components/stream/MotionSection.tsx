@@ -57,6 +57,29 @@ export function MotionSection({ value, resolution, onChange }: MotionSectionProp
           />
         </label>
 
+        <label
+          htmlFor="motion_use_secondary_stream"
+          className={cn(
+            "flex items-center justify-between gap-3",
+            !value.motionEnabled && "pointer-events-none opacity-50"
+          )}
+        >
+          <span className="flex flex-col">
+            <span className="text-sm font-medium">Use low-latency secondary stream</span>
+            <span className="text-xs text-muted-foreground">
+              Faster recovery after a reconnect. Only takes effect when the sub stream is
+              enabled, the text overlay is off, and mediamtx supports it — otherwise motion
+              keeps reading the main stream.
+            </span>
+          </span>
+          <Switch
+            id="motion_use_secondary_stream"
+            checked={value.motionUseSecondaryStream}
+            disabled={!value.motionEnabled}
+            onCheckedChange={(checked) => onChange({ motionUseSecondaryStream: checked })}
+          />
+        </label>
+
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="motion_sensitivity">Sensitivity</Label>

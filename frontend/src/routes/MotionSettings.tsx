@@ -42,6 +42,7 @@ export default function MotionSettings() {
     if (settings && !initialized) {
       const loaded: MotionFormState = {
         motionEnabled: settings.motion_enabled,
+        motionUseSecondaryStream: settings.motion_use_secondary_stream,
         motionSensitivity: String(settings.motion_sensitivity),
         motionZones: parseMotionZones(settings.motion_zones),
       }
@@ -62,6 +63,7 @@ export default function MotionSettings() {
     updateSettings.mutate(
       {
         motion_enabled: form.motionEnabled,
+        motion_use_secondary_stream: form.motionUseSecondaryStream,
         motion_sensitivity: Number(form.motionSensitivity) || 1,
         motion_zones: form.motionZones.toString(),
       },
