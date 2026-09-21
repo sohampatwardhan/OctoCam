@@ -3,6 +3,7 @@ import { LogOut, Menu, Save, Settings } from "lucide-react"
 import { RaspberryPiIcon } from "@/components/icons/selfhst"
 import { apiPost } from "@/lib/api"
 import { useMe } from "@/hooks/useAuth"
+import { clearMotionSnapshot } from "@/hooks/useMotionSnapshot"
 import { useStatus } from "@/hooks/useStatus"
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges"
 import { queryClient } from "@/lib/queryClient"
@@ -69,6 +70,7 @@ export function Topbar({ showMenuButton = false, menuOpen = false, onMenuClick }
       await apiPost("/api/logout", {})
     } finally {
       queryClient.clear()
+      clearMotionSnapshot()
       navigate("/login")
     }
   }
