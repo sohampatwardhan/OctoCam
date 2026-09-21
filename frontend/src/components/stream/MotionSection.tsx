@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
+import { useMotionSnapshot } from "@/hooks/useMotionSnapshot"
 import { Loader2 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -9,8 +10,6 @@ import type { MotionFormPatch, MotionFormState } from "@/components/stream/types
 
 const ALL_ZONES = (1n << 64n) - 1n
 const ZONE_COUNT = 64
-const SNAPSHOT_ATTEMPTS = 3
-const SNAPSHOT_RETRY_MS = 1500
 const DEFAULT_ASPECT = "4 / 3"
 
 /** Whether a drag marks cells as monitored or ignored. */
@@ -179,30 +178,7 @@ function MotionZoneGrid({
 }) {
   const isDrawingRef = useRef(false)
   const drawModeRef = useRef(true)
-  // One snapshot per page load, but the capture is CPU-bound on the device and
-  // times out under load, so a single 503 shouldn't cost the backdrop for the
-  // whole visit. Retry a couple of times, spaced out, before falling back.
-  const [attempt, setAttempt] = useState(0)
-  const [snapshotFailed, setSnapshotFailed] = useState(false)
-  const [snapshotLoaded, setSnapshotLoaded] = useState(false)
-  const retryRef = useRef<number | undefined>(undefined)
-
-  useEffect(() => () => window.clearTimeout(retryRef.current), [])
-
-  function handleSnapshotError() {
-    if (attempt + 1 >= SNAPSHOT_ATTEMPTS) {
-      setSnapshotFailed(true)
-      return
-    }
-    // Pause before retrying rather than piling onto the same contention.
-    retryRef.current = window.setTimeout(() => setAttempt((n) => n + 1), SNAPSHOT_RETRY_MS)
-  }
-
-  function retrySnapshot() {
-    setSnapshotFailed(false)
-    setSnapshotLoaded(false)
-    setAttempt((n) => n + 1)
-  }
+  const snapshot = useMotionSnapshot()
 
   function setCell(index: number, active: boolean) {
     const bit = 1n << BigInt(index)
@@ -222,6 +198,17 @@ function MotionZoneGrid({
   }
 
   return (
+    <div className="flex w-full max-w-md flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground" role="status">
+          {snapshot.data ? `Cached snapshot · ${new Date(snapshot.data.capturedAt).toLocaleString()}` : "Camera snapshot"}
+          {snapshot.isError && snapshot.data ? " · Refresh failed; showing previous image." : ""}
+        </p>
+        <Button type="button" variant="secondary" size="xs" disabled={snapshot.isFetching}
+          onClick={() => void snapshot.refetch()}>
+          {snapshot.isFetching ? "Refreshing…" : "Refresh snapshot"}
+        </Button>
+      </div>
     <div
       style={{ aspectRatio }}
       className={cn(
@@ -235,34 +222,25 @@ function MotionZoneGrid({
         isDrawingRef.current = false
       }}
     >
-      {!snapshotFailed && (
-        // The zones only mean anything against the scene they mask, so the
-        // grid stays hidden until this resolves. Kept mounted while loading so
-        // the request is actually in flight.
+      {snapshot.data && (
         <img
-          key={attempt}
-          src={attempt === 0 ? "/snapshot.jpg" : `/snapshot.jpg?attempt=${attempt}`}
+          src={snapshot.data.src}
           alt=""
           aria-hidden="true"
-          className={cn(
-            "absolute inset-0 size-full object-cover opacity-70",
-            !snapshotLoaded && "invisible"
-          )}
-          onLoad={() => setSnapshotLoaded(true)}
-          onError={handleSnapshotError}
+          className="absolute inset-0 size-full object-cover opacity-70"
         />
       )}
 
-      {snapshotFailed ? (
+      {!snapshot.data && snapshot.isError && !snapshot.isFetching ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center">
           <p className="text-sm text-muted-foreground">
             Couldn't load a camera snapshot, so there's no scene to place zones against.
           </p>
-          <Button type="button" variant="secondary" size="xs" onClick={retrySnapshot}>
+          <Button type="button" variant="secondary" size="xs" onClick={() => void snapshot.refetch()}>
             Try again
           </Button>
         </div>
-      ) : !snapshotLoaded ? (
+      ) : !snapshot.data ? (
         <div className="absolute inset-0 flex items-center justify-center gap-2 text-muted-foreground">
           <Loader2 className="size-4 animate-spin" aria-hidden="true" />
           <p className="text-sm">Loading...</p>
@@ -292,6 +270,7 @@ function MotionZoneGrid({
           })}
         </div>
       )}
+    </div>
     </div>
   )
 }
